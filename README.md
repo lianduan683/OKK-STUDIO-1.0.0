@@ -1,37 +1,39 @@
-# OKK STUDIO 1.0.0
+# OKK STUDIO 1.0.1
 
-Windows 多机位视频剪辑完整安装版。此独立版本基于原 OKK STUDIO 5.12.4，保留深色工作区、时间线编辑、代理、透明叠加、调色、转场与特效库。
+Windows 多机位视频剪辑应用。1.0.1 改进同步、播放控制、切机位、连续分段导入和现有代理链接，保留原有深色工作区。
 
 ## 下载与安装
 
-**[下载 OKK-STUDIO-1.0.0-Setup.exe](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.0/OKK-STUDIO-1.0.0-Setup.exe)**
+**[下载 OKK-STUDIO-1.0.1-Setup.exe](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.1/OKK-STUDIO-1.0.1-Setup.exe)** · [发行页](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/tag/v1.0.1)
 
-运行安装器，选择安装位置后继续即可。安装器自动下载同一发行版的程序和资源包，逐包核对 SHA256，安装完成后提供桌面与开始菜单入口。无需手动拼接压缩包，也无需另装 Python、FFmpeg 或 MPV。
+打开安装器，选择安装位置并继续。**1.0.1 的主程序已直接包含在安装器中，不再联网下载 core.zip。** FFmpeg、MPV、辅助运行库和完整特效资源仍由安装器自动下载并核对 SHA256，无需另装 Python 或手动解压组件。
 
-完整组件包含 Python 运行环境、FFmpeg、MPV、GPU 运行库、辅助工具和完整 337 项特效资源。组件总下载量约 5.78 GB，解压后约 6.47 GB；建议为下载、临时文件和安装目录预留至少 15 GB 空间。
+4 份资源包与 1.0.0 相同，继续使用该仓库 `v1.0.0` 的固定地址和固定 SHA256；不会因为文件名带 1.0.0 而变成旧版主程序。资源下载约 5.75 GB，完整安装约 6.5 GB，建议预留至少 15 GB 空间。
 
-安装到新的目录；原源码目录和先前 EXE 版保留。完整步骤与网络问题处理见 [INSTALLATION.md](INSTALLATION.md)。
+安装版沿用相同应用标识，升级时优先使用上次安装位置。升级前保存工程并退出正在运行的 OKK STUDIO。源码文件夹和独立便携 EXE 文件夹不会被安装器搜索、搬迁或删除。完整说明见 [INSTALLATION.md](INSTALLATION.md)。
 
-## 运行条件
+## 本次更新
 
-- Windows 10/11，64 位处理器和系统。
-- 安装适合本机显卡的 NVIDIA、AMD 或 Intel 驱动。硬件编码格式由启动时的实际能力检测决定。
-- **目前缓存需要可写的非 C 盘、非系统盘固定磁盘，优先使用 D:。只有 C 盘的电脑不能按当前缓存策略正常启动。** 可用 `OKK_CACHE_DIR` 指定其他符合条件的固定磁盘目录。
-- 在线安装需要访问 GitHub 及其发行版附件下载服务。
+- 改进全程参考音频 / 视频的同步；同一机位的连续分段先进入一条轨道，再执行对齐。
+- 修复播放 / 暂停按钮和空格控制，改善焦点切换后的操作。
+- 修复多机位监看选择与切点操作，区分节目切换和透明图层叠加。
+- 添加文件选择和文件夹导入。文件夹默认作为一个机位，视频按顺序进入同一轨道；另提供每个视频各建一个机位。
+- 改进已有代理命名识别、机位子目录匹配、素材选择和失败原因提示。
+- 支持达芬奇 Proxy Media，包括 **DNxHR LB 编码的 MOV**；同名 `Proxy` 子目录、ProRes 和不同帧率的完整代理可链接。
 
-## 功能
+详细变化与验证边界见 [CHANGELOG.md](CHANGELOG.md)。
 
-- 最多 6×6、36 机位监看，自定义网格；1080p 代理生成与已有代理链接。
-- 时间线多选、交叉框选、拖动切点、上下换轨、删除、撤销和 Ctrl+滚轮缩放。
-- 右键插入轨道；上方轨道处于画面顶层；多段素材首尾接齐合并。
-- 透明视频堆叠、中文分类特效库、可浮动和组合的面板。
-- 暂停保留缓存、返回窗口后同步呈现、过期帧回收与缓存限额。
-- NVIDIA NVENC、AMD AMF、Intel QSV 编码路径；具体格式以本机检测结果为准。
+## 运行条件与已知限制
 
-Ryzen AI Max+ 395 / Radeon 8060S 可使用现有 AMD 适配路径，但尚未完成该设备的实机验证。软件目前不使用其 NPU。复杂透明合成仍可能降低帧率；不保证任意素材或机位数量下零延迟。
+- Windows 10/11 64 位；安装适合显卡的 NVIDIA、AMD 或 Intel 驱动，硬件编码格式由启动时检测决定。
+- **当前缓存策略仍要求可写的非 C 盘、非系统盘固定磁盘，优先 D:。只有 C 盘的电脑无法按当前策略正常启动。** 可设置 `OKK_CACHE_DIR` 为其他符合条件的固定磁盘目录。
+- **此发行版尚未做受信任的代码签名。** Windows 智能应用控制（SAC）可能阻止安装器或程序运行；主程序内置不等于解决签名问题。安装器不会关闭防护、添加排除或修改安全策略。
+- 达芬奇的内部 Optimized Media / CacheClip 渲染缓存不是完整代理媒体文件，不作为可链接 MOV 代理。相同文件名且缺少可区分的目录结构时，需要逐个手动指定原片和代理。
+- 代理必须来自同一完整原片，未裁切、未变速。仅文件名和时长不能证明画面身份；不保证任意复杂效果、36 路高码率原片或所有机器均无延迟。
+- AMD Ryzen AI Max+ 395 尚未实机验证；软件目前不使用 NPU。
 
 ## 源码与许可证
 
-[下载完整 1.0.0 应用源码与安装器构建脚本](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.0/OKK-STUDIO-1.0.0-source.zip)。源码包不含大型媒体、外部二进制、用户工程或缓存。仓库中的安装脚本和组件清单便于核对发行版；重新构建应用请使用源码包中的 `source/` 目录与 PyInstaller spec。
+[下载 1.0.1 应用源码与构建脚本](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.1/OKK-STUDIO-1.0.1-source.zip)。源码包仅包含应用模块、必要的小型 UI 资源与构建说明，不包含用户工程、媒体素材、缓存、工作日志或大型第三方二进制。
 
-本应用的许可证见 [LICENSE](LICENSE)。外部运行库、辅助工具及资源按各自许可使用，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。原项目与历史版本位于 [lianduan683/OKK-STUDIO](https://github.com/lianduan683/OKK-STUDIO)。
+`core.zip` 是给维护和离线组装使用的核心程序附件；普通用户只需 Setup.exe。重建步骤见 [BUILDING.md](BUILDING.md)。应用许可证见 [LICENSE](LICENSE)，第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

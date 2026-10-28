@@ -1,20 +1,24 @@
 {
-  "version": "1.0.0",
-  "packages": [
-    {
-      "name": "OKK-STUDIO-1.0.0-core.zip",
-      "size": 27613692,
-      "uncompressed_size": 64336359,
-      "sha256": "b1dc2feeba2d8cd444469db093b83f11483d7e65bffbe1dcfbbe8e49acaaa408",
-      "file_count": 1181
-    },
+  "version": "1.0.1",
+  "core_distribution": "embedded-in-setup",
+  "core": {
+    "name": "OKK-STUDIO-1.0.1-core.zip",
+    "size": 27648557,
+    "sha256": "00d4021b07437048485b59b761e87600d3e27d85234fc028511d3a018b9411ff",
+    "file_count": 1186,
+    "uncompressed_size": 64377666,
+    "embedded_in_setup": true,
+    "url": "https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.1/OKK-STUDIO-1.0.1-core.zip"
+  },
+  "resource_version": "1.0.0",
+  "resources": [
     {
       "name": "OKK-STUDIO-1.0.0-resources-01.zip",
       "size": 1595845626,
       "uncompressed_size": 1610612735,
       "sha256": "37c4c7513e420a318c749c49f419977310eff33b4f7604301f4f7e79b6ccea96",
       "file_count": 9,
-      "crc_verified": true
+      "url": "https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.0/OKK-STUDIO-1.0.0-resources-01.zip"
     },
     {
       "name": "OKK-STUDIO-1.0.0-resources-02.zip",
@@ -22,7 +26,7 @@
       "uncompressed_size": 1610612735,
       "sha256": "6df6e65bb26a6bfb9df095366564bcaf7f857074c3109957c6f4c937c9490b5e",
       "file_count": 13,
-      "crc_verified": true
+      "url": "https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.0/OKK-STUDIO-1.0.0-resources-02.zip"
     },
     {
       "name": "OKK-STUDIO-1.0.0-resources-03.zip",
@@ -30,7 +34,7 @@
       "uncompressed_size": 1610612687,
       "sha256": "3c3018d23d0fb9c3cfe17494e4b717061eda9c8c56ce1114a627d436a6a8a85a",
       "file_count": 26,
-      "crc_verified": true
+      "url": "https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.0/OKK-STUDIO-1.0.0-resources-03.zip"
     },
     {
       "name": "OKK-STUDIO-1.0.0-resources-04.zip",
@@ -38,7 +42,7 @@
       "uncompressed_size": 1570763478,
       "sha256": "99e050eb91407ae5b988ae423f4b3a2220d445dc38898cdbe829908ec351cb06",
       "file_count": 1055,
-      "crc_verified": true
+      "url": "https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.0/OKK-STUDIO-1.0.0-resources-04.zip"
     }
   ]
 }

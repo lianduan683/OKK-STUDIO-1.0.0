@@ -1,0 +1,82 @@
+[
+  {
+    "path": "app_icon.ico",
+    "size": 220019,
+    "sha256": "577f0f4157d1298761ba9fe8e17d5054fce3b404e782b4b6012d84019d0045d0"
+  },
+  {
+    "path": "okk_group_logo_white.png",
+    "size": 1479,
+    "sha256": "a7cd3624d5326f122988c6b35f28f2644ce48a1c558f3856656985f03ed4781a"
+  },
+  {
+    "path": "thumb_01_piano.png",
+    "size": 29375,
+    "sha256": "122d3bd8cf811bf4152802851ac82719142ce9edc562a29e9dcc5d84ddaac0f7"
+  },
+  {
+    "path": "thumb_02_cat.png",
+    "size": 35280,
+    "sha256": "9a291600744a341ab189b9bd8064611494b4de9749700ffe02a79e637ff873ab"
+  },
+  {
+    "path": "thumb_03_blonde.png",
+    "size": 26643,
+    "sha256": "daa0abf72a445fd501dd25056f2c509d706480471c35b83ba7a531fdbaee84f4"
+  },
+  {
+    "path": "thumb_04_closeup.png",
+    "size": 34945,
+    "sha256": "b3ad7ae22443afce6f7695d6734d7058fd837531ac1b666c55809166f400a487"
+  },
+  {
+    "path": "thumb_05_feathers.png",
+    "size": 34231,
+    "sha256": "9249e5d84a9c60ae78d02f79bfd567f9b5dc28daf301c5b5f56c7fc9f523f147"
+  },
+  {
+    "path": "thumb_06_wine.png",
+    "size": 37554,
+    "sha256": "9cf99477a1ca814a119e9c8264147b8e96ff2d5b3af272a620a9237f2d3c99ce"
+  },
+  {
+    "path": "thumb_07_ice.png",
+    "size": 27787,
+    "sha256": "b11007d84754a1c5600e766330cbdcfcd17d5c3c2f1b83d145777f7f0fec60b1"
+  },
+  {
+    "path": "thumb_08_hanfu.png",
+    "size": 36603,
+    "sha256": "a0e01c62bf9617fd6e09d7704fb990af5fc623b66777894229796ac76b0d545e"
+  },
+  {
+    "path": "thumb_09_silver_portrait.png",
+    "size": 36289,
+    "sha256": "75ed6f84973a5ace43d5091b869cac95e805dd931fb0b41f5d14c207e1da8fc2"
+  },
+  {
+    "path": "thumb_10_chin.png",
+    "size": 34383,
+    "sha256": "225158e3cb4b46e06c3f7f8969f0d6a08ea82a6dc9386a40b271642c6eff7fc4"
+  },
+  {
+    "path": "thumb_11_purple.png",
+    "size": 20001,
+    "sha256": "88c79d71907a768caf8b1cec6745998f13e5c21773983a2e96b31fde0d4004a0"
+  },
+  {
+    "path": "thumb_12_silver_outfit.png",
+    "size": 37826,
+    "sha256": "721d767979bc6c26c52ba26d320bafa4e091f2dad960639912433b2841445e9e"
+  },
+  {
+    "path": "thumb_13_red.png",
+    "size": 31206,
+    "sha256": "be9a1290ec7390cfcb7d64d160e57354662624152c7db9058158979c60541c98"
+  },
+  {
+    "path": "thumb_14_flowers.png",
+    "size": 39374,
+    "sha256": "84f75325bcddfb4d6cd3dad4cd7f87c95bdb0a409e1778128f14880989b1a12e"
+  }
+]
