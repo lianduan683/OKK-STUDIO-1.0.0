@@ -4,7 +4,7 @@ OKK STUDIO 自有代码的许可证见根目录 `LICENSE`。本安装包中的�
 
 | 组件 | 来源与随包说明 |
 | --- | --- |
-| Python 3.13 运行环境 | [Python](https://www.python.org/)；许可证来自 CPython 发行版 `LICENSE.txt`，应随包保留为 `licenses/Python-3.13-LICENSE.txt`。 |
+| Python 3.12 运行环境 | [Python](https://www.python.org/)；许可证来自 CPython 发行版 `LICENSE.txt`，应随包保留为 `licenses/Python-3.12-LICENSE.txt`。 |
 | NumPy | [NumPy](https://numpy.org/)；许可及所含第三方代码说明见 `numpy-*.dist-info/licenses/`。 |
 | Tcl/Tk | [Tcl/Tk](https://www.tcl-lang.org/)；随包许可见 `_tk_data/license.terms` 等对应目录。 |
 | tkinterdnd2 / TkDND | [tkinterdnd2](https://github.com/Eliav2/tkinterdnd2)；许可见 `tkinterdnd2-*.dist-info/licenses/LICENSE` 和组件目录。 |

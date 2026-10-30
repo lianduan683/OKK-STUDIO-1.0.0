@@ -1,35 +1,27 @@
-# 构建 1.0.1
+# 构建 OKK STUDIO 1.0.2
 
-需要 Windows x64、Python 3.13、PyInstaller 6.22.3、NumPy、tkinterdnd2，以及 Inno Setup 7.1.0。`source/requirements-build.txt` 是应用构建依赖说明。不要从用户工程、缓存或整个应用目录直接制作发布压缩包。
-
-## 构建脚本
-
-`build_release.py` 只读取指定源码与已审核的小型 UI 资源白名单。它每次在脚本所在目录的 `builds/` 下创建一个新的构建目录，不删除或覆盖既有构建，不修改源代码和系统安全设置。
-
-已解压源码包时，可在该目录运行：
+本次构建环境为 Windows x64、Python 3.12.10、PyInstaller 6.22.3、NumPy 2.5.4、tkinterdnd2 0.7.0、Inno Setup 7.1.1 x64。Python 依赖固定在 `source/requirements-build.txt`。
 
 ```powershell
-python .\build_release.py --check --source-root .\source --iscc 'C:\Program Files (x86)\Inno Setup 7\ISCC.exe'
-python .\build_release.py --source-root .\source --iscc 'C:\Program Files (x86)\Inno Setup 7\ISCC.exe'
+python -m pip install -r .\source\requirements-build.txt
+python .\build_release.py --check --source-root .\source --iscc 'C:\Program Files\Inno Setup 7\ISCC.exe'
+python .\build_release.py --source-root .\source --iscc 'C:\Program Files\Inno Setup 7\ISCC.exe'
 ```
 
-`--check` 只检查源码版本、依赖入口、资源白名单和安装脚本，不调用 PyInstaller 或 Inno 编译器。实际构建命令会生成新 staging、PyInstaller onedir 程序、core.zip、内置 core 的 Setup.exe、源码 ZIP 和 SHA256SUMS.txt。
+请将 `--iscc` 改为本机安装的编译器路径。脚本也会查找本目录 `tools/InnoSetup/ISCC.exe`、常见 Inno Setup 7 安装目录和 PATH。
 
-本地开发可用 `--source-root` 指向当前应用源码根目录，并用 `--old-release` 指向 1.0.0 构建目录以复用已审核小资源和 Python 许可。`--python` 可指定安装了 PyInstaller 等依赖的 Python 解释器，`--python-license` 可指定该运行时的许可文件。
+构建脚本仅读取应用模块、顶层公开 Python 回归测试及 16 个白名单 UI 小资源，每次在 `builds/` 下创建新目录；不会覆盖已有构建。输出包括内置核心程序的 Setup.exe、维护用 core.zip、源码 ZIP、SHA256SUMS.txt 及公开仓库文件。
 
-构建结果和日志位于 `builds/<构建编号>/`。该目录中的 `public_repo/` 可供仓库文档更新，`artifacts/` 包含发布附件；`build_report.json` 和 `build.log` / `installer-build.log` 只供本机诊断，不加入公开源码 ZIP。
+四份大型资源包不重新打包，继续使用 v1.0.0 的固定地址和 SHA256。用户工程、个人媒体、工作区状态、work、backups、日志、代理和缓存均不进入源码或核心包。
 
-## 包内容
+## 回归检查
 
-- 核心程序只含 PyInstaller 运行时、应用模块、16 个白名单 UI 小资源、许可证和公开使用文档。
-- 源码 ZIP 另含 `source/tests/*.py` 公开回归测试；仅复制顶层 Python 测试代码，不包含生成的媒体、测试日志、测试缓存或子目录数据。测试代码不进入核心程序。
-- 完整特效库和外部媒体运行库不复制进 core，安装时使用固定的 v1.0.0 资源包。
-- 用户工程、个人媒体、work、backups、日志、代理缓存及工作区状态均不进入核心包和源码包。
-- `resource_packages.json` 记录复用资源包的 URL / SHA256；`small_assets.json` 固定允许进入核心包的 UI 资源内容。
-- 新构建默认不签名。正式面向启用 SAC 的设备分发前，应准备受信任的代码签名流程，并重新进行签名后打包与校验。
+测试使用合成媒体。FFmpeg/FFprobe 可放入 `source/bin` 或配置在 PATH；部分既有集成测试直接使用 `source/bin`。依赖真实媒体运行库的测试在缺少组件时跳过。为测试临时文件指定可写的 TEMP/TMP；完整应用测试还需要满足非系统盘缓存策略。
 
-## 验收范围
+新增功能与兼容性相关测试包括：`test_camera_rename`、`test_audio_track_preview`、`test_audio_waveform`、`test_timeline_audio_ui`、`test_timeline_audio_model`、`test_timeline_audio_session`、`test_shortcut_markers`、`test_project_open_compat`，以及既有播放、工程和导出测试。
 
-本机可将新 core 与固定资源包解压到一个全新的验证目录，启动该目录中的 EXE 并用合成工程测试；这不会改写已有安装的卸载注册信息。测试缓存仍须满足程序原有的非 C 盘、非系统盘固定磁盘要求。
+## 安装验证
 
-此方式验证运行时与资源完整性，不代表正式 Setup 的安装或升级注册流程已经实测。完整安装、卸载和沿用旧目录的升级流程应在隔离的 Windows 虚拟机中验证，避免覆盖正在使用的程序及未保存工程。
+正式安装脚本支持 `--define=RELEASE_QA` 编译隔离测试安装器：使用独立 AppId，省略桌面/开始菜单图标和安装后启动；文件与资源段相同。测试安装器不作为发布附件。真实升级目录、卸载注册及不同机器行为仍应在隔离 Windows 环境验证。
+
+新构建默认不签名；受信任代码签名需使用发布方自己的证书与签名流程。

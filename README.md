@@ -1,39 +1,33 @@
-# OKK STUDIO 1.0.1
+# OKK STUDIO 1.0.2
 
-Windows 多机位视频剪辑应用。1.0.1 改进同步、播放控制、切机位、连续分段导入和现有代理链接，保留原有深色工作区。
+Windows 多机位视频剪辑应用。本版新增逐轨音频控制、真实波形和 M 时间标记，支持机位命名，改善中文输入法快捷键，修复旧完整工程打开与保存。
 
-## 下载与安装
+## 下载
 
-**[下载 OKK-STUDIO-1.0.1-Setup.exe](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.1/OKK-STUDIO-1.0.1-Setup.exe)** · [发行页](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/tag/v1.0.1)
+**[下载 OKK-STUDIO-1.0.2-Setup.exe](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.2/OKK-STUDIO-1.0.2-Setup.exe)** · [发行页](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/tag/v1.0.2)
 
-打开安装器，选择安装位置并继续。**1.0.1 的主程序已直接包含在安装器中，不再联网下载 core.zip。** FFmpeg、MPV、辅助运行库和完整特效资源仍由安装器自动下载并核对 SHA256，无需另装 Python 或手动解压组件。
+主程序已内置安装器。安装时下载并校验 v1.0.0 的四份固定资源 ZIP（约 5.75 GB），完整安装约 6.5 GB，建议预留至少 15 GB。已有离线资源可通过 `/PAYLOADDIR` 复用。安装与升级见 [INSTALLATION.md](INSTALLATION.md)。
 
-4 份资源包与 1.0.0 相同，继续使用该仓库 `v1.0.0` 的固定地址和固定 SHA256；不会因为文件名带 1.0.0 而变成旧版主程序。资源下载约 5.75 GB，完整安装约 6.5 GB，建议预留至少 15 GB 空间。
+## 新增与修复
 
-安装版沿用相同应用标识，升级时优先使用上次安装位置。升级前保存工程并退出正在运行的 OKK STUDIO。源码文件夹和独立便携 EXE 文件夹不会被安装器搜索、搬迁或删除。完整说明见 [INSTALLATION.md](INSTALLATION.md)。
+- 右键机位自定义名称，名称随工程保存。
+- A0 主音频、A1/A2 对应视频原声；可逐轨静音、同时混音或仅一轨出声，播放与导出一致。
+- 后台提取真实波形并缓存，静音轨仍显示波形。
+- 编辑区域适配中文输入法下的物理按键，文字框继续支持中文输入。
+- M 键添加时间标记，支持定位、删除、保存和撤销重做。
+- 统一旧 `.rtxproj` 与独立 `.multicam.json` 打开入口，修复完整工程保存路由，保留帧率精度。
+- 改善音频时钟、漂移校正和播放器/波形任务释放。
 
-## 本次更新
+更新详情与验证边界见 [CHANGELOG.md](CHANGELOG.md)。
 
-- 改进全程参考音频 / 视频的同步；同一机位的连续分段先进入一条轨道，再执行对齐。
-- 修复播放 / 暂停按钮和空格控制，改善焦点切换后的操作。
-- 修复多机位监看选择与切点操作，区分节目切换和透明图层叠加。
-- 添加文件选择和文件夹导入。文件夹默认作为一个机位，视频按顺序进入同一轨道；另提供每个视频各建一个机位。
-- 改进已有代理命名识别、机位子目录匹配、素材选择和失败原因提示。
-- 支持达芬奇 Proxy Media，包括 **DNxHR LB 编码的 MOV**；同名 `Proxy` 子目录、ProRes 和不同帧率的完整代理可链接。
+## 使用条件
 
-详细变化与验证边界见 [CHANGELOG.md](CHANGELOG.md)。
+Windows 10/11 64 位。缓存沿用可写的非 C 盘、非系统盘固定磁盘策略，优先 D:。仅有 C 盘的电脑目前无法按该策略正常启动。硬件编解码能力以启动检测和实际驱动为准。
 
-## 运行条件与已知限制
+本版尚未做受信任代码签名，Windows 智能应用控制可能拦截。新设置或标记会使用工程格式 11，需要新版打开；升级后建议另存副本。
 
-- Windows 10/11 64 位；安装适合显卡的 NVIDIA、AMD 或 Intel 驱动，硬件编码格式由启动时检测决定。
-- **当前缓存策略仍要求可写的非 C 盘、非系统盘固定磁盘，优先 D:。只有 C 盘的电脑无法按当前策略正常启动。** 可设置 `OKK_CACHE_DIR` 为其他符合条件的固定磁盘目录。
-- **此发行版尚未做受信任的代码签名。** Windows 智能应用控制（SAC）可能阻止安装器或程序运行；主程序内置不等于解决签名问题。安装器不会关闭防护、添加排除或修改安全策略。
-- 达芬奇的内部 Optimized Media / CacheClip 渲染缓存不是完整代理媒体文件，不作为可链接 MOV 代理。相同文件名且缺少可区分的目录结构时，需要逐个手动指定原片和代理。
-- 代理必须来自同一完整原片，未裁切、未变速。仅文件名和时长不能证明画面身份；不保证任意复杂效果、36 路高码率原片或所有机器均无延迟。
-- AMD Ryzen AI Max+ 395 尚未实机验证；软件目前不使用 NPU。
+## 源码与构建
 
-## 源码与许可证
+[下载 1.0.2 应用源码](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.2/OKK-STUDIO-1.0.2-source.zip)。源码包包含应用模块、回归测试、小型 UI 资源和构建文件；不包含用户工程、媒体、工作缓存或大型第三方二进制。构建步骤见 [BUILDING.md](BUILDING.md)。
 
-[下载 1.0.1 应用源码与构建脚本](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.1/OKK-STUDIO-1.0.1-source.zip)。源码包仅包含应用模块、必要的小型 UI 资源与构建说明，不包含用户工程、媒体素材、缓存、工作日志或大型第三方二进制。
-
-`core.zip` 是给维护和离线组装使用的核心程序附件；普通用户只需 Setup.exe。重建步骤见 [BUILDING.md](BUILDING.md)。应用许可证见 [LICENSE](LICENSE)，第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+应用许可证见 [LICENSE](LICENSE)，第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

@@ -1,0 +1,26 @@
+{
+  "version": "1.0.2",
+  "regression_tests": 164,
+  "resource_sha256_checks": 4,
+  "archive_crc_checks": "passed",
+  "source_privacy_and_content_allowlist": "passed",
+  "qa_installer_same_file_payload_distinct_app_id": true,
+  "offline_install": "passed",
+  "installed_executable_bootstrap": "passed",
+  "application_and_installer_pe_version": [
+    1,
+    0,
+    2,
+    0
+  ],
+  "qa_uninstall": "passed",
+  "existing_install_registration_unchanged": true,
+  "existing_desktop_shortcut_unchanged": true,
+  "trusted_code_signature": false,
+  "not_tested": [
+    "production AppId in-place upgrade",
+    "online resource download",
+    "physical keyboard under specific Chinese IMEs",
+    "full-length user-media playback"
+  ]
+}

@@ -1,4 +1,4 @@
-"""Build OKK STUDIO 1.0.1 into a fresh, private output directory.
+"""Build OKK STUDIO 1.0.2 into a fresh, private output directory.
 
 No network access, source edits, old-output deletion, uploads, or security changes.
 Run --check first. Python dependencies and Inno Setup must already be installed.
@@ -18,11 +18,11 @@ import sys
 import uuid
 import zipfile
 
-VERSION = '1.0.1'
+VERSION = '1.0.2'
 ROOT = Path(__file__).resolve().parent
 REPOSITORY = 'https://github.com/lianduan683/OKK-STUDIO-1.0.0'
-TEMPLATES = ('OKK_STUDIO_1.0.1.spec', 'version_info.txt',
-             'OKK-STUDIO-1.0.1-Setup.iss', 'installer_info.txt',
+TEMPLATES = ('OKK_STUDIO_1.0.2.spec', 'version_info.txt',
+             'OKK-STUDIO-1.0.2-Setup.iss', 'installer_info.txt',
              'small_assets.json', 'resource_packages.json', 'build_release.py')
 PUBLIC_DOCS = ('README.md', 'INSTALLATION.md', 'CHANGELOG.md', 'BUILDING.md',
                'THIRD_PARTY_NOTICES.md', 'LICENSE')
@@ -119,10 +119,10 @@ def checked_inputs(args):
     expected_names = {f'OKK-STUDIO-1.0.0-resources-{i:02d}.zip' for i in range(1, 5)}
     if {item['name'] for item in resources} != expected_names or len(resources) != 4:
         raise ValueError('Exactly four frozen 1.0.0 resource packages are required')
-    iss = (ROOT/'OKK-STUDIO-1.0.1-Setup.iss').read_text(encoding='utf-8')
+    iss = (ROOT/'OKK-STUDIO-1.0.2-Setup.iss').read_text(encoding='utf-8')
     if 'AppId=OKKSTUDIO.1.0.0' not in iss or 'UsePreviousAppDir=yes' not in iss:
         raise ValueError('Upgrade application identity or previous-directory behavior changed')
-    if 'core.zip' in iss or 'dist\\OKK STUDIO 1.0.1\\*' not in iss:
+    if 'core.zip' in iss or 'dist\\OKK STUDIO 1.0.2\\*' not in iss:
         raise ValueError('Setup must embed core files directly, with no core ZIP download')
     for item in resources:
         if item['url'] != REPOSITORY + '/releases/download/v1.0.0/' + item['name']:
@@ -142,7 +142,7 @@ def checked_inputs(args):
             raise ValueError(f'Missing public document: {name}')
     license_path = args.python_license
     if license_path is None:
-        options = [args.old_release/'dist'/'OKK STUDIO 1.0.0'/'licenses'/'Python-3.13-LICENSE.txt',
+        options = [args.old_release/'dist'/'OKK STUDIO 1.0.0'/'licenses'/'Python-3.12-LICENSE.txt',
                    Path(sys.base_prefix)/'LICENSE.txt']
         license_path = next((p for p in options if p.is_file()), None)
     if license_path is None or not license_path.is_file():
@@ -221,13 +221,13 @@ def build(args):
     environment['TEMP'] = str(temporary)
     environment['TMP'] = str(temporary)
     command = [str(args.python), '-m', 'PyInstaller', '--noconfirm', '--distpath', str(run/'dist'),
-               '--workpath', str(run/'pyinstaller-work'), str(run/'OKK_STUDIO_1.0.1.spec')]
+               '--workpath', str(run/'pyinstaller-work'), str(run/'OKK_STUDIO_1.0.2.spec')]
     run_logged(command, run, run/'build.log', environment)
-    dist = output_path(run/'dist'/'OKK STUDIO 1.0.1')
+    dist = output_path(run/'dist'/'OKK STUDIO 1.0.2')
     if not (dist/'OKK STUDIO.exe').is_file():
         raise RuntimeError('PyInstaller did not produce the application executable')
     copy_new(stage/'LICENSE', dist/'LICENSE')
-    copy_new(license_path, dist/'licenses'/'Python-3.13-LICENSE.txt')
+    copy_new(license_path, dist/'licenses'/'Python-3.12-LICENSE.txt')
     for name in PUBLIC_DOCS:
         if name != 'LICENSE':
             copy_new(run/'public_docs'/name, dist/name)
@@ -241,11 +241,11 @@ def build(args):
             raise RuntimeError(f'Forbidden core content: {relative}')
         if relative.parts[0] == 'assets' and relative.as_posix() not in {'assets/'+item['path'] for item in assets}:
             raise RuntimeError(f'Unexpected asset in core: {relative}')
-    core = zip_new(artifacts/'OKK-STUDIO-1.0.1-core.zip', [(p, p.relative_to(dist).as_posix()) for p in dist_files])
+    core = zip_new(artifacts/'OKK-STUDIO-1.0.2-core.zip', [(p, p.relative_to(dist).as_posix()) for p in dist_files])
     core.update({'uncompressed_size': total, 'embedded_in_setup': True,
-                 'url': REPOSITORY+'/releases/download/v1.0.1/'+core['name']})
-    run_logged([str(args.iscc), str(run/'OKK-STUDIO-1.0.1-Setup.iss')], run, run/'installer-build.log', environment)
-    setup = artifacts/'OKK-STUDIO-1.0.1-Setup.exe'
+                 'url': REPOSITORY+'/releases/download/v1.0.2/'+core['name']})
+    run_logged([str(args.iscc), str(run/'OKK-STUDIO-1.0.2-Setup.iss')], run, run/'installer-build.log', environment)
+    setup = artifacts/'OKK-STUDIO-1.0.2-Setup.exe'
     if not setup.is_file():
         raise RuntimeError('Inno Setup did not produce the installer')
     packages = {'version': VERSION, 'core_distribution': 'embedded-in-setup', 'core': core,
@@ -261,7 +261,7 @@ def build(args):
     source_entries = [(p, 'source/'+p.relative_to(stage).as_posix()) for p in stage.rglob('*') if p.is_file()]
     source_entries += [(public/name, name) for name in (*PUBLIC_DOCS, *TEMPLATES, 'packages.json', 'RESOURCE-SHA256SUMS.txt')]
     source_entries += [(run/'public_docs'/name, 'public_docs/'+name) for name in PUBLIC_DOCS]
-    source_zip = zip_new(artifacts/'OKK-STUDIO-1.0.1-source.zip', source_entries)
+    source_zip = zip_new(artifacts/'OKK-STUDIO-1.0.2-source.zip', source_entries)
     new_assets = [setup, artifacts/core['name'], artifacts/source_zip['name']]
     sums = ''.join(sha256(path)+'  '+path.name+'\n' for path in new_assets)
     write_new(artifacts/'SHA256SUMS.txt', sums)
@@ -285,7 +285,13 @@ def main():
     parser.add_argument('--old-release', type=Path, default=ROOT.parent/'installer_1.0.0')
     parser.add_argument('--python', type=Path, default=Path(sys.executable))
     parser.add_argument('--python-license', type=Path)
-    parser.add_argument('--iscc', type=Path, default=ROOT.parent/'installer_5.12.4'/'tools'/'InnoSetup'/'ISCC.exe')
+    compiler_candidates = [ROOT/'tools'/'InnoSetup'/'ISCC.exe',
+                           Path(os.environ.get('LOCALAPPDATA', ''))/'Programs'/'Inno Setup 7'/'ISCC.exe',
+                           Path(os.environ.get('ProgramFiles', 'C:/Program Files'))/'Inno Setup 7'/'ISCC.exe',
+                           Path(os.environ.get('ProgramFiles(x86)', 'C:/Program Files (x86)'))/'Inno Setup 7'/'ISCC.exe']
+    compiler = next((p for p in compiler_candidates if p.is_file()),
+                    Path(shutil.which('ISCC.exe') or compiler_candidates[0]))
+    parser.add_argument('--iscc', type=Path, default=compiler)
     parser.add_argument('--check', action='store_true')
     args = parser.parse_args()
     args.python = args.python.resolve(); args.iscc = args.iscc.resolve()

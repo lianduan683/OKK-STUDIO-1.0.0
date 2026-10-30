@@ -1,0 +1,16 @@
+builds/
+tools/
+validation/
+artifacts/
+source/bin/
+source/work/
+source/projects/
+source/backups/
+**/__pycache__/
+*.log
+*.zip
+*.rtxproj
+*.multicam.json
+*.exe
+*.dll
+*.pyd

@@ -1,51 +1,32 @@
-# OKK STUDIO 1.0.1 安装说明
+# 安装与升级 1.0.2
 
-## 在线安装和升级
+下载并运行 `OKK-STUDIO-1.0.2-Setup.exe`。Windows 10/11 64 位，无需另装 Python。主程序在安装器中；四份运行库/特效资源继续从固定的 v1.0.0 发行附件下载并校验 SHA256。
 
-1. 从 [v1.0.1 发行页](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/tag/v1.0.1) 下载 `OKK-STUDIO-1.0.1-Setup.exe`。
-2. 保存工程，退出正在运行的 OKK STUDIO，然后运行安装器。
-3. 选择安装位置。已经安装 1.0.0 时，安装器会优先显示上次位置，沿用同一卸载登记；也可在安装向导中检查并选择位置。
-4. 主程序直接从安装器安装；4 份资源包自动下载并分别核对 SHA256。安装完成后从桌面或开始菜单启动。
+## 升级
 
-默认按当前用户安装，不要求管理员权限。安装器不包含显卡驱动。资源下载约 5.75 GB，完整程序约 6.5 GB，建议预留至少 15 GB 空间。
+1. 保存当前工程并退出旧版本。
+2. 启动安装器，沿用上次的安装目录，或明确选择新的目录。
+3. 勾选创建桌面快捷方式。安装器 AppId 保持 `OKKSTUDIO.1.0.0`，正常升级会沿用之前登记的目录。
+4. 启动后通过“文件 → 打开工程”选择旧 `.rtxproj` 或 `.multicam.json`。
 
-## 缓存磁盘
+安装器不清理工程、用户素材和缓存。独立源码目录或其他便携程序目录不会自动识别为旧安装目录；这类目录的快捷方式请明确指向所需版本。
 
-当前程序仍要求可写的非 C 盘、非系统盘固定磁盘用于缓存，优先使用 D:。只有 C 盘的电脑目前不能正常启动。
+## 资源与离线安装
 
-需要指定位置时，可在启动前设置环境变量 `OKK_CACHE_DIR`，例如 `E:\OKK STUDIO Cache`。指定位置仍必须符合固定磁盘和非系统盘要求；此版本没有改变该限制。
+资源约 5.75 GB，完整安装约 6.5 GB，建议预留至少 15 GB。四份资源包名称和 SHA256 保持不变：`OKK-STUDIO-1.0.0-resources-01.zip` 至 `04.zip`。
 
-## 离线组件方式
-
-Setup.exe 已含主程序，无需另下 core.zip。将下列 4 份原始资源 ZIP 放在同一个文件夹，**不要解压或修改 ZIP**：
-
-- [OKK-STUDIO-1.0.0-resources-01.zip](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.0/OKK-STUDIO-1.0.0-resources-01.zip)
-- [OKK-STUDIO-1.0.0-resources-02.zip](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.0/OKK-STUDIO-1.0.0-resources-02.zip)
-- [OKK-STUDIO-1.0.0-resources-03.zip](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.0/OKK-STUDIO-1.0.0-resources-03.zip)
-- [OKK-STUDIO-1.0.0-resources-04.zip](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.0/OKK-STUDIO-1.0.0-resources-04.zip)
-
-在安装器所在目录打开 PowerShell，运行以下命令；把示例目录换成实际组件目录：
+已有这四份文件时，可运行：
 
 ```powershell
-& '.\OKK-STUDIO-1.0.1-Setup.exe' '/PAYLOADDIR=E:\OKK安装组件'
+.\OKK-STUDIO-1.0.2-Setup.exe /PAYLOADDIR="D:\OKK资源包"
 ```
 
-离线方式仍执行相同的 SHA256 校验。资源来自固定的 v1.0.0 发行版，主程序来自当前 1.0.1 安装器；无需重复下载 1.0.0 的 Setup 或 core.zip。
+`/PAYLOADDIR` 指向 ZIP 所在目录。资源保持完整 ZIP 形式，安装器验证后解压。资源地址与校验见 `resource_packages.json` 和 `RESOURCE-SHA256SUMS.txt`。
 
-## 下载失败和校验失败
+## 缓存与工程兼容
 
-在线安装需要能访问 GitHub 及其发行版附件服务，下载使用系统代理设置。1.0.1 已移除 core.zip 在线下载步骤；资源包仍会校验，不会跳过完整性检查。
+现有缓存策略要求可写的非 C 盘、非系统盘固定磁盘，优先 D:；可设置 `OKK_CACHE_DIR` 为其他符合条件的固定磁盘目录。只有 C 盘的电脑目前无法按该策略正常启动。
 
-下载失败时可重试，或通过浏览器下载上述完整资源包后使用 `/PAYLOADDIR`。不要将 HTML 错误页、未完成下载或重新压缩的文件当作组件包。若仍失败，请保留安装日志和错误中显示的具体文件名。
+旧工程可读取；新增音轨状态、音频元数据或标记会使用多机位格式 11，需要新版打开。建议另存副本保留旧版可用的工程。
 
-## 智能应用控制与签名
-
-当前安装器及主程序尚未做受信任的代码签名。Windows 智能应用控制可能提示“无法验证发布者”并拦截；这与下载哈希不一致是不同问题，关闭普通实时杀毒也不会解除 SAC 拦截。
-
-此安装器不会关闭安全防护、修改执行策略、添加白名单或防护排除。长期解决方式是由发布者使用受信任的代码签名证书签署相关可执行组件。微软说明：[SAC 常见问题](https://support.microsoft.com/en-us/windows/security/threat-malware-protection/smart-app-control-frequently-asked-questions)。
-
-## 工程和原版
-
-安装升级不转换或删除个人工程与原片。继续工作时，在应用中打开原工程文件。原有源码文件夹及桌面便携 EXE 版保留；不要把安装目标手动指定为源码目录。
-
-安装完成后不能只移动 `OKK STUDIO.exe`，必须保留完整目录结构和运行库。卸载安装版使用 Windows 的应用卸载入口。
+安装包和主程序目前未进行受信任代码签名。Windows 智能应用控制可能拦截；安装器不修改系统防护设置。
