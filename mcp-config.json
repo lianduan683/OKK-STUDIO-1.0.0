@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "okk-studio": {
+      "command": "C:/path/to/OKK-STUDIO/.venv-mcp/Scripts/python.exe",
+      "args": [
+        "C:/path/to/OKK-STUDIO/source/okk_mcp_server.py"
+      ]
+    }
+  }
+}

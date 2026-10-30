@@ -1,0 +1,11 @@
+{
+  "schema": "okk.effect-instance/1.0",
+  "id": "blur-instance-001",
+  "effect_id": "org.okk.effects.blur",
+  "effect_version": "1.0.0",
+  "enabled": true,
+  "fps": {"num": 30000, "den": 1001},
+  "timing": {"start_frame": 0, "duration_frames": 90},
+  "parameters": {"blur": 45},
+  "keyframes": {}
+}

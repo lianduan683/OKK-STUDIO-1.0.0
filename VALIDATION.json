@@ -1,41 +1,51 @@
 {
-  "version": "1.0.5",
-  "build_id": "20261030-191345-d1a0fd9c",
-  "regression_tests_run": 118,
-  "regression_tests_passed": 118,
-  "regression_tests_skipped": 0,
-  "test_modules": [
-    "test_prerender",
-    "test_project_settings",
-    "test_configured_proxy",
-    "test_timeline_tracks",
-    "test_timeline_controls",
-    "test_timeline_audio_session",
-    "test_timeline_viewport",
-    "test_timeline_layout_ui",
-    "test_camera_rename",
-    "test_multicam_quick_proxy",
-    "test_gpu_live_session",
-    "test_project_open_compat"
-  ],
-  "ffmpeg_media_tests": "included",
+  "version": "1.0.6",
+  "build_id": "20261030-224059-131e5661",
+  "feature_regression": {
+    "run": 132,
+    "passed": 132,
+    "skipped": 0,
+    "modules": [
+      "exposure_check",
+      "exposure_ui",
+      "vision_review",
+      "camera_match",
+      "camera_match_ui",
+      "timeline_import",
+      "timeline_split",
+      "timeline_enable",
+      "effects_drag",
+      "autosave_settings",
+      "effect_contract",
+      "finishing_workspace",
+      "project_open_compat"
+    ]
+  },
+  "mcp_regression": {
+    "run": 26,
+    "passed": 26,
+    "skipped": 0,
+    "modules": [
+      "okk_automation",
+      "okk_mcp_bridge",
+      "okk_mcp_server",
+      "exposure_mcp"
+    ]
+  },
   "headless_executable_help_exit_code": 0,
-  "version_metadata": "1.0.5",
-  "frozen_modules_verified": [
-    "prerender",
-    "prerender_ui",
-    "project_settings",
-    "project_settings_ui",
-    "configured_proxy",
-    "timeline_tracks"
-  ],
+  "version_metadata": "1.0.6",
+  "frozen_modules_and_timeline_adapters": "verified",
   "archive_crc_checks": "passed",
-  "source_allowlist_and_private_path_check": "passed",
-  "installation_and_uninstallation_retested_for_this_build": false,
+  "source_allowlist_and_known_private_path_and_key_pattern_scan": "passed",
   "trusted_code_signature": false,
+  "installation_and_uninstallation_retested_for_this_build": false,
+  "real_provider_api_tested": false,
   "not_tested": [
-    "production installation and in-place upgrade",
+    "full test suite",
+    "production install and in-place upgrade",
     "online resource download during installation",
-    "full-length media and full-frame-rate playback across physical devices"
-  ]
+    "real external model provider calls",
+    "long media workloads across physical devices"
+  ],
+  "historical_test_failures": "See historical MCP_VALIDATION.json; not rerun as a full suite"
 }

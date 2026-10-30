@@ -95,7 +95,7 @@ def _input(project, clip, start, end):
     relevant = [item for item in project.stabilizations if item.camera == clip.camera
                 and item.source_id == clip.id and item.start < end and item.end > start]
     if not relevant:
-        return clip.path, 0., clip.duration, ''
+        return clip.path, clip.source_in, clip.source_in+clip.duration, ''
     treated = project.stabilization_at(clip.camera, (start + end) / 2, clip.id)
     if (treated is None or treated.start > start + 1e-6 or treated.end < end - 1e-6
             or any(item is not treated for item in relevant)):
@@ -117,6 +117,7 @@ def _signature(project, record):
             'source_range': (record.source_start, record.source_end),
             'kind': record.kind, 'opacity': record.opacity,
             'size': (record.width, record.height), 'fps': record.fps, 'project_fps': project.fps}
+    if clip.source_in: data['source_in'] = clip.source_in
     return hashlib.sha256(json.dumps(data, sort_keys=True, ensure_ascii=True).encode()).hexdigest()
 
 
@@ -224,8 +225,8 @@ def prepare_library_overlay(project, start, end, asset, opacity, ffmpeg, ffprobe
         raise ValueError('素材特效文件缺失或类型无效。')
     # Include source handles so centred transitions can still read either side.
     handles = max([1., *(item.duration for item in project.transitions)])
-    source_start = max(origin, math.floor((start-clip.start-handles)*fps)/fps)
-    source_end = min(limit, math.ceil((end-clip.start+handles)*fps)/fps)
+    source_start = max(origin, math.floor((start-clip.source_origin-handles)*fps)/fps)
+    source_end = min(limit, math.ceil((end-clip.source_origin+handles)*fps)/fps)
     record = LibraryOverlayRange(start, end, camera, clip.id, asset_file, asset.kind, float(opacity),
         source_start, source_end, '', '0'*64, media.width, media.height, fps, asset_name=asset.name)
     record.signature = _signature(project, record)
@@ -246,7 +247,7 @@ def prepare_library_overlay(project, start, end, asset, opacity, ffmpeg, ffprobe
     with tempfile.TemporaryDirectory(prefix='overlay_', dir=folder) as temporary:
         output = Path(temporary)/'render.mkv'
         for encoder in ('hevc_nvenc', 'libx265'):
-            lead_frames = max(0, round((start - clip.start - source_start) * fps))
+            lead_frames = max(0, round((start - clip.source_origin - source_start) * fps))
             command, count = _command(ffmpeg, path, origin, record, output, media, encoder, lead_frames)
             if progress: progress(0., '生成原分辨率素材叠加 · ' + encoder)
             try:

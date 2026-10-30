@@ -176,7 +176,6 @@ class TimelineInteractionMixin:
             redo=list(self.redo_stack), undo=list(self.undo_stack))
         self._capture_timeline_geometry()
         self.timeline.configure(cursor='sb_h_double_arrow')
-        self.seek(position)
         self.status.set('拖动节目轨切点，调整两侧片段长度；Esc 取消。')
         return True
 
@@ -201,7 +200,6 @@ class TimelineInteractionMixin:
             self.selected_program_range = tuple(value if math.floor(point*self.project.fps+.5)
                 == math.floor(previous*self.project.fps+.5) else point for point in self.selected_program_range)
         drag['current'] = value
-        self.seek(value)
         self._queue_timeline_redraw()
         self.status.set(f'切点 {format_signed_time(value)} · Ctrl+Z 撤销 · Esc 取消拖动')
         return True
@@ -224,7 +222,6 @@ class TimelineInteractionMixin:
             self.selected_program_range = drag['selection']
         self._rekey_timeline_boundary(drag, reverted)
         self._refresh(reconfigure=drag['changed'])
-        self.seek(drag['original'] if reverted else drag['current'])
         if drag['changed']:
             self.status.set('已取消切点拖动。' if reverted else
                             f'切点已移至 {format_signed_time(drag["current"])}；Ctrl+Z 撤销。')

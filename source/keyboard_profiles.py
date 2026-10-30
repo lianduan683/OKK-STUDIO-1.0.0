@@ -7,8 +7,9 @@ from shortcut_keys import canonical_key
 
 PROFILE_LABELS = {'current': '当前键位', 'resolve': 'DaVinci Resolve', 'premiere': 'Premiere Pro'}
 COMMON = {'space': 'toggle', 'Left': 'previous_frame', 'Right': 'next_frame',
-          'm': 'marker', 'Delete': 'delete', 'BackSpace': 'delete', 'Escape': 'escape',
+          'm': 'marker', 'd': 'toggle_clip_enabled', 'Delete': 'delete', 'BackSpace': 'delete', 'Escape': 'escape',
           'Ctrl+z': 'undo', 'Ctrl+s': 'save', 'Ctrl+a': 'select_all',
+          'Shift+9': 'project_settings', 'Ctrl+b': 'split_timeline',
           **{str(i): f'camera_{i}' for i in range(1, 10)}}
 EDITING = {'j': 'reverse', 'k': 'pause', 'l': 'play', 'i': 'mark_in', 'o': 'mark_out',
            'Shift+i': 'go_in', 'Shift+o': 'go_out', 'Up': 'previous_cut', 'Down': 'next_cut',
@@ -16,7 +17,7 @@ EDITING = {'j': 'reverse', 'k': 'pause', 'l': 'play', 'i': 'mark_in', 'o': 'mark
            'Ctrl+o': 'open', 'Ctrl+Shift+s': 'save_as', 'Ctrl+Alt+k': 'show_keys'}
 PROFILE_BINDINGS = {
     'current': {**COMMON, 'c': 'split', 'Ctrl+y': 'redo'},
-    'resolve': {**COMMON, **EDITING, 'a': 'select_tool', 'b': 'razor_tool', 'Ctrl+b': 'split',
+    'resolve': {**COMMON, **EDITING, 'a': 'select_tool', 'b': 'razor_tool',
                 'Alt+i': 'clear_in', 'Alt+o': 'clear_out', 'Alt+x': 'clear_range',
                 'Ctrl+=': 'zoom_in', 'Ctrl+Shift+=': 'zoom_in', 'Ctrl+-': 'zoom_out', 'Shift+z': 'fit'},
     'premiere': {**COMMON, **EDITING, 'v': 'select_tool', 'c': 'razor_tool', 'Ctrl+k': 'split',
@@ -37,6 +38,9 @@ ACTION_LABELS = {
     'select_all': '全选素材与字幕', 'deselect': '取消选中', 'delete': '删除所选内容',
     'escape': '取消操作 / 返回选择工具', 'zoom_in': '放大时间线', 'zoom_out': '缩小时间线',
     'fit': '适配时间线', 'show_keys': '查看键位表',
+    'project_settings': '打开工程设置',
+    'split_timeline': '在播放头切开所选素材；无选择时切开所有轨道',
+    'toggle_clip_enabled': '禁用 / 启用所选素材',
 }
 
 def checked_profile(profile):
@@ -50,6 +54,8 @@ def shortcut_action(profile, event):
     if os.name == 'nt' and code in {0xBB, 0xBD, 0xDC}:
         key = {0xBB: '=', 0xBD: '-', 0xDC: '\\'}[code]
     shift, ctrl, alt = bool(state & 1), bool(state & 4), bool(state & (0x20000 | 8))
+    if shift and not ctrl and not alt and (key == '9' or key == '('):
+        return 'project_settings'
     # The original preset treated shifted editor keys like unshifted keys.
     if profile == 'current': shift = False
     chord = ('Ctrl+' if ctrl else '') + ('Alt+' if alt else '') + ('Shift+' if shift else '') + key

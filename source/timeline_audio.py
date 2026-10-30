@@ -56,6 +56,26 @@ class AudioSource:
         return self.start + self.duration
 
 
+@dataclass(slots=True)
+class MasterAudioClip:
+    id: str
+    start: float
+    duration: float
+    source_in: float = 0.
+    enabled: bool = True
+
+    @property
+    def end(self): return self.start + self.duration
+
+
+def master_audio_clips(project):
+    if not _get(project, 'master_audio', ''): return []
+    clips = _get(project, 'master_audio_clips', [])
+    if clips: return clips
+    duration = float(_get(project, 'master_duration', 0.)) or float(_get(project, 'duration', 0.))
+    return [MasterAudioClip('master', 0., duration)] if duration > 0 else []
+
+
 def source_audio_clips(project):
     """Resolve independent audio, including audio whose picture was deleted."""
     clips = _get(project, 'clips', [])
@@ -79,12 +99,15 @@ def audio_sources(project, *, enabled_only=True) -> list[AudioSource]:
     result = []
     master = _get(project, 'master_audio', '')
     if master and (not enabled_only or audio_track_enabled(project, 0)):
-        master_duration = float(_get(project, 'master_duration', 0.)) or duration
-        if master_duration > 0:
-            result.append(AudioSource(0, str(master), 0., min(duration, master_duration)))
+        for clip in master_audio_clips(project):
+            if enabled_only and not clip.enabled: continue
+            length = min(duration, clip.end)-clip.start
+            if length > 0:
+                result.append(AudioSource(0, str(master), clip.start, length, clip.source_in, clip.id))
     for camera in _camera_ids(project):
         if enabled_only and not audio_track_enabled(project, camera): continue
-        track_clips = [clip for clip in clips if _get(clip, 'camera') == camera]
+        track_clips = [clip for clip in clips if _get(clip, 'camera') == camera
+                       and (not enabled_only or _get(clip, 'enabled', True))]
         # Keep both interval edges so an older recording resumes after a short
         # overlapping take, exactly as MulticamProject.clip_at does for video.
         points = sorted({0., duration, *[max(0., min(duration, value))
@@ -109,7 +132,7 @@ def audio_sources(project, *, enabled_only=True) -> list[AudioSource]:
             clip = active[0][1]
             if _get(clip, 'has_audio') is False: continue
             source = AudioSource(camera, str(_get(clip, 'path', '')), left, right-left,
-                                 left-float(_get(clip, 'start', 0.)), str(_get(clip, 'id', '')))
+                                 left-float(_get(clip, 'start', 0.))+float(_get(clip, 'source_in', 0.)), str(_get(clip, 'id', '')))
             if (result and result[-1].track == source.track and result[-1].clip_id == source.clip_id
                     and abs(result[-1].end-source.start) < 1e-8):
                 result[-1] = replace(result[-1], duration=result[-1].duration+source.duration)
@@ -152,7 +175,26 @@ def probe_audio_sources(ffprobe, sources, cancel_event=None, *, probe=None):
             if length <= 0: continue
             source = replace(source, duration=length)
         result.append(source)
-    return result, info
+    return coalesce_audio_sources(result), info
+
+
+def coalesce_audio_sources(sources):
+    """Adjacent edit instances on one media clock need only one decoder.
+
+    A razor cut must not turn a continuous mono recording into a stereo mix
+    or run independent resamplers at each artificial boundary.
+    """
+    result = []
+    for source in sorted(sources, key=lambda item: (item.track, item.start)):
+        if result:
+            previous = result[-1]
+            if (previous.track == source.track and previous.path == source.path
+                    and abs(previous.end-source.start) < 1e-8
+                    and abs(previous.source_start+previous.duration-source.source_start) < 1e-8):
+                result[-1] = replace(previous, duration=previous.duration+source.duration)
+                continue
+        result.append(source)
+    return result
 
 
 def build_audio_mix_args(sources, start: float, duration: float, *, sample_rate=48000, input_offset=0):
@@ -167,6 +209,7 @@ def build_audio_mix_args(sources, start: float, duration: float, *, sample_rate=
     if type(sample_rate) is not int or not 8000 <= sample_rate <= 384000:
         raise ValueError('音轨采样率无效')
     inputs, filters, labels = [], [], []
+    sources = coalesce_audio_sources(sources)
     active = [(source, max(start, source.start), min(start+duration, source.end)) for source in sources
               if min(start+duration, source.end)-max(start, source.start) > 1e-9]
     multiple = len(active) > 1

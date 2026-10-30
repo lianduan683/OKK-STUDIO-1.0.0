@@ -80,7 +80,7 @@ def compile_live_transitions(project, *, use_proxies=True):
                 raise ValueError('GPU 转场的防抖或代理素材缺少入口余量，请重新准备或缩短转场。')
             if key and key[0] == 'stabilized':
                 treated = project.stabilization_at(camera, anchor, clip.id)
-                if treated is not None and last/fps > clip.start+treated.source_end+1e-6:
+                if treated is not None and last/fps > clip.source_origin+treated.source_end+1e-6:
                     raise ValueError('GPU 转场的防抖素材缺少出口余量，请重新准备或缩短转场。')
             return LiveSide(camera, clip.id, str(path), tuple(key), epoch, anchor)
         result.append(LiveTransitionPlan(effect.kind, first, cut, last, fps,

@@ -1,0 +1,64 @@
+{
+  "date": "2026-10-31",
+  "timezone": "Asia/Shanghai",
+  "implementation": "github-release-work source development version",
+  "installed_release_rebuilt": false,
+  "mcp_tool_count": 18,
+  "mcp_and_existing_cli_suite": {
+    "command": ".venv-mcp/Scripts/python.exe -m unittest discover -s source/tests -p test_okk_*.py -v",
+    "total": 29,
+    "passed": 29,
+    "new_mcp_tests": 25,
+    "existing_cli_tests": 4,
+    "log": "mcp-tests.log"
+  },
+  "verified": [
+    "Official Python MCP client: stdio and loopback Streamable HTTP",
+    "Legacy 2025-03-26 protocol negotiation",
+    "Structured tool output plus native JPEG image content",
+    "Official MCP client through subprocess and authenticated bridge to real Tk editor",
+    "Atomic preview/apply and native undo/redo",
+    "Stale revisions, expired plans, busy editor rejection, UI failure rollback",
+    "Frame-clock usage, source offsets, overlaps, gaps, ranges and transparent layers",
+    "Full-project section preservation and portable save-copy round trip",
+    "Existing output protection and overwrite backups",
+    "Synthetic-media H.264/AAC render and FFprobe duration verification",
+    "Export cancellation, failure reporting and concurrent output-file protection",
+    "Build input check, module compilation, JSON/TOML configuration parsing"
+  ],
+  "extended_existing_regression": {
+    "total": 65,
+    "passed": 62,
+    "failed": 3,
+    "log": "mcp-regression-tests.log",
+    "failures": [
+      {
+        "test": "test_context_menu_switch_and_colour_action_hide_timeline_restore_on_exit",
+        "reason": "Existing menu assertion reads a separator as an item with a label"
+      },
+      {
+        "test": "test_arrow_keys_move_one_frame_and_input_widgets_keep_their_keys",
+        "reason": "Existing rapid-key-repeat assertion differs from current workspace behavior"
+      },
+      {
+        "test": "test_mouse_selection_c_cut_and_repeat_select_right_segment_and_persist",
+        "reason": "Existing assertion expects project format 8; current monitor layout saves format 14"
+      }
+    ],
+    "isolated_reproduction": {
+      "test_module": "tests.test_program_edit_ui",
+      "total": 6,
+      "passed": 3,
+      "failed": 3,
+      "mcp_modules_loaded": [],
+      "log": "mcp-legacy-ui-isolation.log"
+    }
+  },
+  "limitations": [
+    "Current cut boundaries can be measured; old projects have no complete historical razor-action log",
+    "Model inference is supplied by the external harness; no model API is called by this server",
+    "Source frames are before effects; existing subtitles are readable but ASR is not included",
+    "No individual third-party branded harness UI was tested",
+    "Existing release installer was not rebuilt or published"
+  ]
+}

@@ -17,6 +17,8 @@ from editor_core import format_time, parse_timecode
 from program_edits import program_spans
 from color_curve_editor import CurveEditor
 from auto_color_panel import AutoColorPanel
+from camera_match_panel import CameraMatchPanel
+from exposure_panel import ExposurePanel
 
 
 BG, PANEL, INPUT = '#202124', '#292b2e', '#18191b'
@@ -364,6 +366,12 @@ class ColorWorkspace(tk.Frame):
                    style='Compact.TButton').pack(side='right', padx=self.px(6))
         ttk.Button(header, text='预览当前效果', command=workspace.preview_effects,
                    style='Compact.TButton').pack(side='right', padx=self.px(3))
+        self.camera_match_button = ttk.Button(header, text='标准机位匹配',
+                    command=lambda: self.grading_tabs.select(self.camera_match_panel), style='Compact.TButton')
+        self.camera_match_button.pack(side='right', padx=self.px(3))
+        self.exposure_button = ttk.Button(header, text='曝光检测',
+                    command=lambda: self.grading_tabs.select(self.exposure_panel), style='Compact.TButton')
+        self.exposure_button.pack(side='right', padx=self.px(3))
         ttk.Button(header, text='剪切 C', command=workspace.split_program_at_playhead,
                    style='Compact.TButton').pack(side='right', padx=self.px(3))
         selection_row = tk.Frame(self, bg=BG)
@@ -398,6 +406,10 @@ class ColorWorkspace(tk.Frame):
         self.grading_tabs.add(self.curves_tab, text='曲线')
         self.auto_panel=AutoColorPanel(self.grading_tabs,self)
         self.grading_tabs.add(self.auto_panel,text='自动 / 人像')
+        self.camera_match_panel=CameraMatchPanel(self.grading_tabs,self)
+        self.grading_tabs.add(self.camera_match_panel,text='机位匹配')
+        self.exposure_panel = ExposurePanel(self.grading_tabs, self)
+        self.grading_tabs.add(self.exposure_panel, text='曝光检测')
         self.grading_tabs.bind('<<NotebookTabChanged>>', self._grading_tab_changed)
         # The controls scroll vertically when the bottom pane is short.  The
         # selected time range stays visible above them.
@@ -425,12 +437,46 @@ class ColorWorkspace(tk.Frame):
                              font=('Microsoft YaHei UI', 8))
         self._layout_controls(self.px(1000))
         self._install_scroll(self.controls)
-        self.curve_editor = CurveEditor(self.curves_tab, self)
-        self.curve_editor.pack(fill='both', expand=True)
+        # A common parent lets the dedicated Color page display curves beside
+        # the wheels while the compact inspector can keep its existing tabs.
+        self.curve_editor = CurveEditor(self, self)
+        self.curve_editor.pack(in_=self.curves_tab, fill='both', expand=True)
+        self._full_page = False
+        self.combined_controls = tk.Frame(self, bg=BG)
+        self.combined_controls.columnconfigure(0, weight=3, uniform='grading')
+        self.combined_controls.columnconfigure(1, weight=2, uniform='grading')
+        self.combined_controls.rowconfigure(0, weight=1)
         self.refresh()
 
     def px(self, value):
         return self.ws._px(value)
+
+    def set_full_page(self, enabled):
+        if self._full_page == enabled:
+            return
+        self.cancel_drafts()
+        self._full_page = enabled
+        self.curve_editor.pack_forget()
+        self.curve_editor.grid_forget()
+        self.grading_tabs.pack_forget()
+        self.grading_tabs.grid_forget()
+        if enabled:
+            if self.grading_tabs.select() == str(self.curves_tab):
+                self.grading_tabs.select(self.wheels_tab)
+            self.grading_tabs.tab(self.curves_tab, state='disabled')
+            self.combined_controls.pack(fill='both', expand=True)
+            self.grading_tabs.grid(in_=self.combined_controls, row=0, column=0, sticky='nsew')
+            self.curve_editor.grid(in_=self.combined_controls, row=0, column=1, sticky='nsew')
+        else:
+            self.combined_controls.pack_forget()
+            self.grading_tabs.tab(self.curves_tab, state='normal')
+            self.grading_tabs.pack(fill='both', expand=True)
+            self.curve_editor.pack(in_=self.curves_tab, fill='both', expand=True)
+        self.grading_tabs.lift()
+        self.curve_editor.lift()
+        self._columns = 0
+        if enabled:
+            self._grading_tab_changed()
 
     def available(self):
         return self.ws._available()
@@ -471,6 +517,17 @@ class ColorWorkspace(tk.Frame):
     def _grading_tab_changed(self, event=None):
         if vars(self).get('curve_editor') is not None:
             self.cancel_drafts()
+        if vars(self).get('_full_page') and vars(self).get('exposure_panel'):
+            inspection = self.grading_tabs.select() == str(self.exposure_panel)
+            self.combined_controls.columnconfigure(0, weight=1 if inspection else 3,
+                                                   uniform='' if inspection else 'grading')
+            self.combined_controls.columnconfigure(1, weight=0 if inspection else 2,
+                                                   uniform='' if inspection else 'grading')
+            if inspection:
+                self.curve_editor.grid_remove()
+            else:
+                self.curve_editor.grid(in_=self.combined_controls, row=0, column=1, sticky='nsew')
+                self.curve_editor.lift()
 
     def _scope_changed(self, event=None):
         if self._refreshing or not self.available():
@@ -519,7 +576,8 @@ class ColorWorkspace(tk.Frame):
         self._layout_controls(event.width)
 
     def _layout_controls(self, width):
-        columns = 4 if width >= self.px(900) else (2 if width >= self.px(460) else 1)
+        threshold = 640 if vars(self).get('_full_page') else 900
+        columns = 4 if width >= self.px(threshold) else (2 if width >= self.px(460) else 1)
         if columns != self._columns:
             for index in range(4):
                 self.controls.columnconfigure(index, weight=1 if index < columns else 0,
@@ -554,6 +612,7 @@ class ColorWorkspace(tk.Frame):
         self._refreshing = True
         try:
             if vars(self).get('auto_panel'):self.auto_panel.refresh_reference_choices()
+            if vars(self).get('camera_match_panel'):self.camera_match_panel.refresh_choices()
             token = self.target_token()
             if self._active_target_token is not None and token != self._active_target_token:
                 self.cancel_drafts()

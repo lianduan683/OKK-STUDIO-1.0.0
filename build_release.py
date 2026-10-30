@@ -1,4 +1,4 @@
-"""Build OKK STUDIO 1.0.5 into a fresh, private output directory.
+"""Build OKK STUDIO 1.0.6 into a fresh, private output directory.
 
 No network access, source edits, old-output deletion, uploads, or security changes.
 Run --check first. Python dependencies and Inno Setup must already be installed.
@@ -18,14 +18,15 @@ import sys
 import uuid
 import zipfile
 
-VERSION = '1.0.5'
+VERSION = '1.0.6'
 ROOT = Path(__file__).resolve().parent
 REPOSITORY = 'https://github.com/lianduan683/OKK-STUDIO-1.0.0'
-TEMPLATES = ('OKK_STUDIO_1.0.5.spec', 'version_info.txt',
-             'OKK-STUDIO-1.0.5-Setup.iss', 'installer_info.txt',
+TEMPLATES = ('OKK_STUDIO_1.0.6.spec', 'version_info.txt',
+             'OKK-STUDIO-1.0.6-Setup.iss', 'installer_info.txt',
              'small_assets.json', 'resource_packages.json', 'build_release.py')
 PUBLIC_DOCS = ('README.md', 'INSTALLATION.md', 'CHANGELOG.md', 'BUILDING.md',
-               'THIRD_PARTY_NOTICES.md', 'LICENSE')
+               'MCP.md', 'EXPOSURE.md', 'EFFECT_CONTRACT.md', 'THIRD_PARTY_NOTICES.md', 'TIMELINE_IMPORT.md', 'LICENSE')
+MCP_SUPPORT = ('mcp-config.json', 'codex-mcp.toml', 'start-editor-mcp.cmd', 'MCP_VALIDATION.json')
 FORBIDDEN_TOP = {'work', 'backups', 'projects', 'tests', '.git', '.mimosa', '.zcode',
                  '__pycache__', 'workspace-layout.json', 'bin'}
 
@@ -119,10 +120,10 @@ def checked_inputs(args):
     expected_names = {f'OKK-STUDIO-1.0.0-resources-{i:02d}.zip' for i in range(1, 5)}
     if {item['name'] for item in resources} != expected_names or len(resources) != 4:
         raise ValueError('Exactly four frozen 1.0.0 resource packages are required')
-    iss = (ROOT/'OKK-STUDIO-1.0.5-Setup.iss').read_text(encoding='utf-8')
+    iss = (ROOT/'OKK-STUDIO-1.0.6-Setup.iss').read_text(encoding='utf-8')
     if 'AppId=OKKSTUDIO.1.0.0' not in iss or 'UsePreviousAppDir=yes' not in iss:
         raise ValueError('Upgrade application identity or previous-directory behavior changed')
-    if 'core.zip' in iss or 'dist\\OKK STUDIO 1.0.5\\*' not in iss:
+    if 'core.zip' in iss or 'dist\\OKK STUDIO 1.0.6\\*' not in iss:
         raise ValueError('Setup must embed core files directly, with no core ZIP download')
     for item in resources:
         if item['url'] != REPOSITORY + '/releases/download/v1.0.0/' + item['name']:
@@ -131,7 +132,7 @@ def checked_inputs(args):
             raise ValueError('Malformed resource SHA256')
         if item['url'] not in iss or item['sha256'] not in iss:
             raise ValueError('Installer resource URL/hash disagrees with the frozen manifest')
-    for name in TEMPLATES:
+    for name in (*TEMPLATES, *MCP_SUPPORT):
         if not (ROOT/name).is_file():
             raise ValueError(f'Missing build template: {name}')
     docs = ROOT/'public_repo'
@@ -205,11 +206,16 @@ def build(args):
         if sha256(copied) != before or sha256(test) != before:
             raise RuntimeError('Regression source changed while staging; finish edits and start a new build')
         test_snapshots.append({'path': 'tests/'+test.name, 'sha256': before, 'size': copied.stat().st_size})
-    for name in ('LICENSE', 'requirements-build.txt'):
+    for name in ('LICENSE', 'requirements-build.txt', 'requirements-mcp.txt'):
         copy_new(source/name, stage/name)
+    copy_new(source/'effect_contract_schema.json', stage/'effect_contract_schema.json')
+    for item in sorted((source/'effect_contract_examples').rglob('*.json')):
+        if item.is_symlink():
+            raise ValueError('Effect examples must be regular files')
+        copy_new(item, stage/item.relative_to(source))
     for item in assets:
         copy_new(asset_root/item['path'], stage/'assets'/item['path'])
-    for name in TEMPLATES:
+    for name in (*TEMPLATES, *MCP_SUPPORT):
         copy_new(ROOT/name, run/name)
     for name in PUBLIC_DOCS:
         copy_new(docs/name, run/'public_docs'/name)
@@ -221,9 +227,9 @@ def build(args):
     environment['TEMP'] = str(temporary)
     environment['TMP'] = str(temporary)
     command = [str(args.python), '-m', 'PyInstaller', '--noconfirm', '--distpath', str(run/'dist'),
-               '--workpath', str(run/'pyinstaller-work'), str(run/'OKK_STUDIO_1.0.5.spec')]
+               '--workpath', str(run/'pyinstaller-work'), str(run/'OKK_STUDIO_1.0.6.spec')]
     run_logged(command, run, run/'build.log', environment)
-    dist = output_path(run/'dist'/'OKK STUDIO 1.0.5')
+    dist = output_path(run/'dist'/'OKK STUDIO 1.0.6')
     if not (dist/'OKK STUDIO.exe').is_file():
         raise RuntimeError('PyInstaller did not produce the application executable')
     copy_new(stage/'LICENSE', dist/'LICENSE')
@@ -241,11 +247,11 @@ def build(args):
             raise RuntimeError(f'Forbidden core content: {relative}')
         if relative.parts[0] == 'assets' and relative.as_posix() not in {'assets/'+item['path'] for item in assets}:
             raise RuntimeError(f'Unexpected asset in core: {relative}')
-    core = zip_new(artifacts/'OKK-STUDIO-1.0.5-core.zip', [(p, p.relative_to(dist).as_posix()) for p in dist_files])
+    core = zip_new(artifacts/'OKK-STUDIO-1.0.6-core.zip', [(p, p.relative_to(dist).as_posix()) for p in dist_files])
     core.update({'uncompressed_size': total, 'embedded_in_setup': True,
-                 'url': REPOSITORY+'/releases/download/v1.0.5/'+core['name']})
-    run_logged([str(args.iscc), str(run/'OKK-STUDIO-1.0.5-Setup.iss')], run, run/'installer-build.log', environment)
-    setup = artifacts/'OKK-STUDIO-1.0.5-Setup.exe'
+                 'url': REPOSITORY+'/releases/download/v1.0.6/'+core['name']})
+    run_logged([str(args.iscc), str(run/'OKK-STUDIO-1.0.6-Setup.iss')], run, run/'installer-build.log', environment)
+    setup = artifacts/'OKK-STUDIO-1.0.6-Setup.exe'
     if not setup.is_file():
         raise RuntimeError('Inno Setup did not produce the installer')
     packages = {'version': VERSION, 'core_distribution': 'embedded-in-setup', 'core': core,
@@ -256,12 +262,12 @@ def build(args):
     public = run/'public_repo'
     for name in PUBLIC_DOCS:
         copy_new(run/'public_docs'/name, public/name)
-    for name in (*TEMPLATES, 'packages.json', 'RESOURCE-SHA256SUMS.txt'):
+    for name in (*TEMPLATES, *MCP_SUPPORT, 'packages.json', 'RESOURCE-SHA256SUMS.txt'):
         copy_new(run/name, public/name)
     source_entries = [(p, 'source/'+p.relative_to(stage).as_posix()) for p in stage.rglob('*') if p.is_file()]
-    source_entries += [(public/name, name) for name in (*PUBLIC_DOCS, *TEMPLATES, 'packages.json', 'RESOURCE-SHA256SUMS.txt')]
+    source_entries += [(public/name, name) for name in (*PUBLIC_DOCS, *TEMPLATES, *MCP_SUPPORT, 'packages.json', 'RESOURCE-SHA256SUMS.txt')]
     source_entries += [(run/'public_docs'/name, 'public_docs/'+name) for name in PUBLIC_DOCS]
-    source_zip = zip_new(artifacts/'OKK-STUDIO-1.0.5-source.zip', source_entries)
+    source_zip = zip_new(artifacts/'OKK-STUDIO-1.0.6-source.zip', source_entries)
     new_assets = [setup, artifacts/core['name'], artifacts/source_zip['name']]
     sums = ''.join(sha256(path)+'  '+path.name+'\n' for path in new_assets)
     write_new(artifacts/'SHA256SUMS.txt', sums)

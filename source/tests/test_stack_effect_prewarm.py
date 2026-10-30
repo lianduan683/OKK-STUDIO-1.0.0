@@ -11,6 +11,7 @@ from unittest.mock import patch
 from multicam_core import MulticamProject
 from video_stack_preview import PreviewCancelled, StackPreview
 from video_stack_player import VideoStackPlayerMixin
+from video_stack_render import StackSegment
 
 
 class StackPrewarmTests(unittest.TestCase):
@@ -64,7 +65,7 @@ class StackPrewarmTests(unittest.TestCase):
 
     def render(self, count=5, playing=True):
         self.preview.set_playing(playing)
-        segments = [SimpleNamespace(start=float(index), duration=1., frames=30, layers=())
+        segments = [StackSegment(start=float(index), duration=1., frames=30, layers=())
                     for index in range(count)]
         project = MulticamProject(master_duration=float(count), fps=30.)
         job = (0, project, 0., playing, 1, None, False, None)
@@ -75,9 +76,11 @@ class StackPrewarmTests(unittest.TestCase):
                 patch('video_stack_preview.subprocess.Popen', side_effect=self.spawn):
             self.preview._render(job, self.cancel)
 
-    def test_next_effect_process_starts_before_current_segment_is_consumed(self):
+    def test_next_effect_process_starts_after_first_frame_and_before_current_is_consumed(self):
         self.render(count=12)
-        self.assertLess(self.events.index(('spawn', 1)), self.events.index(('read', 0)))
+        reads = [i for i, event in enumerate(self.events) if event == ('read', 0)]
+        self.assertLess(reads[0], self.events.index(('spawn', 1)))
+        self.assertLess(self.events.index(('spawn', 1)), reads[1])
         for identity in range(1, 11):
             self.assertLess(self.events.index(('wait', identity-1)), self.events.index(('spawn', identity+1)))
         self.assertEqual(self.max_owned, 2)
@@ -93,8 +96,9 @@ class StackPrewarmTests(unittest.TestCase):
 
     def test_navigation_cancellation_reaps_current_and_prepared_successor(self):
         def cancel_on_read(identity):
-            self.cancel.set()
-            with self.preview._condition: self.preview._terminate_locked()
+            if len(self.processes) > 1:
+                self.cancel.set()
+                with self.preview._condition: self.preview._terminate_locked()
         self.read_hook = cancel_on_read
         with self.assertRaises(PreviewCancelled): self.render(count=12)
         self.assertEqual(len(self.processes), 2)

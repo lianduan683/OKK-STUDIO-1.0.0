@@ -131,8 +131,8 @@ class EffectsWorkspaceMixin:
             try:
                 for index, item in enumerate(inputs):
                     clip = item['clip']
-                    first = max(0., item['start']-clip.start-2.5)
-                    last = min(clip.duration, item['end']-clip.start+2.5)
+                    first = max(0., item['start']-clip.source_origin-2.5)
+                    last = min(clip.source_in+clip.duration, item['end']-clip.source_origin+2.5)
                     output = folder/(uuid.uuid4().hex+'.mp4')
                     def progress(value, *extra):
                         percent = float(value)

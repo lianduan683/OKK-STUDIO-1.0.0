@@ -24,6 +24,7 @@ from effects_library import (load_overlay_assets, load_transition_masks, asset_p
 from effects_catalog import (GROUPS, catalog_categories, category_sort_key, overlay_metadata,
                              mask_metadata, query_words, searchable_text)
 from cache_paths import cache_dir
+from effects_drag import EffectDragMixin
 
 PANEL, INPUT, INK, MUTED, ACCENT = '#292b2e', '#18191b', '#dedfe3', '#969ba3', '#58a6d6'
 FONT = ('Microsoft YaHei UI', 9)
@@ -139,7 +140,7 @@ def apply_preset(workspace, preset: EffectPreset, strength=1., duration=.5) -> b
         _selected_range(workspace)
         before = copy.deepcopy(workspace.project.transitions)
         workspace.clear_grade_preview()
-        workspace.add_transition_at_selected_end(preset.action)
+        workspace.add_transition_at_selected_end(preset.action, duration=duration)
         return before != workspace.project.transitions
     if preset.kind in ('overlay','mask'):
         _selected_range(workspace)
@@ -164,7 +165,7 @@ def apply_preset(workspace, preset: EffectPreset, strength=1., duration=.5) -> b
     raise ValueError('无法识别此效果。')
 
 
-class EffectsBrowser(tk.Frame):
+class EffectsBrowser(EffectDragMixin, tk.Frame):
     def __init__(self,parent,workspace):
         super().__init__(parent,bg=PANEL)
         self.ws = workspace
@@ -177,7 +178,7 @@ class EffectsBrowser(tk.Frame):
         self.target_text = tk.StringVar(self)
         self.detail_text = tk.StringVar(self)
         self.category_text = tk.StringVar(self)
-        self.feedback = tk.StringVar(self,value='先选择节目片段，再选择效果并应用。')
+        self.feedback = tk.StringVar(self,value='拖动特效到节目／合成轨片段；拖动转场到两个片段的接缝。')
         self._previewing = False
         self._preview_selection = None
         self._poll_id = None
@@ -232,6 +233,7 @@ class EffectsBrowser(tk.Frame):
         scroll.pack(side='right',fill='y');self.list.configure(yscrollcommand=scroll.set)
         self.list.bind('<<TreeviewSelect>>',self._selection_changed)
         self.list.bind('<Double-1>',lambda event:self.apply())
+        self._init_effect_drag()
         detail_outer=tk.Frame(self,bg=PANEL)
         detail_outer.grid(row=4,column=0,sticky='nsew',padx=px(10),pady=(px(5),0))
         self.detail_canvas=tk.Canvas(detail_outer,bg=PANEL,highlightthickness=0,width=1,height=1,
@@ -260,7 +262,7 @@ class EffectsBrowser(tk.Frame):
         self.scale.pack(side='left',fill='x',expand=True,padx=px(5))
         tk.Label(self.strength_row,textvariable=self.strength_text,bg=PANEL,fg=INK,font=FONT,width=5).pack(side='right')
         self.duration_row=tk.Frame(self.detail_body,bg=PANEL)
-        tk.Label(self.duration_row,text='遮罩转场时长（秒）',bg=PANEL,fg=MUTED,font=FONT).pack(side='left')
+        tk.Label(self.duration_row,text='转场时长（秒）',bg=PANEL,fg=MUTED,font=FONT).pack(side='left')
         tk.Entry(self.duration_row,textvariable=self.duration,width=7,bg=INPUT,fg=INK,insertbackground=INK,relief='flat').pack(side='right')
         self.actions=tk.Frame(self,bg=PANEL);self.actions.grid(row=5,column=0,sticky='ew',padx=px(8),pady=(px(4),px(5)))
         self.actions.columnconfigure(0,weight=1)
@@ -378,7 +380,7 @@ class EffectsBrowser(tk.Frame):
         if item and item.kind=='overlay' and self.strength.get()<1:self.strength.set(1)
         self.strength_label.configure(text='不透明度' if item and item.kind=='overlay' else '强度')
         self.duration_row.grid_remove();self.strength_row.grid()
-        if item and item.kind=='mask':
+        if item and item.kind in ('transition','mask'):
             self.strength_row.grid_remove()
             self.duration_row.grid(row=1,column=0,sticky='ew',pady=self.ws._px(6))
         available=bool(item)
@@ -512,13 +514,18 @@ class EffectsBrowser(tk.Frame):
         if not quiet:self.feedback.set('已停止试看，恢复已保存的画面。')
 
     def _unmap(self,event):
-        if event.widget is self:self.stop_preview(quiet=True)
+        if event.widget is self:
+            self._effect_drag_cancel()
+            self.stop_preview(quiet=True)
 
     def apply(self):
         item=self.selected_preset()
         if not item:return False
+        return self._apply_item(item)
+
+    def _apply_item(self,item):
         try:
-            duration=float(self.duration.get()) if item.kind=='mask' else .5
+            duration=float(self.duration.get()) if item.kind in ('transition','mask') else .5
             changed=apply_preset(self.ws,item,self.strength.get()/100.,duration)
             self._previewing=False;self._preview_selection=None
             if changed:self.feedback.set(f'「{item.name}」'+('设置已打开。' if item.kind=='tool' else
@@ -550,6 +557,7 @@ class EffectsBrowser(tk.Frame):
         except ValueError as error:self.feedback.set(str(error));return False
 
     def destroy(self):
+        self._effect_drag_cancel()
         self.stop_preview(quiet=True)
         self._thumb_closed.set();self._thumb_requests.put(None)
         if self._poll_id is not None:

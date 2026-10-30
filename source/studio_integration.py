@@ -5,12 +5,14 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from studio_project import StudioProjectMixin
-from project_file import AUTOSAVE_INTERVAL_MS, autosave_path
+from project_file import autosave_path
 from media_pool_workspace import MediaPoolWorkspace
 from keyboard_profile_ui import KeyboardProfileSettingsMixin
+from autosave_settings import AutosaveSettingsMixin
+from okk_mcp_bridge import McpIntegrationMixin
 
 
-class StudioIntegrationMixin(KeyboardProfileSettingsMixin, StudioProjectMixin):
+class StudioIntegrationMixin(McpIntegrationMixin, AutosaveSettingsMixin, KeyboardProfileSettingsMixin, StudioProjectMixin):
     def _build_studio_menu(self, parent):
         button = tk.Menubutton(parent, text='工程 ▾', bg='#202124', fg='#dedfe3',
                                activebackground='#2c2e32', activeforeground='#dedfe3',
@@ -24,11 +26,22 @@ class StudioIntegrationMixin(KeyboardProfileSettingsMixin, StudioProjectMixin):
         self._project_recent_menu = tk.Menu(menu, tearoff=False)
         menu.add_cascade(label='最近的完整工程', menu=self._project_recent_menu)
         menu.add_command(label='恢复上次会话…', command=lambda: self._project_restore_autosave())
+        menu.add_command(label='导入时间线…', command=lambda: self.multicam_workspace.import_timeline())
         menu.add_separator()
         menu.add_command(label='媒体库…', command=lambda: self._show_media_library())
         menu.add_command(label='无损分段', command=lambda: self._show_lossless_tools())
         menu.add_command(label='生成剪辑代理', command=lambda: self._show_proxy_tools())
+        menu.add_separator()
+        menu.add_command(label='启用 / 关闭 MCP 连接', command=self._toggle_mcp_bridge)
+        menu.add_command(label='曝光检测…', command=self._show_exposure_check)
         self._init_keyboard_profile()
+        self._init_autosave_settings()
+
+
+    def _show_exposure_check(self):
+        self._select_page('color')
+        page = self.multicam_workspace.color_workspace
+        page.grading_tabs.select(page.exposure_panel)
 
     def _init_studio_integration(self):
         self._project_launcher = None
@@ -47,7 +60,7 @@ class StudioIntegrationMixin(KeyboardProfileSettingsMixin, StudioProjectMixin):
         self.media_pool_workspace = MediaPoolWorkspace(self, self._library_window)
         self.media_pool_workspace.pack(fill='both', expand=True)
         self._init_project_state()
-        self.after(AUTOSAVE_INTERVAL_MS, self._project_autosave_tick)
+        self._schedule_project_autosave()
         # Keep existing multicam Ctrl+S; whole-session shortcuts are distinct.
         self.bind('<Control-Shift-S>', lambda event: self._project_save_as())
         self.bind('<Control-Shift-O>', lambda event: self._project_open())

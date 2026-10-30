@@ -48,6 +48,7 @@ def remove_tracks(project, kind, tracks):
         delete_source_audio(project, {clip.id for clip in source_audio_clips(project) if clip.camera in tracks})
         if 0 in tracks:
             project.master_audio, project.master_duration = '', 0.
+            project.master_audio_clips = []
     else:
         raise ValueError('未知轨道类型')
     project.timeline_removed_tracks = sorted(set(project.timeline_removed_tracks) |

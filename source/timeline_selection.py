@@ -10,16 +10,47 @@ from timeline_track_move import track_move_targets, validate_track_move, apply_t
 from editor_core import format_signed_time, format_time
 from timeline_edits import (delete_source_clips, move_source_clips, source_move_delta,
                             remove_program_boundaries, program_boundaries_for_ranges, finalize_source_edit)
-from timeline_audio import source_audio_clips
+from timeline_audio import source_audio_clips, master_audio_clips
 from timeline_link import edit_keys, preserve_source_audio, move_source_audio, delete_source_audio
 
 
 class TimelineSelectionMixin:
     def _init_timeline_selection(self):
         self._timeline_selection = set()
+        self._clip_enabled_key_down = False
         self._selection_project = self.project
         self._selection_gesture = None
         self._selection_pan_after = None
+
+    def _clip_enabled_key_press(self):
+        if not self._clip_enabled_key_down:
+            self._toggle_timeline_selection_enabled()
+            self._clip_enabled_key_down = True
+        return 'break'
+
+    def _clip_enabled_key_release(self):
+        self._clip_enabled_key_down = False
+
+    def _toggle_timeline_selection_enabled(self):
+        if not self._available(): return False
+        if self._selection_gesture: self._finish_selection_gesture()
+        from timeline_enable import toggle_timeline_enabled
+        keys = set(self._timeline_selection)
+        try:
+            candidate, count, enabled, selection = toggle_timeline_enabled(self.project, keys)
+        except (ValueError, OSError) as error:
+            self.status.set(str(error)); return False
+        if not count:
+            self.status.set('请先选中时间线上的视频或音频素材，再按 D 禁用 / 启用。')
+            return False
+        self._stop_transport_hold()
+        self.pause()
+        self._remember_timeline_change()
+        self.project = candidate
+        self._refresh()
+        self._set_timeline_selection(selection)
+        self.status.set(('已启用' if enabled else '已禁用')+f' {count} 项所选素材；D 再次切换，Ctrl+Z 撤销。')
+        return True
 
     def _bind_timeline_selection(self):
         self.timeline.bind('<Delete>', self._delete_timeline_selection)
@@ -56,7 +87,9 @@ class TimelineSelectionMixin:
         for name, kind in (('timeline_clip_items', 'clip'), ('timeline_subtitle_items', 'subtitle'),
                            ('timeline_transition_items', 'transition'), ('timeline_program_items', 'program')):
             result.update((item, (kind, identifier)) for item, identifier in getattr(self, name, {}).items())
-        result.update((item, ('audio', 'master')) for item in getattr(self, 'timeline_audio_items', ()))
+        master_items = getattr(self, 'timeline_master_audio_items', {})
+        result.update((item, ('audio', master_items.get(item, 'master')))
+                      for item in getattr(self, 'timeline_audio_items', ()))
         result.update((item, ('camera_audio', identifier))
                       for item, identifier in getattr(self, 'timeline_camera_audio_items', {}).items())
         return result
@@ -115,9 +148,9 @@ class TimelineSelectionMixin:
                 linked = self.project.timeline_link_enabled and clip.id in videos
                 keys.add(('clip' if linked else 'camera_audio', clip.id))
         if audio and self.project.master_audio:
-            end = min(self._timeline_view_duration(), self.project.master_duration or self._timeline_view_duration())
-            if end > 0 and touches(tx(0.), audio[0]+self._px(3), tx(end), audio[1]-self._px(3)):
-                keys.add(('audio', 'master'))
+            for clip in master_audio_clips(self.project):
+                if touches(tx(clip.start), audio[0]+self._px(3), tx(clip.end), audio[1]-self._px(3)):
+                    keys.add(('audio', clip.id))
         return keys
 
     def _set_timeline_selection(self, keys, *, redraw=True):
@@ -193,7 +226,7 @@ class TimelineSelectionMixin:
             self._set_timeline_selection(selected)
             if key not in selected: return True
             if key[0] == 'audio':
-                self.status.set('已选中连续主音轨；右键或 Delete 取消绑定，Ctrl+Z 恢复。')
+                self.status.set('已选中主音频片段；Ctrl+B 切开，Delete 删除，Ctrl+Z 恢复。')
                 return True
             if key[0] in {'program', 'transition'}: return True
             effective = edit_keys(self.project, selected)
@@ -203,7 +236,6 @@ class TimelineSelectionMixin:
             cues = {cue.id: (cue.start, cue.end) for cue in self.project.subtitles.cues
                     if ('subtitle', cue.id) in selected}
             self._capture_timeline_geometry()
-            self.seek(self._timeline_pointer_time(event.x))
             self._selection_gesture = dict(kind='move', project=self.project,
                 x=self.timeline.canvasx(event.x), y=y, moved=False, changed=False, delta=0.,
                 clips=clips, cues=cues, audio=audio,
@@ -363,9 +395,14 @@ class TimelineSelectionMixin:
             before = len(candidate.transitions)
             candidate.transitions = [item for item in candidate.transitions if item.time not in times]
             count += before-len(candidate.transitions)
-            if ('audio', 'master') in keys and candidate.master_audio:
-                candidate.master_audio, candidate.master_duration = '', 0.
-                count += 1
+            master_ids = {identifier for kind, identifier in keys if kind == 'audio'}
+            if master_ids and candidate.master_audio:
+                before = master_audio_clips(candidate)
+                remaining = [clip for clip in before if clip.id not in master_ids]
+                count += len(before)-len(remaining)
+                candidate.master_audio_clips = remaining
+                if not remaining:
+                    candidate.master_audio, candidate.master_duration = '', 0.
             if count: finalize_source_edit(candidate)
         except ValueError as error:
             self.status.set(str(error)); return 'break'
@@ -408,6 +445,7 @@ class TimelineSelectionMixin:
         label = '取消绑定主音轨' if self._timeline_selection == {('audio', 'master')} else '删除所选内容'
         menu.add_command(label=label, accelerator='Delete', command=self._delete_timeline_selection)
         menu.add_command(label='全选素材与字幕', accelerator='Ctrl+A', command=self._select_all_timeline)
+        self._append_multicam_view_menu(menu)
         menu.add_separator()
         menu.add_command(label='撤销', accelerator='Ctrl+Z', command=self.undo,
                          state='normal' if self.undo_stack else 'disabled')

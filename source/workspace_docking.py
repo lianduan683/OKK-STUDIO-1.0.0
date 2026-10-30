@@ -65,10 +65,6 @@ class WorkspaceDockingMixin:
             item.add_command(label='隐藏', command=lambda value=key: self.dock_manager.hide(value))
             menu.add_cascade(label=title, menu=item)
         menu.add_separator()
-        append_keyboard_menu = getattr(self.app, '_append_keyboard_layout_menu', None)
-        if append_keyboard_menu is not None:
-            append_keyboard_menu(menu)
-            menu.add_separator()
         menu.add_command(label='保存当前布局', command=self.save_workspace_layout)
         menu.add_command(label='载入已保存布局', command=self._load_workspace_layout)
         menu.add_command(label='恢复默认布局', command=self.reset_workspace_layout)
@@ -98,7 +94,7 @@ class WorkspaceDockingMixin:
         if key == 'library' and vars(self).get('effects_browser') is None:
             return self.show_effects_library()
         if key == 'grading' and not self._color_mode:
-            self.enter_color_workspace()
+            self.enter_color_workspace(embedded=True)
         self.dock_manager.focus(key)
         widget = self._dock_widgets[key]
         self._tag_transport_widgets(widget)
@@ -163,7 +159,7 @@ class WorkspaceDockingMixin:
         try:
             visible = self.dock_manager.panel_location('grading') != 'hidden'
             if visible and not self._color_mode:
-                self.enter_color_workspace()
+                self.enter_color_workspace(embedded=True)
             elif not visible and self._color_mode:
                 self.exit_color_workspace()
         finally:
@@ -180,8 +176,14 @@ class WorkspaceDockingMixin:
             self.after_cancel(self._dock_save_after)
             self._dock_save_after = None
         try:
-            payload = self.dock_manager.serialize()
-            payload['workspace_chrome'] = self._workspace_chrome_state()
+            finishing = vars(self).get('finishing_workspace')
+            if finishing and finishing.saved_layout is not None:
+                import copy
+                payload = copy.deepcopy(finishing.saved_layout)
+                payload['workspace_chrome'] = finishing.saved_chrome
+            else:
+                payload = self.dock_manager.serialize()
+                payload['workspace_chrome'] = self._workspace_chrome_state()
             path = self._layout_file()
             path.parent.mkdir(parents=True, exist_ok=True)
             temporary = path.with_name(path.name + '.pending')

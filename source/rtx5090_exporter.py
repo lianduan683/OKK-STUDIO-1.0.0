@@ -95,7 +95,7 @@ from editor_core import build_proxy_encode_command, proxy_format_labels, resolve
 
 
 APP_NAME = "RTX 视频渲染工坊"
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.6"
 BG = "#18191b"
 SURFACE = "#202124"
 PANEL = "#242629"
@@ -401,14 +401,19 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
         basic = ttk.Frame(notebook, style="Panel.TFrame", padding=10)
         editor = ttk.Frame(notebook, style="Panel.TFrame", padding=8)
         multicam = ttk.Frame(notebook, style="Panel.TFrame", padding=0)
+        color = ttk.Frame(notebook, style="Panel.TFrame", padding=0)
+        delivery = ttk.Frame(notebook, style="Panel.TFrame", padding=0)
         log_tab = ttk.Frame(notebook, style="Panel.TFrame", padding=10)
-        self.page_frames = {"basic": basic, "editor": editor, "multicam": multicam, "log": log_tab}
+        self.page_frames = {"basic": basic, "editor": editor, "multicam": multicam,
+                            "color": color, "delivery": delivery, "log": log_tab}
         for name, frame in self.page_frames.items():
             notebook.add(frame, text=name)
         self._build_export_tab(basic)
         self._build_editor(editor)
-        self.multicam_workspace = MulticamWorkspace(multicam, self)
-        self.multicam_workspace.pack(fill="both", expand=True)
+        # Keep one editor and one set of native video surfaces across all three
+        # pages. A common parent allows packing into each notebook page.
+        self.multicam_workspace = MulticamWorkspace(notebook, self)
+        self.multicam_workspace.pack(in_=multicam, fill="both", expand=True)
         self._build_log(log_tab)
         notebook.bind("<<NotebookTabChanged>>", self._on_page_changed)
         self._select_page("multicam")
@@ -417,6 +422,7 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
             if project_index < len(sys.argv):
                 self.after_idle(lambda: self.multicam_workspace.load_project(sys.argv[project_index]))
 
+
     def _select_page(self, name: str) -> None:
         self.page_notebook.select(self.page_frames[name])
         self._on_page_changed()
@@ -424,26 +430,40 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
     def _on_page_changed(self, _event=None) -> None:
         selected = self.page_notebook.select()
         self.active_page = next((name for name, frame in self.page_frames.items() if str(frame) == selected), "multicam")
-        labels = {"basic": "转码与 GPU", "editor": "剪辑工具", "multicam": "多机位剪辑", "log": "任务日志"}
+        labels = {"basic": "转码与 GPU", "editor": "剪辑工具", "multicam": "多机位剪辑",
+                  "color": "调色", "delivery": "导出", "log": "任务日志"}
         self.page_title_var.set(labels[self.active_page])
         for name, button in self.page_buttons.items():
             button.configure(bg="#30363d" if name == self.active_page else SURFACE,
                              fg=TEXT if name == self.active_page else MUTED,
                              highlightbackground=PURPLE if name == self.active_page else SURFACE)
-        if self.active_page != "multicam":
+        if self.active_page in {"multicam", "color", "delivery"}:
+            ws = self.multicam_workspace
+            target = self.page_frames[self.active_page]
+            if str(ws.pack_info().get('in', '')) != str(target):
+                ws.pack_forget()
+                ws.pack(in_=target, fill="both", expand=True)
+            ws.finishing_workspace.show(self.active_page if self.active_page != 'multicam' else 'edit')
+        else:
             self.multicam_workspace.pause()
-        text = "交付 / 导出" if self.active_page == "multicam" else "开始转码" if self.active_page == "basic" else "导出设置"
+        text = ("渲染所有" if self.active_page == "delivery" else "交付 / 导出"
+                if self.active_page in {"multicam", "color"} else "开始转码"
+                if self.active_page == "basic" else "导出设置")
         self.export_button.configure(text=text)
+
 
     def _context_export(self) -> None:
         if self.working:
             return
-        if self.active_page == "multicam":
+        if self.active_page in {"multicam", "color"}:
             self.multicam_workspace.show_delivery()
+        elif self.active_page == "delivery":
+            self.multicam_workspace.finishing_workspace.start_queue()
         elif self.active_page == "basic":
             self._start_export()
         else:
             self._select_page("basic")
+
 
     def _show_hardware_info(self) -> None:
         messagebox.showinfo("硬件与任务状态", self.gpu_status_var.get() + "\n\n" +
@@ -4004,10 +4024,11 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
         holder = tk.Frame(nav, bg=SURFACE)
         holder.pack()
         for name, label in (("basic", "转码与 GPU"), ("editor", "剪辑工具"),
-                            ("multicam", "多机位剪辑"), ("log", "任务日志")):
+                            ("multicam", "多机位剪辑"), ("color", "调色"),
+                            ("delivery", "导出"), ("log", "任务日志")):
             button = tk.Button(holder, text=label, command=lambda key=name: self._select_page(key),
                                bg=SURFACE, fg=MUTED, activebackground=PANEL_ALT, activeforeground=TEXT,
-                               font=(UI_FONT, 9), width=15, padx=8, pady=6, bd=0,
+                               font=(UI_FONT, 9), width=12, padx=8, pady=6, bd=0,
                                highlightthickness=1, highlightbackground=SURFACE, relief="flat")
             button.pack(side="left", padx=2)
             self.page_buttons[name] = button
@@ -4019,6 +4040,7 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
                              activebackground=PANEL_ALT, activeforeground=TEXT,
                              relief="flat", font=(UI_FONT, 8))
         more.place(relx=1, rely=0.5, anchor="e", x=-12)
+
 
     def _redraw_shared_progress(self, *_args) -> None:
         """Keep small percentages readable without exaggerating the fill."""
@@ -5118,7 +5140,9 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
         if not self._project_confirm_discard():
             return
         self._write_project_autosave()
+        self._close_mcp_bridge()
         self._closing = True
+        self._schedule_project_autosave()
         self._invalidate_editor_player()
         self.lossless_workspace.close()
         if self.media_pool_workspace is not None:
@@ -5136,4 +5160,8 @@ if __name__ == "__main__":
 
         raise SystemExit(run_headless_cli(sys.argv[1:], app_directory()))
     enable_dpi_awareness()
-    ExporterApp().mainloop()
+    app = ExporterApp()
+    if '--mcp-bridge' in sys.argv:
+        from okk_mcp_bridge import LocalBridge
+        app._mcp_bridge = LocalBridge(app)
+    app.mainloop()

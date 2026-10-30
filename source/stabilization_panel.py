@@ -287,8 +287,8 @@ class StabilizationDialog(tk.Toplevel):
             self.start_button.configure(state='disabled')
         elif len(clips) == 1:
             clip = clips[0]
-            self.source_var.set(f'{Path(clip.path).name} · 原片 {format_time(max(0, first-clip.start))}'
-                                f' — {format_time(min(clip.duration, last-clip.start))}')
+            self.source_var.set(f'{Path(clip.path).name} · 原片 {format_time(max(0, first-clip.source_origin))}'
+                                f' — {format_time(min(clip.source_in+clip.duration, last-clip.source_origin))}')
         else:
             self.source_var.set(f'所选范围覆盖 {len(clips)} 个原片文件；开始时按实际素材范围检查。')
 

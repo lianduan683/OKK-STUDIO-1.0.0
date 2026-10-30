@@ -104,6 +104,21 @@ class LibraryOverlayTests(unittest.TestCase):
         self.assertEqual(json.loads(path.read_text(encoding='utf-8'))['version'],8)
         self.assertTrue(overlay_cache_matches(restored.library_overlays[0],restored,strict=True))
 
+    def test_source_split_keeps_both_overlay_halves_on_original_cache_clock(self):
+        from timeline_split import split_timeline
+        record = self.prepare()
+        self.project.library_overlays.append(record)
+        edit, count, _ = split_timeline(self.project, 1., {('clip', 'a')})
+        self.assertGreater(count, 0)
+        self.assertEqual(len(edit.library_overlays), 2)
+        for item in edit.library_overlays:
+            self.assertTrue(overlay_cache_matches(item, edit, strict=True))
+        for position in (.75, 1.25, 2.):
+            self.assertEqual(edit.media_at(1, position)[:2], self.project.media_at(1, position)[:2])
+        restored = MulticamProject.from_payload(edit.to_payload('.'), '.')
+        for item in restored.library_overlays:
+            self.assertTrue(overlay_cache_matches(item, restored, strict=True))
+
     def test_original_replacement_or_missing_cache_blocks_export_instead_of_dropping_effect(self):
         local=self.folder/'source.mp4';local.write_bytes(self.source.read_bytes())
         self.project.clips[0].path=str(local)

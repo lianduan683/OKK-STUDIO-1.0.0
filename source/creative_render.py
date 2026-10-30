@@ -57,7 +57,8 @@ def _continuous_clip(project, camera: int, first: int, last: int):
         candidates = [clip for clip in clips if _frame(clip.start, project.fps) <= left
                       and _frame(clip.end, project.fps) >= right]
         clip = max(candidates, key=lambda item: (item.start, item.id), default=None)
-        if clip is None or (selected is not None and clip.id != selected.id):
+        if clip is None or (selected is not None and clip.id != selected.id and
+                (clip.path != selected.path or abs(clip.source_origin-selected.source_origin) > 1e-8)):
             raise ValueError(f"机位 {camera} 的同一段原素材必须完整覆盖转场区间，请缩短转场或调整素材")
         selected = clip
     if selected is None:
@@ -108,13 +109,13 @@ def plan_creative_segments(project, segments) -> list:
         def resolve_side(camera, clip, sample):
             resolver = getattr(project, 'media_at', None)
             if not callable(resolver):
-                return clip.path, max(0.0, full_start-clip.start)
+                return clip.path, max(0.0, full_start-getattr(clip, "source_origin", clip.start))
             media = resolver(camera, sample, use_proxies=False)
             if media is None:
                 raise ValueError(f'机位 {camera} 的转场画面不可用')
             path, source_time, _ = media
             if str(path) == clip.path:
-                return clip.path, max(0.0, full_start-clip.start)
+                return clip.path, max(0.0, full_start-getattr(clip, "source_origin", clip.start))
             source_start = float(source_time) + full_start-sample
             if source_start < -1e-6:
                 raise ValueError('防抖缓存未完整覆盖转场前余量，请重新准备防抖或缩短转场')

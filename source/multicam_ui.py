@@ -32,6 +32,7 @@ from creative_core import ColorGrade, Transition, validate_grade, validate_trans
 from creative_render import plan_creative_segments
 from program_edits import program_spans, split_at, set_camera_on_range, set_grade_on_range, grade_at
 from color_workspace import ColorWorkspace
+from finishing_workspace import FinishingWorkspace
 from effect_workspace import EffectsWorkspaceMixin
 from stabilization_panel import open_stabilization_dialog
 from image_stabilization_panel import open_image_stabilization_dialog
@@ -65,6 +66,7 @@ from timeline_audio import source_audio_clips
 from project_settings_ui import ProjectSettingsMixin
 from playback_metrics import PlaybackMetricsUIMixin
 from prerender_ui import PrerenderUIMixin
+from timeline_import_ui import TimelineImportMixin
 
 BG = '#202124'
 PANEL = '#292b2e'
@@ -78,7 +80,7 @@ COLORS = ['#496e87', '#4b8289', '#667e9e', '#64867c', '#7c718d', '#7e8870', '#80
 VIDEO_TYPES = [('视频', '*.mp4 *.mov *.mkv *.mxf *.avi *.mts *.m2ts *.webm'), ('所有文件', '*.*')]
 
 
-class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsUIMixin, TimelineControlsMixin, CameraListUIMixin, KeyboardEditMixin, TimelineAudioUIMixin, TimelineMarkersMixin, CameraImportMixin, PreviewFocusMixin, TimelineMergeMixin, TimelineInsertMixin, TimelineSelectionMixin, StackPreviewUIMixin, VideoStackUIMixin, WorkspaceDockingMixin, TransportControlsMixin, TimelineInteractionMixin, MulticamProxyMixin, LibraryApplyMixin, AutoColorWorkspaceMixin, EffectsWorkspaceMixin, tk.Frame):
+class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsUIMixin, TimelineControlsMixin, CameraListUIMixin, KeyboardEditMixin, TimelineAudioUIMixin, TimelineMarkersMixin, CameraImportMixin, PreviewFocusMixin, TimelineMergeMixin, TimelineInsertMixin, TimelineSelectionMixin, StackPreviewUIMixin, VideoStackUIMixin, WorkspaceDockingMixin, TransportControlsMixin, TimelineInteractionMixin, MulticamProxyMixin, LibraryApplyMixin, AutoColorWorkspaceMixin, EffectsWorkspaceMixin, tk.Frame):
     def __init__(self, parent, app):
         super().__init__(parent, bg=BG)
         self.app = app
@@ -398,8 +400,13 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
                                activebackground='#3c5263', activeforeground=INK)
         for title, action in [('新建工程', self.new), ('打开工程…', self.open), ('保存工程', self.save)]:
             project_menu.add_command(label=title, command=action)
+        project_menu.add_command(label='导入时间线…', command=self.import_timeline)
+        view_menu = tk.Menu(project_menu, tearoff=False)
+        view_menu.add_command(label='合并显示为多机位时间线', command=lambda: self.set_multicam_timeline_view(True))
+        view_menu.add_command(label='在时间线上打开多机位', command=lambda: self.set_multicam_timeline_view(False))
+        project_menu.add_cascade(label='多机位时间线', menu=view_menu)
         project_menu.add_separator()
-        project_menu.add_command(label='工程设置…', command=self.show_project_settings)
+        project_menu.add_command(label='工程设置…', accelerator='Shift+9', command=self.show_project_settings)
         project_menu.add_command(label='操作说明', command=self.help)
         file_button = ttk.Menubutton(bar, text='文件 ▾', menu=project_menu, style='Compact.TMenubutton')
         file_button.pack(side='left', padx=(self._px(8), self._px(4)), pady=self._px(5))
@@ -659,6 +666,7 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
         self.project_settings_button.pack(side='right')
         self._build_inspector()
         self.color_workspace = ColorWorkspace(self, self)
+        self.finishing_workspace = FinishingWorkspace(self, self)
         self._build_export_monitor()
         self.bind('<Configure>', self._initial_layout, add='+')
         self.after_idle(self._initial_layout)
@@ -818,11 +826,18 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
         self.inspector_button.configure(text='检查器')
 
     def show_delivery(self):
+        if 'delivery' in getattr(self.app, 'page_frames', {}):
+            self.app._select_page('delivery')
+            return
         self.exit_color_workspace()
         self.show_inspector('delivery')
         self._ensure_delivery_height()
 
+
     def show_creative(self, section='color'):
+        if section == 'color':
+            self.enter_color_workspace()
+            return
         self.show_inspector(section)
         if section == 'color':
             self.enter_color_workspace()
@@ -830,13 +845,18 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
             self.exit_color_workspace()
             self._ensure_delivery_height()
 
+
     def show_inspector_tool(self, section):
+        if section == 'color':
+            self.enter_color_workspace()
+            return
         self.exit_color_workspace()
         if section == 'transition':
             self.show_inspector('edit')
             self.clip_inspector.scroll_to('transition')
         else:
             self.show_inspector(section)
+
 
     def show_effects_library(self):
         from effects_browser import show_effects_browser
@@ -1036,7 +1056,10 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
         self.status.set('所选片段调色已应用，监看实时更新。')
         return True
 
-    def enter_color_workspace(self):
+    def enter_color_workspace(self, embedded=False):
+        if not embedded and 'color' in getattr(self.app, 'page_frames', {}):
+            self.app._select_page('color')
+            return
         if not self._available(): return
         if self.selected_program_range is None:
             span = self._program_span_at(self.current)
@@ -1075,7 +1098,15 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
         self._audition_grade_target()
         self.status.set('调色页 · 默认只调所选Cut片段 · 自动识别机位 · 拖动色轮实时显示 · '+self._split_shortcut_label()+'切开 · ←/→逐帧')
 
+
     def exit_color_workspace(self):
+        finishing = vars(self).get('finishing_workspace')
+        if finishing and finishing.mode == 'color':
+            if 'multicam' in getattr(self.app, 'page_frames', {}):
+                self.app._select_page('multicam')
+            else:
+                finishing.show('edit')
+            return
         if not self._color_mode: return
         self._cancel_grade_drafts()
         if self.player: self.player.submit('audition', camera=None)
@@ -1092,20 +1123,22 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
             self.workspace_split.sashpos(0, self._timeline_saved_sash)
         self.draw_timeline()
 
-    def split_program_at_playhead(self):
+
+    def split_program_at_playhead(self, position=None):
         if not self._available(): return False
-        span = self._program_span_at(self.current)
+        position = self.current if position is None else position
+        span = self._program_span_at(position)
         if span is None: return False
         try:
             candidate = copy.deepcopy(self.project)
-            changed = split_at(candidate, self.current)
+            changed = split_at(candidate, position)
             if not changed:
                 self.status.set('播放头已在片段边界；请逐帧移动后再按 '+self._split_shortcut_label()+'。'); return False
             candidate.validate()
         except Exception as exc:
             messagebox.showerror('切开片段', str(exc), parent=self); return False
         self._remember(); self.project = candidate
-        cut = math.floor(self.current*self.project.fps+.5)/self.project.fps
+        cut = math.floor(position*self.project.fps+.5)/self.project.fps
         self.selected_program_range = (cut, span.end)
         if self._color_mode: self.grade_target = 'selection'
         self._refresh()
@@ -1123,15 +1156,18 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
         self._set_program_label(self.project.camera_at(self.current))
         self.status.set(f'所选片段已切换到机位 {camera}。')
 
-    def add_transition_at_selected_end(self, kind='fade'):
+    def add_transition_at_selected_end(self, kind='fade', duration=.5):
         if not self._available() or self.selected_program_range is None: return
         start, end = self.selected_program_range
         next_span = next((span for span in program_spans(self.project)
                           if math.floor(span.start*self.project.fps+.5) == math.floor(end*self.project.fps+.5)), None)
         if next_span is None:
             self.status.set('此片段已到成片结尾，没有可连接的后续片段。'); return
-        duration = min(.5, 2*(end-start), 2*next_span.duration)
         try:
+            duration = float(duration)
+            if not math.isfinite(duration) or not .05 <= duration <= 5:
+                raise ValueError('转场时长请输入 0.05–5 秒。')
+            duration = min(duration, 2*(end-start), 2*next_span.duration)
             candidate = copy.deepcopy(self.project)
             split_at(candidate, end)
             candidate.transitions = [item for item in candidate.transitions
@@ -1193,6 +1229,8 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
         return f'{value//3600:02d}:{value%3600//60:02d}:{value%60:02d}'
 
     def _update_export_metrics(self, snapshot):
+        finishing = vars(self).get("finishing_workspace")
+        if finishing: finishing.update_metrics(snapshot)
         path=snapshot.get('diagnostic_path')
         if path and path!=getattr(self,'_export_diagnostic_path',''):
             self._export_diagnostic_path=path
@@ -1342,6 +1380,8 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
             self.color_workspace.refresh()
         if reconfigure:
             self._configure_player()
+        finishing = vars(self).get("finishing_workspace")
+        if finishing and finishing.mode != "edit": finishing.refresh_clips()
         self._check_prerender_project()
         self._schedule_transition_previews()
         self._refresh_camera_labels()
@@ -1963,6 +2003,10 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
         if self._transport_input_widget(event.widget): return
         action = self._keyboard_action(event)
         if action == 'escape':
+            browser = vars(self).get('effects_browser')
+            if browser is not None and vars(browser).get('_effect_drag') is not None:
+                browser._effect_drag_cancel(event)
+                return 'break'
             self._stop_transport_hold()
             if self._end_timeline_divider_drag(cancel=True): return 'break'
             if self._finish_selection_gesture(cancel=True): return 'break'
@@ -2153,27 +2197,21 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
         self._creative_preview_worker = threading.Thread(target=worker, daemon=False)
         self._creative_preview_worker.start()
 
-    def export(self):
-        if not self._available() or not self.project.clips: return
-        if not self.output_var.get(): self.choose_output()
-        output = self.output_var.get().strip()
-        if not output: return
+    def export(self, render_job=None):
+        if not self._available(): return False
         try:
-            project = copy.deepcopy(self.project)
-            project.range_start, project.range_end, project.fps = self._read_range()
+            prepared = ((copy.deepcopy(render_job.project), copy.deepcopy(render_job.settings), render_job.output)
+                        if render_job is not None else self.prepare_delivery_export())
+            if prepared is None: return False
+            project, settings, output = prepared
             project.validate()
-            settings, suffix = make_delivery_settings(self)
-            output = self.output_var.get().strip()
-            if Path(output).suffix.lower() != suffix:
-                output = str(Path(output).with_suffix(suffix))
-                self.output_var.set(output)
             from hardware_encoders import available_codecs
             if settings.codec not in available_codecs(self.app.caps):
                 raise ValueError('当前编码器不可用；请等待 GPU 检测完成或选择 CPU 兼容模式。')
             if not self.app.caps.ffmpeg_path or not self.app.caps.ffprobe_path:
                 raise ValueError('未找到 FFmpeg / ffprobe。')
-            if Path(output).exists() and not messagebox.askyesno('覆盖成片', f'替换已有成片？\n{output}', parent=self): return
-        except Exception as exc: messagebox.showerror('多机位导出', str(exc), parent=self); return
+            if Path(output).exists() and not messagebox.askyesno('覆盖成片', f'替换已有成片？\n{output}', parent=self): return False
+        except Exception as exc: messagebox.showerror('多机位导出', str(exc), parent=self); return False
         self.stop_monitors()
         if self.app.mpv:
             try: self.app.mpv.command(['set_property', 'pause', True])
@@ -2199,6 +2237,8 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
             except Exception as exc:
                 self.jobs.put(('export_error', (str(exc), self.app.cancel_event.is_set() or isinstance(exc, ExportCancelled))))
         threading.Thread(target=worker, daemon=False).start()
+        return True
+
 
     def _scroll_timeline(self, *args):
         self.timeline.xview(*args)
@@ -2296,6 +2336,9 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
         canvas = self.timeline
         canvas.delete('all')
         cameras = self._timeline_camera_order()
+        source_cameras = cameras
+        collapsed = self.project.timeline_multicam_collapsed
+        if collapsed: cameras = []
         height = max(self._px(100), canvas.winfo_height())
         left_edge = self._timeline_left
         origin = self._timeline_origin()
@@ -2337,7 +2380,7 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
         duration = self._timeline_view_duration()
         canvas.create_rectangle(0, 0, width, ruler_h, fill='#292b2e', outline='')
         canvas.create_rectangle(0, ruler_h, width, ruler_h + program_h, fill='#27292c', outline='')
-        canvas.create_text(self._px(8), ruler_h + program_h / 2, text='合成' if self.project.video_stack_enabled else '节目', fill=INK, anchor='w',
+        canvas.create_text(self._px(8), ruler_h + program_h / 2, text='多机位' if collapsed else '合成' if self.project.video_stack_enabled else '节目', fill=INK, anchor='w',
                            font=title_font)
         displayed_project = self.project
         if self._timeline_drag_geometry is not None:
@@ -2357,7 +2400,7 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
         displayed_spans = cached_spans[1]
         self._timeline_boundary_times = [span.start for span in displayed_spans if span.start > 0]
         self._update_timeline_snap_points()
-        camera_clips = {camera: [] for camera in cameras}
+        camera_clips = {camera: [] for camera in source_cameras}
         for clip in self.project.clips:
             camera_clips[clip.camera].append(clip)
         grades = sorted(self.project.clip_grades, key=lambda item: item.start)
@@ -2374,8 +2417,11 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
             chosen = (self.selected_program_range is not None
                 and span.start >= self.selected_program_range[0]-1e-6
                 and span.end <= self.selected_program_range[1]+1e-6)
+            span_sources = [clip for clip in camera_clips.get(span.camera, ())
+                            if clip.start < span.end and clip.end > span.start]
+            disabled = bool(span_sources) and not any(clip.enabled for clip in span_sources)
             item = canvas.create_rectangle(x, ruler_h + self._px(4), x2, ruler_h + program_h - self._px(3),
-                fill=COLORS[(span.camera-1) % 9], outline=ACCENT if chosen else '#91a0ac',
+                fill='#383a3e' if disabled else COLORS[(span.camera-1) % 9], outline=ACCENT if chosen else '#91a0ac',
                 width=self._px(2) if chosen else 1, tags=('program',))
             self.timeline_program_items[item] = (span.start, span.end)
             if x2-x > self._px(24):
@@ -2395,11 +2441,11 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
                 camera_title = self.project.camera_names.get(span.camera) or (self._clip_camera_label(source) if source else '未知相机')
                 grade_index = bisect_right(grade_starts, span.start+1e-8)-1
                 graded = grade_index >= 0 and span.start < grades[grade_index].end-1e-8
-                title=f'{span.camera} · '+camera_title + (' · 调色' if graded else '') + stabilization_label
+                title=('已禁用 · ' if disabled else '')+f'{span.camera} · '+camera_title + (' · 调色' if graded else '') + stabilization_label
                 title = self._timeline_fit_label(title_font, title, x2-x-self._px(12))
                 item = canvas.create_text(x + self._px(7), ruler_h + program_h / 2,
                     text=title,
-                    fill=INK, anchor='w', font=title_font, tags=('program',))
+                    fill=MUTED if disabled else INK, anchor='w', font=title_font, tags=('program',))
                 self.timeline_program_items[item] = (span.start, span.end)
         if self.selected_program_range and ruler_h+program_h >= view_top and ruler_h <= view_bottom:
             x, x2 = (timeline_x(value) for value in self.selected_program_range)
@@ -2455,14 +2501,14 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
                 if x2 <= x or not visible(x, y, x2, y+row_h):
                     continue
                 item = canvas.create_rectangle(x, y + self._px(1), x2, y + row_h - self._px(1),
-                                                fill='#383a3e' if self.project.video_stack_enabled and camera in self.project.video_stack_hidden else COLORS[(camera-1) % 9], outline='#6b7f89', tags=('clip',))
+                                                fill='#383a3e' if not clip.enabled or (self.project.video_stack_enabled and camera in self.project.video_stack_hidden) else COLORS[(camera-1) % 9], outline='#6b7f89', tags=('clip',))
                 self.timeline_clip_items[item] = clip.id
                 if x2-x > self._px(95):
                     camera_title = self.project.camera_names.get(camera) or self._clip_camera_label(clip)
-                    title=('α · ' if clip.has_alpha else '')+camera_title+' · '+Path(clip.path).name[:24]
+                    title=('已禁用 · ' if not clip.enabled else '')+('α · ' if clip.has_alpha else '')+camera_title+' · '+Path(clip.path).name[:24]
                     title = self._timeline_fit_label(label_font, title, x2-x-self._px(12))
                     label = canvas.create_text(x + self._px(6), y + row_h / 2, text=title,
-                                                fill=INK, anchor='w', font=label_font, tags=('clip',))
+                                                fill=INK if clip.enabled else MUTED, anchor='w', font=label_font, tags=('clip',))
                     self.timeline_clip_items[label] = clip.id
             self._draw_stack_track_header(camera, y, row_h, label_font)
         for point in self.project.edit_points:
@@ -2473,7 +2519,7 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
                                dash=(self._px(3), self._px(2)), tags=('edit-boundary',))
         self._draw_timeline_audio(cameras, audio_y, audio_h, width, label_font, timeline_x, visible)
         self._draw_timeline_divider(width)
-        if not cameras:
+        if not source_cameras:
             canvas.create_text(left_edge + self._px(15), ruler_h + program_h / 2, text='导入机位后开始编辑',
                                fill=MUTED, anchor='w', font=title_font)
         label_width = ruler_font.measure('00:00:00.000') + self._px(35)
@@ -2556,7 +2602,6 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
             self.creative_panel.subtitle_tree.selection_set(cue.id)
             self.creative_panel.subtitle_tree.see(cue.id)
             self.creative_panel._load_cue()
-            self.seek(cue.start + self.project.subtitles.offset)
             self._capture_timeline_geometry()
             return
         transition_time = next((self.timeline_transition_items[i] for i in reversed(ids)
@@ -2575,7 +2620,6 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
             if label:
                 self.creative_panel.transition_cut_var.set(label)
                 self.creative_panel._load_transition()
-            self.seek(transition_time)
             return
         clip_id = next((self.timeline_clip_items[i] for i in reversed(ids) if i in self.timeline_clip_items), None)
         selected_range = next((self.timeline_program_items[i] for i in reversed(ids)
@@ -2595,7 +2639,6 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
             self.media_tree.selection_set(clip.id)
             self.timeline_drag = (clip.id, x, clip.start, False)
             self._capture_timeline_geometry()
-        self.seek(clicked)
 
     def timeline_context(self, event):
         if not self._available(): return
@@ -2620,13 +2663,13 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
         else:
             self._set_timeline_selection({key for key in self._timeline_selection if key[0] == 'program'}, redraw=False)
         self.select_program_range(*selected, seek=False)
-        self.seek(max(selected[0], min(position, selected[1]-1/self.project.fps)))
         menu = tk.Menu(self, tearoff=False, bg=PANEL, fg=INK, activebackground='#3c5263')
         cameras = tk.Menu(menu, tearoff=False, bg=PANEL, fg=INK)
         for camera in self.project.cameras:
             label = self._label_camera(camera) if camera in self.project.camera_names else f'机位 {camera}'
             cameras.add_command(label=label, command=lambda value=camera: self.switch(value))
         menu.add_cascade(label='切换机位', menu=cameras)
+        self._append_multicam_view_menu(menu)
         menu.add_command(label='进入调色界面', command=lambda: self.show_creative('color'))
         image_stabilization = tk.Menu(menu, tearoff=False, bg=PANEL, fg=INK)
         image_stabilization.add_command(label='自动配置…',command=lambda:open_image_stabilization_dialog(self,mode='auto'))
@@ -2755,6 +2798,7 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
         try:
             for _ in range(64):
                 kind, payload = self.jobs.get_nowait()
+                if self._handle_interchange_job(kind, payload): continue
                 if self._handle_camera_import_job(kind, payload): continue
                 if self._handle_timeline_merge_job(kind, payload): continue
                 if self._handle_transport_job(kind, payload): continue
@@ -2799,13 +2843,15 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
                     for camera,info in payload:
                         self.project.clips.append(CameraClip(uuid.uuid4().hex,camera,info.path,0.,info.duration,has_alpha=bool(getattr(info,'has_alpha',False)),has_audio=info.has_audio))
                         if not self.project.master_audio and info.has_audio:
-                            self.project.master_audio=info.path;self.project.master_duration=info.duration
+                            self.project.master_audio=info.path;self.project.master_duration=info.duration;self.project.master_audio_clips=[]
                     if first and not self.project.project_settings:
                         self.project.fps=payload[0][1].fps or 30;self.fps_var.set(f'{self.project.fps:.8g}')
                     if not self.project.cuts:self.project.set_cut(0,payload[0][0])
                     self._refresh();self.fit_timeline()
                     self.status.set(f'已导入 {len(payload)} 个视频，新增 {len(payload)} 个机位；同机位分段请使用“追加”。')
                     continue
+                if kind.startswith('camera_match_'):
+                    self._handle_camera_match_job(kind,payload);continue
                 if kind.startswith('auto_color_'):
                     self._handle_auto_color_job(kind,payload);continue
                 if kind == 'camera_metadata':
@@ -2829,7 +2875,7 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
                         self.project.clips.append(CameraClip(uuid.uuid4().hex, camera, info.path, start, info.duration,has_alpha=bool(getattr(info,'has_alpha',False)),has_audio=info.has_audio))
                         start += info.duration
                         if not self.project.master_audio and info.has_audio:
-                            self.project.master_audio = info.path; self.project.master_duration = info.duration
+                            self.project.master_audio = info.path; self.project.master_duration = info.duration; self.project.master_audio_clips = []
                     if first and not self.project.project_settings:
                         self.project.fps = infos[0].fps or 30; self.fps_var.set(f'{self.project.fps:.8g}')
                     if not self.project.cuts: self.project.set_cut(0, camera)
@@ -2837,6 +2883,7 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
                 elif kind == 'master':
                     self.busy = False; self._remember()
                     self.project.master_audio, self.project.master_duration = payload
+                    self.project.master_audio_clips = []
                     self.project.alignment_reference_camera = None
                     self.sync_results.clear()
                     self._refresh(); self.status.set('已选择连续主音频。可自动同步全部或填写片段在主录音中的起点。')
@@ -2894,7 +2941,8 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
                     self._update_export_metrics(snapshot)
                     self.status.set('已导出：' + str(payload))
                     self.app._log('多机位导出完成：'+str(payload))
-                    messagebox.showinfo('多机位导出完成', str(payload), parent=self)
+                    if not self.finishing_workspace.complete():
+                        messagebox.showinfo('多机位导出完成', str(payload), parent=self)
                 elif kind == 'export_error':
                     self.busy = False; self.app._set_working(False)
                     self.delivery_export_button.configure(state='normal')
@@ -2908,6 +2956,7 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
                     self._update_export_metrics(snapshot)
                     self.status.set('已取消导出' if cancelled else text)
                     self.app._log('多机位导出：' + text)
+                    self.finishing_workspace.complete(error=text, cancelled=cancelled)
                     if not cancelled: messagebox.showerror('多机位导出', text, parent=self)
         except queue.Empty: pass
         self.after(80, self._poll)
@@ -2967,6 +3016,8 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
         return self._confirm_discard()
 
     def close(self):
+        service = vars(self).get("_exposure_service")
+        if service is not None: service.close()
         self._finish_selection_gesture(cancel=True)
         self.alive = False
         self._close_prerender()
@@ -2999,3 +3050,27 @@ class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsU
                         and resolved.name.startswith('okk_effect_preview_')):
                     shutil.rmtree(resolved, ignore_errors=True)
             threading.Thread(target=cleanup, daemon=False).start()
+
+    def prepare_delivery_export(self):
+        """Validate and snapshot the settings currently shown on Deliver."""
+        if not self.project.clips:
+            raise ValueError('请先在多机位剪辑页导入视频素材。')
+        if not self.output_var.get(): self.choose_output()
+        output = self.output_var.get().strip()
+        if not output: return None
+        project = copy.deepcopy(self.project)
+        project.range_start, project.range_end, project.fps = self._read_range()
+        project.validate()
+        project.segments()
+        settings, suffix = make_delivery_settings(self)
+        output = self.output_var.get().strip()
+        if Path(output).suffix.lower() != suffix:
+            output = str(Path(output).with_suffix(suffix))
+            self.output_var.set(output)
+        from hardware_encoders import available_codecs
+        if settings.codec not in available_codecs(self.app.caps):
+            raise ValueError('当前编码器不可用；请等待 GPU 检测完成或选择 CPU 兼容模式。')
+        if not self.app.caps.ffmpeg_path or not self.app.caps.ffprobe_path:
+            raise ValueError('未找到 FFmpeg / ffprobe。')
+        return project, settings, output
+

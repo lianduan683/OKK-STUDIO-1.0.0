@@ -10,7 +10,7 @@ import tkinter as tk
 
 from audio_waveform import Waveform, decode_waveform, envelope_points, waveform_key
 from exporter_core import find_binary
-from timeline_audio import audio_track_enabled, source_audio_clips
+from timeline_audio import audio_track_enabled, source_audio_clips, master_audio_clips
 from timeline_layout_ui import TimelineLayoutMixin
 
 
@@ -28,6 +28,8 @@ class TimelineAudioUIMixin(TimelineLayoutMixin):
 
     def _timeline_audio_tracks(self, cameras):
         from timeline_tracks import audio_tracks
+        if getattr(self.project, 'timeline_multicam_collapsed', False):
+            cameras = self.project.timeline_cameras
         return audio_tracks(self.project, cameras)
 
     def _waveform_for(self, path):
@@ -143,6 +145,7 @@ class TimelineAudioUIMixin(TimelineLayoutMixin):
         self._audio_group_button = None
         self._timeline_audio_track_bounds = {}
         self.timeline_camera_audio_items = {}
+        self.timeline_master_audio_items = {}
         self._timeline_audio_bounds = None
         tracks = self._timeline_audio_tracks(cameras)
         duration = self._timeline_view_duration()
@@ -183,25 +186,29 @@ class TimelineAudioUIMixin(TimelineLayoutMixin):
         enabled = audio_track_enabled(self.project, track)
         canvas.create_rectangle(0, y, width, y+audio_h, fill='#232c29' if enabled else '#27292b', outline='')
         if track == 0:
-            clips = [(self.project.master_audio, 0., min(duration, self.project.master_duration or duration), True, None)]
+            clips = [(self.project.master_audio, clip.start, clip.duration, True, clip.id, clip.source_in, clip.enabled)
+                     for clip in master_audio_clips(self.project)]
         else:
-            clips = [(clip.path, clip.start, clip.duration, getattr(clip, 'has_audio', None), getattr(clip, 'id', None))
+            clips = [(clip.path, clip.start, clip.duration, getattr(clip, 'has_audio', None), getattr(clip, 'id', None), getattr(clip, 'source_in', 0.), getattr(clip, 'enabled', True))
                      for clip in source_audio_clips(self.project) if clip.camera == track]
-        for path, start, length, has_audio, identifier in clips:
+        for path, start, length, has_audio, identifier, source_in, clip_enabled in clips:
             x, x2 = timeline_x(start), timeline_x(start+length)
             if x2 <= x or not visible(x, y, x2, y+audio_h): continue
-            fill = '#36594e' if enabled else '#343c3b'
+            audible = enabled and clip_enabled
+            fill = '#36594e' if audible else '#343c3b'
             item = canvas.create_rectangle(x, y+self._px(2), x2, y+audio_h-self._px(2),
-                                           fill=fill, outline='#5e8074' if enabled else '#465650', tags=('audio-track',))
-            if track == 0: self.timeline_audio_items.add(item)
+                                           fill=fill, outline='#5e8074' if audible else '#465650', tags=('audio-track',))
+            if track == 0:
+                self.timeline_audio_items.add(item)
+                self.timeline_master_audio_items[item] = identifier
             elif identifier is not None and has_audio is not False:
                 self.timeline_camera_audio_items[item] = identifier
             waveform = self._waveform_for(path) if has_audio is not False and not compact else None
             wave_left, wave_right = max(x, view_left), min(x2, view_right)
             wave_top, wave_bottom = y+self._px(17), y+audio_h-self._px(4)
             if not compact and waveform is not None and waveform.state == 'ready' and wave_right > wave_left:
-                source_start = max(0., (wave_left-x)/pps)
-                source_end = min(length, (wave_right-x)/pps)
+                source_start = source_in+max(0., (wave_left-x)/pps)
+                source_end = source_in+min(length, (wave_right-x)/pps)
                 peaks = envelope_points(waveform, source_start, source_end,
                                         max(1, int((wave_right-wave_left)/max(1,self._px(2)))))
                 center, amplitude = (wave_top+wave_bottom)/2, max(1., (wave_bottom-wave_top)/2)
@@ -211,18 +218,20 @@ class TimelineAudioUIMixin(TimelineLayoutMixin):
                     bottom = [(wave_left+i*step, center+float(value)*amplitude) for i,value in reversed(list(enumerate(peaks)))]
                     points = [value for point in top+bottom for value in point]
                     if len(points) >= 6:
-                        canvas.create_polygon(*points, fill='#9ed6bf' if enabled else '#6d8f7f', outline='', tags=('audio-waveform',))
+                        canvas.create_polygon(*points, fill='#9ed6bf' if audible else '#6d8f7f', outline='', tags=('audio-waveform',))
             if x2-x > self._px(65):
                 status = ''
                 if has_audio is False or (waveform is not None and waveform.state == 'no_audio'): status = ' · 无音频'
                 elif compact: pass
                 elif waveform is None: status = ' · 读取波形…' if waveform_key(path) else ' · 离线'
                 elif waveform.state != 'ready': status = ' · 波形不可用'
-                title = Path(path).name+status
+                title = ('已禁用 · ' if not clip_enabled else '')+Path(path).name+status
                 title = self._timeline_fit_label(label_font, title, x2-x-self._px(10))
                 item = canvas.create_text(x+self._px(5), y+(audio_h/2 if compact else self._px(9)), text=title,
-                    fill='#d1e5db' if enabled else '#a5b0ac', anchor='w', font=label_font, tags=('audio-track',))
-                if track == 0: self.timeline_audio_items.add(item)
+                    fill='#d1e5db' if audible else '#a5b0ac', anchor='w', font=label_font, tags=('audio-track',))
+                if track == 0:
+                    self.timeline_audio_items.add(item)
+                    self.timeline_master_audio_items[item] = identifier
                 elif identifier is not None and has_audio is not False:
                     self.timeline_camera_audio_items[item] = identifier
         # Draw headers last, covering the part of negative-start audio beneath them.

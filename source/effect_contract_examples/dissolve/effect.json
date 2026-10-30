@@ -1,0 +1,20 @@
+{
+  "schema": "okk.effect/1.0",
+  "id": "org.okk.transitions.dissolve",
+  "version": "1.0.0",
+  "name": "标准叠化",
+  "kind": "transition",
+  "category": "转场",
+  "description": "两路画面通过已有 xfade 淡入淡出连接。",
+  "source": {
+    "application": "okk-studio",
+    "format": "native",
+    "original_id": "fade",
+    "fidelity": "native",
+    "notes": []
+  },
+  "render": {"inputs": 2, "color_space": "rec709-display", "alpha": "straight", "temporal_radius": 0},
+  "implementation": {"engine": "okk.xfade.v1", "mode": "fade"},
+  "parameters": {},
+  "assets": {}
+}

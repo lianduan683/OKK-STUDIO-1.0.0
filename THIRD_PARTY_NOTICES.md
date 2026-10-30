@@ -8,6 +8,9 @@ OKK STUDIO 自有代码的许可证见根目录 `LICENSE`。本安装包中的�
 | NumPy | [NumPy](https://numpy.org/)；许可及所含第三方代码说明见 `numpy-*.dist-info/licenses/`。 |
 | Tcl/Tk | [Tcl/Tk](https://www.tcl-lang.org/)；随包许可见 `_tk_data/license.terms` 等对应目录。 |
 | tkinterdnd2 / TkDND | [tkinterdnd2](https://github.com/Eliav2/tkinterdnd2)；许可见 `tkinterdnd2-*.dist-info/licenses/LICENSE` 和组件目录。 |
+| OpenTimelineIO 0.18.1 | [Academy Software Foundation](https://github.com/AcademySoftwareFoundation/OpenTimelineIO)；Apache-2.0，许可随对应 dist-info 和包目录分发。 |
+| OTIO AAF Adapter 2.0.0 | [OpenTimelineIO AAF adapter](https://github.com/OpenTimelineIO/otio-aaf-adapter)；Apache-2.0，AAF 导入适配器。 |
+| pyaaf2 1.7.1 | [pyaaf2](https://github.com/markreidvfx/pyaaf2)；MIT，AAF 文件读取库，许可随 dist-info 分发。 |
 | FFmpeg | [FFmpeg](https://ffmpeg.org/)；Windows 二进制来源为 [Gyan builds](https://www.gyan.dev/ffmpeg/builds/)。GPU 导出运行库的精确下载地址与校验值见 `bin/gpu_export/runtime_sources.json`，许可见该目录 `LICENSE`。这些构建含 GPL 组件，不应描述为仅 LGPL 构建。 |
 | MPV / libmpv | [mpv](https://mpv.io/) 与 [mpv 源码](https://github.com/mpv-player/mpv)。libmpv 使用 [shinchiro Windows 构建](https://github.com/shinchiro/mpv-winbuild-cmake)，精确来源和校验值见 `bin/gpu_live/runtime_sources.json`。保留 `mpv-Copyright`、`mpv-LICENSE.GPL` 和 `mpv-LICENSE.LGPL`；不可据此将实际构建描述为仅 LGPL。 |
 | Gyroflow | [Gyroflow](https://gyroflow.xyz/) 与 [源码](https://github.com/gyroflow/gyroflow)；随包许可见 `bin/gyroflow/GYROFLOW_LICENSE.txt`。 |

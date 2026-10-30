@@ -21,6 +21,7 @@ from exporter_core import CREATE_NO_WINDOW, _media_probe_command, _media_info_fr
 from multicam_frame_clock import canonical_frame_rate
 from video_stack_render import build_stack_command, plan_stack_segments, validate_stack_media
 from proxy_media import PreviewProxyResolver, validate_proxy_media
+from video_stack import pixel_format_has_alpha
 
 
 class PreviewCancelled(Exception):
@@ -344,42 +345,12 @@ class StackPreview:
     def _render(self, job, cancel):
         generation, project, position, playing, request_id, ass_path, use_proxies, preview_epoch, *extra = job
         project = replace(project, fps=float(canonical_frame_rate(project.fps)), range_start=0., range_end=None)
-        segments = tuple(preview_segments(project, position, single_frame=not playing))
-        if extra and extra[0]: segments = tuple(cached_stack_segments(segments, extra[0], project.fps))
+        segments = preview_segments(project, position, single_frame=not playing)
+        if extra and extra[0]: segments = cached_stack_segments(segments, extra[0], project.fps)
         media = {}
         if project.clips:
             reference_path = project.clips[0].path
             media[reference_path] = self._probe(reference_path, cancel)
-        for segment in segments:
-            for layer in segment.layers:
-                for path in (layer.original_path, layer.path):
-                    if path not in media: media[path] = self._probe(path, cancel)
-        validate_stack_media(segments, media)
-        if use_proxies:
-            candidates = {clip.path: clip.proxy_path for clip in project.clips}
-            replacements = {}
-            for segment in segments:
-                for layer in segment.layers:
-                    original = media[layer.original_path]
-                    if layer.path != layer.original_path or layer.has_alpha or original.has_alpha:
-                        continue
-                    proxy = self._proxies(layer.original_path, candidates.get(layer.original_path, ''))
-                    if proxy == layer.original_path or layer.original_path in replacements: continue
-                    try:
-                        info = validate_proxy_media(self.ffprobe, layer.original_path, proxy,
-                            original.duration, project.fps, probe=lambda _tool,path:self._probe(path,cancel))
-                        # Proxies must preserve framing as well as time scale.
-                        if abs(info.width/info.height-original.width/original.height) > 2/min(info.height,original.height):
-                            raise ValueError('代理画幅与原片不一致。')
-                    except PreviewCancelled: raise
-                    except (ValueError, OSError, RuntimeError):
-                        self._proxies.reject(proxy)
-                        continue
-                    media[proxy] = info
-                    replacements[layer.original_path] = proxy
-            segments = tuple(replace(segment, layers=tuple(replace(layer,path=replacements[layer.original_path])
-                if layer.path == layer.original_path and layer.original_path in replacements else layer
-                for layer in segment.layers)) for segment in segments)
         width, height = self.width, self.height
         if project.clips:
             reference = media[project.clips[0].path]
@@ -388,11 +359,59 @@ class StackPreview:
             ratio = min(width / canvas_width, height / canvas_height)
             width = max(2, round(canvas_width * ratio / 2) * 2)
             height = max(2, round(canvas_height * ratio / 2) * 2)
+        candidates = {clip.path: clip.proxy_path for clip in project.clips}
         rates = {}
-        for path in media:
-            stat = Path(path).stat()
-            rate = self._rates.get((path, stat.st_size, stat.st_mtime_ns))
-            if rate is not None: rates[path] = rate
+
+        def covers_canvas(info):
+            ratio = min(width/info.width, height/info.height)
+            return (math.floor(info.width*ratio/2)*2 >= width
+                    and math.floor(info.height*ratio/2)*2 >= height)
+
+        def visible_segment(segment):
+            # Probe the current picture top-down. A full-canvas opaque layer
+            # hides every lower layer; transparent/letterboxed layers retain
+            # their backgrounds. Future sources never delay the first frame.
+            layers = []
+            for layer in segment.layers:
+                self._check(cancel)
+                for path in (layer.original_path, layer.path):
+                    if path not in media: media[path] = self._probe(path, cancel)
+                original, picture = media[layer.original_path], media[layer.path]
+                alpha = layer.has_alpha or original.has_alpha or pixel_format_has_alpha(original.pixel_format)
+                layers.append(layer)
+                if segment.camera == -1: break
+                if (not alpha and not picture.has_alpha and not pixel_format_has_alpha(picture.pixel_format)
+                        and covers_canvas(picture)):
+                    break
+            segment = replace(segment, layers=tuple(layers))
+            validate_stack_media((segment,), media)
+            if use_proxies and segment.camera != -1:
+                resolved = []
+                for layer in segment.layers:
+                    original = media[layer.original_path]
+                    if layer.path == layer.original_path and not (layer.has_alpha or original.has_alpha
+                            or pixel_format_has_alpha(original.pixel_format)):
+                        proxy = self._proxies(layer.original_path, candidates.get(layer.original_path, ''))
+                        if proxy != layer.original_path:
+                            try:
+                                info = validate_proxy_media(self.ffprobe, layer.original_path, proxy,
+                                    original.duration, project.fps, probe=lambda _tool,path:self._probe(path,cancel))
+                                if abs(info.width/info.height-original.width/original.height) > 2/min(info.height,original.height):
+                                    raise ValueError('代理画幅与原片不一致。')
+                                if covers_canvas(original) and not covers_canvas(info):
+                                    raise ValueError('代理画幅会露出已遮挡的背景，请使用原片预览。')
+                            except PreviewCancelled: raise
+                            except (ValueError, OSError, RuntimeError): self._proxies.reject(proxy)
+                            else:
+                                media[proxy] = info
+                                layer = replace(layer, path=proxy)
+                    resolved.append(layer)
+                segment = replace(segment, layers=tuple(resolved))
+            for layer in segment.layers:
+                stat = Path(layer.path).stat()
+                rate = self._rates.get((layer.path, stat.st_size, stat.st_mtime_ns))
+                if rate is not None: rates[layer.path] = rate
+            return segment
         # Alpha identity comes from an actual probe, including old projects.
         # We intentionally use original/full-quality treatment paths, never an
         # opaque H264 preview proxy for a formerly transparent layer.
@@ -403,6 +422,7 @@ class StackPreview:
         def prepare(segment):
             owner = ExitStack()
             try:
+                segment = visible_segment(segment)
                 process, fps, error_log = owner.enter_context(self._segment_stream(
                     segment, project, media, width, height, playing, ass_path, rates, cancel))
                 return segment, process, fps, error_log, owner
@@ -422,7 +442,6 @@ class StackPreview:
                 # fills with the first frame, then backpressure stops decoding.
                 # Nothing reads or queues the rest of its timeline in memory.
                 next_segment = next(iterator, None) if playing else None
-                if next_segment is not None: following = prepare(next_segment)
                 frame_bytes = width*height*4; index = 0
                 while True:
                     self._check(cancel)
@@ -456,14 +475,22 @@ class StackPreview:
                             if time.monotonic()-last_status > 3.:
                                 self.notify('status', '图层预览解码跟不上播放时钟，正在跳过旧帧；可减少图层或使用保留透明通道的轻量素材。')
                                 last_status = time.monotonic()
+                            if next_segment is not None and following is None:
+                                following = prepare(next_segment)
                             continue
                     self._publish(generation, {'request_id': request_id, 'time': stamp,
                         'width': width, 'height': height, 'rgba': bytes(parts), 'preview_epoch': preview_epoch,
                         'fps': fps, 'playback_frame': playing})
+                    # Publish the current picture before probing/starting its
+                    # successor, which may live on a slow disk.
+                    if next_segment is not None and following is None:
+                        following = prepare(next_segment)
                 process.wait(timeout=3.)
                 if process.returncode:
                     error_log.seek(0); raise RuntimeError(error_log.read(8192).decode('utf-8', errors='replace'))
                 owner.close()
+                if next_segment is not None and following is None:
+                    following = prepare(next_segment)
                 current, following = following, None
         finally:
             # Cancellation, navigation, cache unloading and failed successor

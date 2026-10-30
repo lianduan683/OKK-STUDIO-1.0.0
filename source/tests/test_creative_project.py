@@ -180,6 +180,8 @@ class CreativeProjectTests(unittest.TestCase):
         from multicam_ui import MulticamWorkspace
         workspace = SimpleNamespace(project=self.project(), undo_stack=[], redo_stack=[], sync_results={},
                                     _available=lambda: True, _mark_dirty=lambda: None, _refresh=lambda: None,
+                                    _finish_selection_gesture=lambda **kwargs: False,
+                                    _restore_timeline_range_fields=lambda: None,
                                     _cancel_grade_drafts=lambda: None)
         before = copy.deepcopy(workspace.project)
         MulticamWorkspace._remember(workspace)
@@ -250,7 +252,7 @@ class CreativeProjectTests(unittest.TestCase):
 
     def test_unknown_project_or_track_fields_and_invalid_versions_are_rejected(self):
         base = self.payload()
-        for field, value in (("version", True), ("version", "2"), ("version", 9),
+        for field, value in (("version", True), ("version", "2"), ("version", 18),
                              ("clips", {}), ("cuts", "not a list"),
                              ("unexpected_executable", "run-me.py")):
             with self.subTest(field=field, value=value), self.assertRaises(ValueError):

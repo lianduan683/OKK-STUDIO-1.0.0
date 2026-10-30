@@ -5,11 +5,32 @@ from keyboard_profiles import checked_profile, shortcut_action, shortcut_label
 from program_edits import program_spans
 
 class KeyboardEditMixin:
+    def split_timeline_at_playhead(self):
+        if not self._available(): return False
+        if self._selection_gesture: self._finish_selection_gesture()
+        from timeline_split import split_timeline
+        keys = set(self._timeline_selection)
+        try:
+            candidate, count, selection = split_timeline(self.project, self.current, keys)
+        except (ValueError, OSError) as error:
+            self.status.set(str(error)); return False
+        if not count:
+            self.status.set('播放头处没有可切开的'+('所选片段。' if keys else '片段。'))
+            return False
+        self.pause()
+        self._remember_timeline_change()
+        self.project = candidate
+        self._refresh()
+        self._set_timeline_selection(selection if keys else set())
+        self.status.set(f'已在 {format_time(self.current)} 切开 {count} 项'+('所选内容' if keys else '轨道内容')+'；Ctrl+Z 撤销。')
+        return True
+
     def _keyboard_profile(self):
         return checked_profile(getattr(self.app, 'keyboard_profile', 'current'))
 
     def _split_shortcut_label(self):
-        return shortcut_label(self._keyboard_profile(), 'split')
+        action = 'split_timeline' if self._keyboard_profile() == 'resolve' else 'split'
+        return shortcut_label(self._keyboard_profile(), action)
 
     def _keyboard_shortcut_label(self, action):
         return shortcut_label(self._keyboard_profile(), action)
@@ -32,8 +53,8 @@ class KeyboardEditMixin:
         hit = self._timeline_hit_key(event)
         if hit is None or hit[0] not in {'program', 'clip'}: return False
         self._stop_transport_hold()
-        self.seek(self._timeline_origin()+(self.timeline.canvasx(event.x)-self._timeline_left)/self._timeline_scale())
-        self.split_program_at_playhead()
+        position = self._timeline_origin()+(self.timeline.canvasx(event.x)-self._timeline_left)/self._timeline_scale()
+        self.split_program_at_playhead(position)
         return True
 
     def _keyboard_range(self, action):
@@ -92,7 +113,10 @@ class KeyboardEditMixin:
         elif action == 'open': self.open()
         elif action == 'select_all': return self._select_all_timeline(event)
         elif action == 'delete': return self._delete_timeline_selection(event)
+        elif action == 'toggle_clip_enabled': return self._clip_enabled_key_press()
         elif action == 'split': self.split_program_at_playhead()
+        elif action == 'split_timeline': self.split_timeline_at_playhead()
+        elif action == 'project_settings': self.show_project_settings()
         elif action == 'marker': return self._marker_key_press()
         elif action == 'toggle': return self._transport_space_press()
         elif action in {'previous_frame', 'reverse'}: return self._transport_key_press(-1)

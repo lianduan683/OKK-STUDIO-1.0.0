@@ -111,6 +111,7 @@ class ProgramEditWorkspaceTests(unittest.TestCase):
 
     def test_mouse_selection_c_cut_and_repeat_select_right_segment_and_persist(self):
         workspace = self.workspace
+        workspace.seek(6.)
         workspace.timeline_press(self.program_event((0., 12.)))
         workspace.timeline_release(SimpleNamespace())
         self.assertEqual(workspace.selected_program_range, (0., 12.))

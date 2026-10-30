@@ -47,7 +47,7 @@ from export_parallel import choose_export_workers
 from library_overlay import (LibraryOverlayRange, validate_library_overlay,
                              overlay_cache_matches, overlay_from_dict)
 from video_stack import ordered_cameras, validate_stack
-from timeline_audio import audio_sources, probe_audio_sources, build_audio_mix_args
+from timeline_audio import audio_sources, probe_audio_sources, build_audio_mix_args, MasterAudioClip
 from project_settings import validate_project_settings, validate_monitor_layout, timeline_dimensions
 
 
@@ -90,6 +90,12 @@ class CameraClip:
     camera_metadata_source: str = ""
     has_alpha: bool = False
     has_audio: bool | None = None
+    source_in: float = 0.0
+    enabled: bool = True
+
+    @property
+    def source_origin(self) -> float:
+        return self.start - self.source_in
 
     @property
     def end(self) -> float:
@@ -151,6 +157,8 @@ class MulticamProject:
     audio_overrides: dict[str, CameraClip | None] = field(default_factory=dict)
     project_settings: dict = field(default_factory=dict)
     monitor_layout: dict = field(default_factory=dict, compare=False)
+    master_audio_clips: list[MasterAudioClip] = field(default_factory=list)
+    timeline_multicam_collapsed: bool = False
 
     def set_camera_name(self, camera: int, name: str) -> None:
         if _camera(camera) not in self.timeline_cameras:
@@ -179,7 +187,7 @@ class MulticamProject:
         # If imported files overlap within one camera, the latest recording
         # wins.  This is deterministic and does not discard either source.
         candidates = [clip for clip in self.clips
-                      if clip.camera == camera and clip.start <= time < clip.end]
+                      if clip.enabled and clip.camera == camera and clip.start <= time < clip.end]
         return max(candidates, key=lambda clip: (clip.start, clip.id), default=None)
 
     def camera_at(self, time: float) -> int | None:
@@ -200,7 +208,7 @@ class MulticamProject:
         """Resolve original/proxy/stabilized pictures on the same master clock."""
         clip = self.clip_at(camera, time)
         if clip is None: return None
-        source_time = max(0.0, time - clip.start)
+        source_time = max(0.0, time - clip.source_origin)
         overlay = self.library_overlay_at(camera, time, clip.id)
         if overlay is not None:
             if not overlay_cache_matches(overlay, self):
@@ -246,12 +254,32 @@ class MulticamProject:
         self.cuts = normalized
 
     def validate(self) -> None:
+        if type(self.timeline_multicam_collapsed) is not bool:
+            raise ValueError('多机位时间线视图设置必须是布尔值')
         validate_project_settings(self.project_settings)
         validate_monitor_layout(self.monitor_layout)
         fps = _number(self.fps, "工程帧率", minimum=0.001)
         if fps > 1000:
             raise ValueError("工程帧率不能超过 1000")
         _number(self.master_duration, "主音频时长", minimum=0.0)
+        if not isinstance(self.master_audio_clips, list) or len(self.master_audio_clips) > 100_000:
+            raise ValueError('主音频分段设置无效')
+        master_ids = set()
+        previous_end = 0.
+        for clip in self.master_audio_clips:
+            if (not isinstance(clip, MasterAudioClip) or not isinstance(clip.id, str)
+                    or not clip.id or clip.id in master_ids or not self.master_audio):
+                raise ValueError('主音频分段 ID 无效')
+            if type(clip.enabled) is not bool:
+                raise ValueError('主音频素材启用状态必须是布尔值')
+            master_ids.add(clip.id)
+            _number(clip.start, '主音频分段起点', minimum=0.)
+            _number(clip.source_in, '主音频素材入点', minimum=0.)
+            if (_number(clip.duration, '主音频分段时长', minimum=0.) <= 0
+                    or clip.start < previous_end-1e-8
+                    or (self.master_duration and clip.source_in+clip.duration > self.master_duration+1e-6)):
+                raise ValueError('主音频分段范围无效')
+            previous_end = clip.end
         _number(self.range_start, "成片开始", minimum=0.0)
         if not isinstance(self.master_audio, str) or "\x00" in self.master_audio:
             raise ValueError("主音频路径无效")
@@ -287,6 +315,8 @@ class MulticamProject:
                 raise ValueError("素材 ID 不能为空或重复")
             identifiers.add(clip.id)
             _camera(clip.camera)
+            if type(clip.enabled) is not bool:
+                raise ValueError('素材启用状态必须是布尔值')
             if type(clip.has_alpha) is not bool:
                 raise ValueError('素材透明通道标记必须是布尔值')
             if clip.has_audio is not None and type(clip.has_audio) is not bool:
@@ -298,6 +328,7 @@ class MulticamProject:
                 if not isinstance(value, str) or "\x00" in value or (name == "素材" and not value):
                     raise ValueError(f"{name}路径无效")
             _number(clip.start, "素材起点")
+            _number(clip.source_in, '素材入点', minimum=0.)
             if _number(clip.duration, "素材时长", minimum=0.0) <= 0:
                 raise ValueError("素材时长必须大于零")
             if not math.isfinite(clip.end):
@@ -356,8 +387,8 @@ class MulticamProject:
                 raise ValueError('防抖片段引用了不存在的机位或源素材')
             if item.start < 0 or item.end > self.duration + 1/self.fps:
                 raise ValueError('防抖片段超出工程范围')
-            if (item.start-clip.start < item.source_start-1/self.fps
-                    or item.end-clip.start > item.source_end+1/self.fps):
+            if (item.start-clip.source_origin < item.source_start-1/self.fps
+                    or item.end-clip.source_origin > item.source_end+1/self.fps):
                 raise ValueError('防抖缓存的源时间没有覆盖所选片段，请重新生成防抖')
         validate_transitions(self.transitions, self)
         validate_subtitle_track(self.subtitles)
@@ -369,14 +400,14 @@ class MulticamProject:
             if clip is None or clip.camera != item.camera:
                 raise ValueError('素材叠加引用了不存在的机位或原片')
             if (item.end > self.duration+1/fps or item.start < clip.start-1/fps
-                    or item.end > clip.end+1/fps or item.start-clip.start < item.source_start-1/fps
-                    or item.end-clip.start > item.source_end+1/fps):
+                    or item.end > clip.end+1/fps or item.start-clip.source_origin < item.source_start-1/fps
+                    or item.end-clip.source_origin > item.source_end+1/fps):
                 raise ValueError('素材叠加缓存未覆盖所选范围，请重新应用或移除素材特效。')
             for effect in self.transitions:
                 for sample in (effect.time-1/fps, effect.time):
                     if (item.start <= sample < item.end and self.camera_at(sample) == item.camera
-                            and (effect.time-effect.duration/2-clip.start < item.source_start-1/fps
-                                 or effect.time+effect.duration/2-clip.start > item.source_end+1/fps)):
+                            and (effect.time-effect.duration/2-clip.source_origin < item.source_start-1/fps
+                                 or effect.time+effect.duration/2-clip.source_origin > item.source_end+1/fps)):
                         raise ValueError('素材叠加缓存未覆盖新转场的余量，请重新应用素材特效。')
 
     def segments(self, start: float | None = None, end: float | None = None) -> list[MulticamSegment]:
@@ -420,12 +451,12 @@ class MulticamProject:
                 cut_index += 1
             # Select using quantized coverage: off-grid starts cannot produce
             # a spurious missing frame at an otherwise valid clip boundary.
-            candidates = [clip for clip in self.clips if clip.camera == camera
+            candidates = [clip for clip in self.clips if clip.enabled and clip.camera == camera
                           and _frame(clip.start, self.fps) <= left
                           and _frame(clip.end, self.fps) >= right]
             clip = max(candidates, key=lambda item: (item.start, item.id), default=None)
             position = left / self.fps
-            source = max(0.0, position - clip.start) if clip else 0.0
+            source = max(0.0, position - clip.source_origin) if clip else 0.0
             picture_path = clip.path if clip else None
             stabilized = self.stabilization_at(camera, position, clip.id) if clip else None
             if stabilized is not None:
@@ -439,15 +470,15 @@ class MulticamProject:
             if overlay is not None:
                 if not overlay_cache_matches(overlay, self, strict=True):
                     raise ValueError('素材叠加缓存缺失或原片/特效/防抖已变化，请重新应用或移除素材特效。')
-                source = max(0.0, position-clip.start-overlay.source_start)
+                source = max(0.0, position-clip.source_origin-overlay.source_start)
                 picture_path = overlay.cache_path
             if not result or camera != previous_camera or clip is not previous_clip:
                 phase_origin = position
-            preserve_phase = phase_origin if protected_edges else None
+            preserve_phase = max(0., clip.source_origin) if clip and clip.source_in else phase_origin if protected_edges else None
             if stabilized is not None:
-                preserve_phase = max(0.0, clip.start+stabilized.source_start)
+                preserve_phase = max(0.0, clip.source_origin+stabilized.source_start)
             if overlay is not None:
-                preserve_phase = max(0.0, clip.start+overlay.source_start)
+                preserve_phase = max(0.0, clip.source_origin+overlay.source_start)
             if (result and result[-1].camera == camera and clip is previous_clip
                     and result[-1].path == picture_path
                     and left not in protected_edges):
@@ -486,6 +517,20 @@ class MulticamProject:
         payload.update(format="okk-multicam", version=13 if self.timeline_removed_tracks else 12 if extended_timeline else 11 if extended_audio else 10 if self.camera_names else 9 if self.timeline_empty_tracks else 8)
         if self.project_settings or self.monitor_layout:
             payload['version'] = 14
+        if self.master_audio_clips or any(clip.source_in for clip in self.clips) or any(
+                clip is not None and clip.source_in for clip in self.audio_overrides.values()):
+            payload['version'] = 15
+        if self.timeline_multicam_collapsed:
+            payload['version'] = 16
+        else:
+            payload.pop('timeline_multicam_collapsed')
+        instances = [*payload['clips'], *payload['master_audio_clips'],
+                     *(clip for clip in payload['audio_overrides'].values() if clip is not None)]
+        if any(not clip['enabled'] for clip in instances):
+            payload['version'] = 17
+        for clip in instances:
+            if clip['enabled']: clip.pop('enabled')
+        if not self.master_audio_clips: payload.pop('master_audio_clips')
         if not self.project_settings: payload.pop('project_settings')
         if not self.monitor_layout: payload.pop('monitor_layout')
         if not self.timeline_removed_tracks: payload.pop('timeline_removed_tracks')
@@ -495,6 +540,7 @@ class MulticamProject:
         else:
             for clip in payload['audio_overrides'].values():
                 if clip is not None:
+                    if not clip['source_in']: clip.pop('source_in')
                     clip['path'] = relative(clip['path'])
                     clip['proxy_path'] = relative(clip['proxy_path'])
         if self.audio_track_enabled:
@@ -511,6 +557,7 @@ class MulticamProject:
         payload["subtitles"] = subtitle_track_to_dict(self.subtitles)
         payload["master_audio"] = relative(self.master_audio)
         for clip in payload["clips"]:
+            if not clip['source_in']: clip.pop('source_in')
             if clip['has_audio'] is None: clip.pop('has_audio')
             clip["path"] = relative(clip["path"])
             clip["proxy_path"] = relative(clip["proxy_path"])
@@ -565,13 +612,13 @@ class MulticamProject:
         base = Path(base_directory).resolve()
         try:
             if (not isinstance(payload, dict) or payload.get("format") != "okk-multicam"
-                    or type(payload.get("version")) is not int or payload.get("version") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14}):
+                    or type(payload.get("version")) is not int or payload.get("version") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17}):
                 raise ValueError("不是受支持的多机位工程")
             allowed = {"format", "version", "clips", "cuts", "master_audio", "master_duration", "fps",
                        "range_start", "range_end", "global_grade", "camera_grades", "transitions", "subtitles",
                        "edit_points", "clip_grades", "stabilizations", "library_overlays", "alignment_reference_camera", "color_reference_camera",
                        "video_stack_enabled", "video_stack_order", "video_stack_hidden", "timeline_empty_tracks", "camera_names",
-                       "audio_track_enabled", "timeline_markers", "timeline_snap_enabled", "timeline_link_enabled", "audio_overrides", "timeline_removed_tracks", "project_settings", "monitor_layout"}
+                       "audio_track_enabled", "timeline_markers", "timeline_snap_enabled", "timeline_link_enabled", "audio_overrides", "timeline_removed_tracks", "project_settings", "monitor_layout", "master_audio_clips", "timeline_multicam_collapsed"}
             if set(payload) - allowed:
                 raise ValueError("工程包含未知字段")
 
@@ -585,6 +632,10 @@ class MulticamProject:
             if not isinstance(raw_clips, list) or not isinstance(raw_cuts, list):
                 raise ValueError("工程素材或切点结构无效")
             clips = []
+            raw_master = payload.get('master_audio_clips', [])
+            if not isinstance(raw_master, list) or len(raw_master) > 100_000:
+                raise ValueError('主音频分段设置无效')
+            master_clips = [MasterAudioClip(**item) for item in raw_master]
             for item in raw_clips:
                 if not isinstance(item, dict):
                     raise ValueError("工程素材结构无效")
@@ -667,7 +718,9 @@ class MulticamProject:
                           timeline_link_enabled=payload.get('timeline_link_enabled', True),
                           audio_overrides=audio_overrides,
                           project_settings=payload.get('project_settings', {}),
-                          monitor_layout=payload.get('monitor_layout', {}))
+                          monitor_layout=payload.get('monitor_layout', {}),
+                          timeline_multicam_collapsed=payload.get('timeline_multicam_collapsed', False))
+            project.master_audio_clips = master_clips
             project.validate()
             return project
         except (json.JSONDecodeError, TypeError, KeyError, OverflowError) as exc:

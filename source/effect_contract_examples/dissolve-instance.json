@@ -1,0 +1,11 @@
+{
+  "schema": "okk.effect-instance/1.0",
+  "id": "transition-instance-001",
+  "effect_id": "org.okk.transitions.dissolve",
+  "effect_version": "1.0.0",
+  "enabled": true,
+  "fps": {"num": 25, "den": 1},
+  "timing": {"cut_frame": 100, "duration_frames": 20},
+  "parameters": {},
+  "keyframes": {}
+}

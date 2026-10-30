@@ -113,5 +113,17 @@ class StabilizedRenderMediaTests(unittest.TestCase):
         self.assertIn(str(self.folder/'blue.mp4'),mixed)
         self.assertIn(str(self.folder/'red.mp4'),mixed)
 
+    def test_split_retains_stabilized_cache_handles_and_export_samples(self):
+        from timeline_split import split_timeline
+        project = self.project(True)
+        edit, count, _ = split_timeline(project, 1.5, {('clip', 'red_source')})
+        self.assertGreater(count, 0)
+        self.assertEqual(len(edit.stabilizations), 2)
+        for position in (1.2, 1.8, 2.2):
+            self.assertEqual(edit.media_at(1, position)[:2], project.media_at(1, position)[:2])
+        before = self.render(project, 'before_source_split')
+        after = self.render(edit, 'after_source_split')
+        self.assertEqual(before[:2], after[:2])
+
 
 if __name__=='__main__':unittest.main()

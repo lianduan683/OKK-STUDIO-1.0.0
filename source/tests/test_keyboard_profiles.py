@@ -147,33 +147,32 @@ class KeyboardPresetWorkspaceTests(unittest.TestCase):
         self.assertIsNone(ws.project.range_end)
         opened.assert_not_called()
 
-    def test_layout_menu_switches_immediately_persists_and_resets_tool_without_dirtying(self):
+    def test_settings_switch_persists_and_resets_tool_without_dirtying(self):
         ws = self.workspace
         self.root.multicam_workspace = ws
-        for name in ('_keyboard_profile_selected', '_show_keyboard_reference'):
+        for name in ('_keyboard_profile_selected', '_show_keyboard_reference', '_apply_keyboard_settings'):
             setattr(self.root, name, MethodType(getattr(KeyboardProfileSettingsMixin, name), self.root))
         with patch('keyboard_profile_ui.load_profile', return_value='current'):
             KeyboardProfileSettingsMixin._init_keyboard_profile(self.root)
-        KeyboardProfileSettingsMixin._append_keyboard_layout_menu(self.root, ws.workspace_layout_menu)
         before = ws.project.to_payload('.')
         dirty, history = ws.dirty, len(ws.undo_stack)
         ws._transport_request_id = 37
         with patch('keyboard_profile_ui.save_profile') as save:
-            self.root.keyboard_profile_menu.invoke(2)
+            self.root._apply_keyboard_settings('premiere')
             save.assert_called_once_with('premiere')
         self.assertEqual(self.root.keyboard_profile, 'premiere')
         self.assertGreaterEqual(ws._transport_request_id, 37)
         self.assertIn('Ctrl+K', ws._keyboard_hint_var.get())
         self.key('c'); self.assertEqual(ws._keyboard_tool, 'razor')
         with patch('keyboard_profile_ui.save_profile'):
-            self.root.keyboard_profile_menu.invoke(1)
+            self.root._apply_keyboard_settings('resolve')
         self.assertEqual(ws._keyboard_tool, 'select')
         self.assertEqual(ws.project.to_payload('.'), before)
         self.assertEqual((ws.dirty, len(ws.undo_stack)), (dirty, history))
 
 
-class MainLayoutPresetTests(unittest.TestCase):
-    def test_real_application_layout_menu_contains_presets_and_remembers_selection(self):
+class MainSettingsPresetTests(unittest.TestCase):
+    def test_real_application_settings_contain_presets_and_autosave_and_remember_selection(self):
         import rtx5090_exporter as module
         original_init, original_top = tk.Tk.__init__, tk.Toplevel
         def hidden_init(root, *args, **kwargs):
@@ -189,6 +188,7 @@ class MainLayoutPresetTests(unittest.TestCase):
             pref = folder/'keyboard.json'
             save_profile('resolve', pref)
             for item in (patch('keyboard_profiles.preferences_path', return_value=pref),
+                         patch('autosave_settings.preferences_path', return_value=folder/'autosave.json'),
                          patch('studio_project.app_directory', return_value=folder),
                          patch.object(module, 'initialize_cache_policy', return_value=folder),
                          patch.object(module.ExporterApp, '_detect_async'),
@@ -202,21 +202,39 @@ class MainLayoutPresetTests(unittest.TestCase):
                 errors = []
                 app.report_callback_exception = lambda *args: errors.append(args)
                 app.geometry('1280x820+10000+10000'); app.deiconify(); app.update()
-                menu = app.keyboard_profile_menu
                 self.assertEqual(app.keyboard_profile, 'resolve')
                 self.assertEqual(app.keyboard_profile_var.get(), 'DaVinci Resolve')
                 layout = app.multicam_workspace.workspace_layout_menu
-                index = next(i for i in range(layout.index('end')+1)
-                             if layout.type(i) == 'cascade' and layout.entrycget(i, 'label') == '键位选择')
-                self.assertEqual(layout.entrycget(index, 'menu'), str(menu))
-                self.assertEqual([menu.type(i) for i in range(3)], ['radiobutton']*3)
-                self.assertEqual([menu.entrycget(i, 'label') for i in range(3)], list(PROFILE_LABELS.values()))
-                self.assertFalse(hasattr(app, 'keyboard_profile_combo'))
+                self.assertFalse(any(layout.type(i) == 'cascade' and layout.entrycget(i, 'label') == '键位选择'
+                                     for i in range(layout.index('end')+1)))
                 self.assertTrue(app.multicam_workspace.workspace_layout_button.winfo_ismapped())
-                menu.invoke(2)
+                ws = app.multicam_workspace
+                original = ws.project.to_payload('.')
+                ws.show_project_settings()
+                ws._project_settings_select('keyboard')
+                variables = ws._project_settings_vars
+                self.assertEqual(variables['keyboard_profile'].get(), 'DaVinci Resolve')
+                variables['keyboard_profile'].set('Premiere Pro')
+                variables['autosave_enabled'].set(False)
+                ws._project_settings_window.destroy()
+                self.assertEqual(app.keyboard_profile, 'resolve')
+                self.assertTrue(app.autosave_enabled)
+                ws.show_project_settings()
+                variables = ws._project_settings_vars
+                variables['keyboard_profile'].set('Premiere Pro')
+                variables['autosave_interval'].set('nan')
+                ws._project_settings_apply()
+                self.assertTrue(ws._project_settings_window.winfo_exists())
+                self.assertEqual(app.keyboard_profile, 'resolve')
+                variables['autosave_interval'].set('137')
+                ws._project_settings_apply()
+                self.assertFalse(ws._project_settings_window.winfo_exists())
                 self.assertEqual(load_profile(pref), 'premiere')
+                self.assertEqual(app.autosave_interval_seconds, 137)
+                self.assertEqual(ws.project.to_payload('.'), original)
+                self.assertEqual(ws.undo_stack, [])
                 self.assertIn('Ctrl+K', app.multicam_workspace._keyboard_hint_var.get())
-                menu.invoke(4)
+                app._show_keyboard_reference()
                 self.assertTrue(app._keyboard_reference_window.winfo_exists())
                 self.assertEqual(errors, [])
             finally:

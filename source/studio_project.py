@@ -2,9 +2,9 @@
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox
-from project_file import (AUTOSAVE_INTERVAL_MS, PROJECT_SUFFIX, ProjectFileError, apply_state, autosave_path, build_project_payload, collect_state, load_recent_projects, projects_dir, read_project_file, record_recent_project, state_digest, write_project_file)
+from project_file import (PROJECT_SUFFIX, ProjectFileError, apply_state, autosave_path, build_project_payload, collect_state, load_recent_projects, projects_dir, read_project_file, record_recent_project, state_digest, write_project_file)
 APP_NAME = 'OKK STUDIO'
-APP_VERSION = '1.0.5'
+APP_VERSION = '1.0.6'
 def app_directory():
     import sys
     return Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
@@ -166,13 +166,30 @@ class StudioProjectMixin:
         return True
 
 
-    def _write_project_autosave(self, *, notify: bool = False) -> bool:
+    def _write_project_autosave(self, *, notify: bool = False, save_current: bool = False) -> bool:
+        if not getattr(self, 'autosave_enabled', True):
+            return False
         try:
             payload = build_project_payload(
                 self, project_path=str(self.project_path) if self.project_path else "",
                 app_version=APP_VERSION,
             )
             write_project_file(autosave_path(app_directory()), payload)
+            if save_current:
+                workspace = self.multicam_workspace
+                if self.project_path:
+                    write_project_file(self.project_path, payload)
+                    self._project_saved_digest = state_digest(payload['state'])
+                    workspace.dirty = False
+                elif workspace.project_path:
+                    # Standalone multicam projects use their own atomic writer.
+                    from copy import deepcopy
+                    project = deepcopy(workspace.project)
+                    project.range_start, project.range_end, project.fps = workspace._read_range()
+                    project.monitor_layout = workspace._capture_monitor_layout()
+                    project.save(workspace.project_path)
+                    workspace.dirty = False
+                    workspace.project_label.configure(text=Path(workspace.project_path).name)
         except (OSError, ValueError, TypeError) as exc:
             self._autosave_error = str(exc)
             self._log(f"自动保存失败：{exc}")
@@ -184,14 +201,35 @@ class StudioProjectMixin:
         return True
 
 
-    def _project_autosave_tick(self) -> None:
-        if getattr(self, "_closing", False):
+    def _schedule_project_autosave(self, delay=None):
+        pending = getattr(self, '_project_autosave_after', None)
+        if pending is not None:
+            self.after_cancel(pending)
+        self._project_autosave_after = None
+        if getattr(self, '_closing', False) or not getattr(self, 'autosave_enabled', True):
             return
-        digest = self._project_current_digest()
-        if digest and digest != self._project_autosave_digest:
-            self._write_project_autosave()
-        self._project_update_title()
-        self.after(AUTOSAVE_INTERVAL_MS, self._project_autosave_tick)
+        interval = int(getattr(self, 'autosave_interval_seconds', 30) * 1000)
+        self._project_autosave_after = self.after(interval if delay is None else delay, self._project_autosave_tick)
+
+    def _project_autosave_tick(self) -> None:
+        self._project_autosave_after = None
+        if getattr(self, '_closing', False) or not getattr(self, 'autosave_enabled', True):
+            return
+        workspace = self.multicam_workspace
+        gestures = ('timeline_drag', 'subtitle_drag', '_program_boundary_drag', '_video_stack_drag',
+                    '_selection_gesture', '_timeline_divider_drag', '_media_drag', '_timeline_scrubbing')
+        browser = vars(workspace).get('effects_browser')
+        if (self.working or workspace.busy or any(vars(workspace).get(key) for key in gestures)
+                or (browser is not None and vars(browser).get('_effect_drag'))):
+            self._schedule_project_autosave(1000)
+            return
+        try:
+            digest = self._project_current_digest()
+            if digest and digest != self._project_autosave_digest:
+                self._write_project_autosave(save_current=True)
+            self._project_update_title()
+        finally:
+            self._schedule_project_autosave()
 
 
     def _project_restore_autosave(self) -> None:

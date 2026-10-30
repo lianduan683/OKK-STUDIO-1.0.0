@@ -51,23 +51,23 @@ class StackSegment:
 
 
 def _layer(project, clip, position):
-    source = max(0.0, position - clip.start)
+    source = max(0.0, position - clip.source_origin)
     picture = clip.path
-    origin = max(0.0, _frame(clip.start, project.fps) / project.fps)
+    origin = max(0.0, _frame(clip.source_origin, project.fps) / project.fps)
     stabilized = project.stabilization_at(clip.camera, position, clip.id)
     if stabilized is not None:
         if not Path(stabilized.cache_path).is_file() or not cache_matches(stabilized, clip.path):
             raise ValueError('防抖缓存缺失或失效，请重新生成或移除所选片段防抖。')
         source = max(0.0, source - stabilized.source_start)
         picture = stabilized.cache_path
-        origin = max(0.0, clip.start + stabilized.source_start)
+        origin = max(0.0, clip.source_origin + stabilized.source_start)
     overlay = project.library_overlay_at(clip.camera, position, clip.id)
     if overlay is not None:
         if not overlay_cache_matches(overlay, project, strict=True):
             raise ValueError('素材叠加缓存失效，请重新应用或移除所选素材特效。')
-        source = max(0.0, position - clip.start - overlay.source_start)
+        source = max(0.0, position - clip.source_origin - overlay.source_start)
         picture = overlay.cache_path
-        origin = max(0.0, clip.start + overlay.source_start)
+        origin = max(0.0, clip.source_origin + overlay.source_start)
     return StackLayer(clip.camera, picture, clip.path, source, origin, clip.has_alpha)
 
 
@@ -81,7 +81,7 @@ def plan_stack_segments(project):
     if first >= last:
         raise ValueError('成片范围不足一帧')
     cameras = project.stacked_cameras()
-    by_camera = {camera: [clip for clip in project.clips if clip.camera == camera]
+    by_camera = {camera: [clip for clip in project.clips if clip.enabled and clip.camera == camera]
                  for camera in cameras}
     edges = {first, last}
     for clips in by_camera.values():

@@ -846,6 +846,12 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
         path = str(master if isinstance(master, (str, os.PathLike)) else _get(master, "path", ""))
         self._audio_offset = _number(_get(self._project, "audio_offset", _get(master, "offset", 0.0)))
         source = position - self._audio_offset
+        master_clips = _get(self._project, 'master_audio_clips', [])
+        if master_clips:
+            clip = next((item for item in master_clips if item.enabled and item.start <= position < item.end), None)
+            if clip is None: return None
+            source = position-clip.start+clip.source_in
+            self._audio_offset = clip.start-clip.source_in
         if not path or source < 0:
             return None
         declared_duration = _number(_get(self._project, "master_duration", 0.0))
@@ -864,7 +870,7 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
             clip = clip_at(camera, position)
         else:
             candidates = [clip for clip in source_audio_clips(self._project)
-                          if _get(clip, 'camera') == camera
+                          if _get(clip, 'enabled', True) and _get(clip, 'camera') == camera
                           and _number(_get(clip, 'start')) <= position
                           < _number(_get(clip, 'start')) + _number(_get(clip, 'duration'))]
             clip = max(candidates, key=lambda item: (_number(_get(item, 'start')), _get(item, 'id', '')), default=None)
@@ -874,7 +880,7 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
         start = _number(_get(clip, 'start'))
         if not path:
             return None
-        return (path, _get(clip, 'id'), start), path, max(0., position-start)
+        return (path, _get(clip, 'id'), start), path, max(0., position-start+_number(_get(clip, 'source_in', 0.)))
 
     def _track_audio_desired(self, position: float):
         slots = getattr(self, '_track_audio_slots', None)

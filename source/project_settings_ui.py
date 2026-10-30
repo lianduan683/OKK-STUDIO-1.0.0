@@ -88,12 +88,21 @@ class ProjectSettingsMixin:
 
         prerender = page('prerender', '预渲染', '自动准备复杂画面，改善时间线回放')
         validate_prerender = self._build_prerender_settings(prerender, window)
+        preference_validators = {}
+        for key, title, subtitle, builder in (
+                ('autosave', '自动保存', '定时保存工程并保留恢复副本', '_build_autosave_settings'),
+                ('keyboard', '快捷键', '选择熟悉的剪辑快捷键方案', '_build_keyboard_settings')):
+            build = getattr(self.app, builder, None)
+            if callable(build):
+                preference_validators[key] = build(page(key, title, subtitle), window, values)
 
         def select(key):
             pages[key].tkraise()
             for name, button in navigation.items():
                 button.configure(bg='#34434f' if name == key else INPUT, fg=INK if name == key else MUTED)
-        for index, (key, title) in enumerate((('video', '主设置'), ('audio', '音频'), ('prerender', '预渲染'))):
+        sections = [('video', '主设置'), ('audio', '音频'), ('prerender', '预渲染')]
+        sections.extend((key, title) for key, title in (('autosave', '自动保存'), ('keyboard', '快捷键')) if key in pages)
+        for index, (key, title) in enumerate(sections):
             button = navigation[key] = tk.Button(sidebar, text=title, command=lambda key=key: select(key),
                 relief='flat', bd=0, anchor='w', padx=24, pady=14, bg=INPUT, fg=MUTED, font=(FONT, 10),
                 activebackground='#34434f', activeforeground=INK)
@@ -108,7 +117,8 @@ class ProjectSettingsMixin:
         resolution_changed(); select('video')
         footer = tk.Frame(window, bg=PANEL, padx=18, pady=14)
         footer.grid(row=2, column=0, columnspan=2, sticky='ew')
-        hint = tk.StringVar(window, value='工程格式随工程保存；预渲染开关、分辨率和保存位置在本机记住。')
+        hint = tk.StringVar(window, value='工程格式随工程保存；自动保存、快捷键和预渲染偏好在本机记住。')
+        self._project_settings_hint = hint
         tk.Label(footer, textvariable=hint, bg=PANEL, fg=MUTED, font=(FONT, 9), wraplength=self._px(550), anchor='w').pack(fill='x', pady=(0, 12))
         buttons = tk.Frame(footer, bg=PANEL)
         buttons.pack(fill='x')
@@ -130,13 +140,18 @@ class ProjectSettingsMixin:
                 candidate.project_settings, candidate.fps = settings, fps
                 candidate.validate()
                 prerender_options = validate_prerender()
+                preferences = {key: validate() for key, validate in preference_validators.items()}
             except (ValueError, KeyError, OverflowError, OSError) as error:
                 hint.set(str(error) or '请输入有效的工程格式。'); return
             try:
                 self._apply_prerender_settings(*prerender_options)
+                if 'autosave' in preferences:
+                    self.app._apply_autosave_settings(*preferences['autosave'])
+                if 'keyboard' in preferences:
+                    self.app._apply_keyboard_settings(preferences['keyboard'])
             except (OSError, ValueError) as error:
-                hint.set('预渲染设置无法保存：'+str(error)); return
-            if settings != project.project_settings or fps != project.fps:
+                hint.set('设置无法保存：'+str(error)); return
+            if settings != (project.project_settings or DEFAULT_SETTINGS) or fps != project.fps:
                 self._remember()
                 project.project_settings, project.fps = settings, fps
                 self._loading_fields = True

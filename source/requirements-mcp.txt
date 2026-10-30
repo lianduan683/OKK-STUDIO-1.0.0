@@ -1,0 +1,3 @@
+# Optional harness server; the GUI bridge itself uses only the standard library.
+mcp==2.3.0
+numpy==2.5.4

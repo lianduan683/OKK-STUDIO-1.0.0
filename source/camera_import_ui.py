@@ -146,6 +146,9 @@ class CameraImportMixin:
             return 'none'
         if not paths:
             return 'none'
+        if len(paths) == 1 and Path(paths[0]).suffix.lower() in ('.xml', '.fcpxml', '.fcpxmld', '.edl', '.otio', '.aaf', '.mlt', '.kdenlive'):
+            self.import_timeline(paths[0])
+            return 'copy'
         self._start_camera_import(paths)
         return 'copy'
 

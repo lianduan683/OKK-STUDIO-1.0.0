@@ -14,3 +14,4 @@ source/backups/
 *.exe
 *.dll
 *.pyd
+.venv-mcp/

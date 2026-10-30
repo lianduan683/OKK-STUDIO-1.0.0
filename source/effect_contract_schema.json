@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:okk:effect-contract:1.0",
+  "title": "OKK Effect Contract 1.0",
+  "$comment": "Structural validation only. effect_contract.py also checks engine bindings, parameter units/ranges, timing, asset containment, hashes and native capabilities.",
+  "oneOf": [{"$ref": "#/$defs/package"}, {"$ref": "#/$defs/instance"}],
+  "$defs": {
+    "text": {"type": "string", "minLength": 1, "pattern": "^[^\\u0000\\r\\n]+$"},
+    "version": {"type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"},
+    "effectId": {"type": "string", "pattern": "^[a-z][a-z0-9_]*(?:[.\\-][a-z0-9_]+)+$"},
+    "fps": {
+      "type": "object", "additionalProperties": false, "required": ["num", "den"],
+      "properties": {
+        "num": {"type": "integer", "minimum": 1, "maximum": 1000000},
+        "den": {"type": "integer", "minimum": 1, "maximum": 1000000}
+      }
+    },
+    "parameter": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "label", "unit", "default", "animatable"],
+      "properties": {
+        "type": {"enum": ["number", "integer", "boolean", "enum"]},
+        "label": {"$ref": "#/$defs/text"}, "unit": {"$ref": "#/$defs/text"},
+        "default": {"type": ["number", "boolean", "string"]},
+        "min": {"type": "number", "minimum": -1000000000000, "maximum": 1000000000000},
+        "max": {"type": "number", "minimum": -1000000000000, "maximum": 1000000000000},
+        "choices": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": ["integer", "string"]}},
+        "animatable": {"const": false}
+      },
+      "allOf": [
+        {"if": {"properties": {"type": {"enum": ["number", "integer"]}}},
+         "then": {"required": ["min", "max"], "not": {"required": ["choices"]}, "properties": {"default": {"type": "number"}}}},
+        {"if": {"properties": {"type": {"const": "integer"}}}, "then": {"properties": {"default": {"type": "integer"}}}},
+        {"if": {"properties": {"type": {"const": "boolean"}}},
+         "then": {"properties": {"default": {"type": "boolean"}}, "not": {"anyOf": [{"required": ["min"]}, {"required": ["max"]}, {"required": ["choices"]}]}}},
+        {"if": {"properties": {"type": {"const": "enum"}}},
+         "then": {"required": ["choices"], "properties": {"default": {"type": ["integer", "string"]}}, "not": {"anyOf": [{"required": ["min"]}, {"required": ["max"]}]}}}
+      ]
+    },
+    "asset": {
+      "type": "object", "additionalProperties": false, "required": ["path", "sha256", "role"],
+      "properties": {
+        "path": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)[^\\\\:\\u0000\\r\\n]+(?<!/)$"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "role": {"enum": ["overlay", "mask", "lut"]}, "fps": {"$ref": "#/$defs/fps"}
+      },
+      "allOf": [
+        {"if": {"properties": {"role": {"const": "overlay"}}}, "then": {"required": ["fps"]}, "else": {"not": {"required": ["fps"]}}}
+      ]
+    },
+    "package": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "id", "version", "name", "kind", "category", "description", "source", "render", "implementation", "parameters", "assets"],
+      "properties": {
+        "schema": {"const": "okk.effect/1.0"}, "id": {"$ref": "#/$defs/effectId"},
+        "version": {"$ref": "#/$defs/version"}, "name": {"$ref": "#/$defs/text"},
+        "kind": {"enum": ["effect", "transition"]}, "category": {"$ref": "#/$defs/text"},
+        "description": {"type": "string", "pattern": "^[^\\u0000\\r\\n]*$"},
+        "source": {
+          "type": "object", "additionalProperties": false,
+          "required": ["application", "format", "original_id", "fidelity", "notes"],
+          "properties": {
+            "application": {"$ref": "#/$defs/text"}, "format": {"$ref": "#/$defs/text"},
+            "original_id": {"type": "string", "pattern": "^[^\\u0000\\r\\n]*$"},
+            "fidelity": {"enum": ["native", "mapped", "approximate", "baked"]},
+            "notes": {"type": "array", "items": {"$ref": "#/$defs/text"}}
+          }
+        },
+        "render": {
+          "type": "object", "additionalProperties": false,
+          "required": ["inputs", "color_space", "alpha", "temporal_radius"],
+          "properties": {
+            "inputs": {"enum": [1, 2]}, "color_space": {"const": "rec709-display"},
+            "alpha": {"const": "straight"}, "temporal_radius": {"const": 0}
+          }
+        },
+        "implementation": {
+          "type": "object", "additionalProperties": false, "required": ["engine"],
+          "properties": {
+            "engine": {"enum": ["okk.grade.v1", "okk.effects.v1", "okk.overlay.v1", "okk.xfade.v1", "okk.mask.v1"]},
+            "asset": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+            "mode": {"$ref": "#/$defs/text"}, "blend": {"enum": ["alpha", "screen"]}
+          }
+        },
+        "parameters": {
+          "type": "object", "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"},
+          "additionalProperties": {"$ref": "#/$defs/parameter"}
+        },
+        "assets": {
+          "type": "object", "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"},
+          "additionalProperties": {"$ref": "#/$defs/asset"}
+        }
+      },
+      "allOf": [
+        {"if": {"properties": {"kind": {"const": "effect"}}}, "then": {"properties": {"render": {"properties": {"inputs": {"const": 1}}}}}},
+        {"if": {"properties": {"kind": {"const": "transition"}}}, "then": {"properties": {"render": {"properties": {"inputs": {"const": 2}}}}}}
+      ]
+    },
+    "frame": {"type": "integer", "minimum": 0, "maximum": 1000000000000},
+    "durationFrames": {"type": "integer", "minimum": 1, "maximum": 1000000000000},
+    "instance": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "id", "effect_id", "effect_version", "enabled", "fps", "timing", "parameters", "keyframes"],
+      "properties": {
+        "schema": {"const": "okk.effect-instance/1.0"}, "id": {"$ref": "#/$defs/text"},
+        "effect_id": {"$ref": "#/$defs/effectId"}, "effect_version": {"$ref": "#/$defs/version"},
+        "enabled": {"type": "boolean"}, "fps": {"$ref": "#/$defs/fps"},
+        "timing": {
+          "oneOf": [
+            {"type": "object", "additionalProperties": false, "required": ["start_frame", "duration_frames"],
+             "properties": {"start_frame": {"$ref": "#/$defs/frame"}, "duration_frames": {"$ref": "#/$defs/durationFrames"}}},
+            {"type": "object", "additionalProperties": false, "required": ["cut_frame", "duration_frames"],
+             "properties": {"cut_frame": {"$ref": "#/$defs/frame"}, "duration_frames": {"$ref": "#/$defs/durationFrames"}}}
+          ]
+        },
+        "parameters": {"type": "object", "additionalProperties": {"type": ["number", "boolean", "string"]}},
+        "keyframes": {"type": "object", "maxProperties": 0}
+      }
+    }
+  }
+}

@@ -73,6 +73,8 @@ class TransportControlsMixin:
 
     def _transport_focus_out(self, _event=None):
         self._editor_ime_guard.restore_all()
+        release = getattr(self, '_clip_enabled_key_release', None)
+        if release is not None: release()
         marker_release = getattr(self, '_marker_key_release', None)
         if marker_release is not None: marker_release()
         self._transport_space_pressed = False
@@ -178,6 +180,10 @@ class TransportControlsMixin:
 
     def _transport_key_release(self, event):
         key = canonical_key(event)
+        if key == 'd':
+            release = getattr(self, '_clip_enabled_key_release', None)
+            if release is not None: release()
+            return 'break'
         if key == 'm':
             marker_release = getattr(self, '_marker_key_release', None)
             if marker_release is not None: marker_release()
@@ -198,6 +204,8 @@ class TransportControlsMixin:
         self._finish_preview_epoch(seek=finalize)
 
     def _reset_transport_controls(self):
+        release = getattr(self, '_clip_enabled_key_release', None)
+        if release is not None: release()
         marker_release = getattr(self, '_marker_key_release', None)
         if marker_release is not None: marker_release()
         self._transport_space_pressed = False

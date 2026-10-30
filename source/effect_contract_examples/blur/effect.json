@@ -1,0 +1,22 @@
+{
+  "schema": "okk.effect/1.0",
+  "id": "org.okk.effects.blur",
+  "version": "1.0.0",
+  "name": "标准模糊",
+  "kind": "effect",
+  "category": "基础特效",
+  "description": "映射到软件已有的模糊参数。",
+  "source": {
+    "application": "okk-studio",
+    "format": "native",
+    "original_id": "blur",
+    "fidelity": "native",
+    "notes": []
+  },
+  "render": {"inputs": 1, "color_space": "rec709-display", "alpha": "straight", "temporal_radius": 0},
+  "implementation": {"engine": "okk.effects.v1"},
+  "parameters": {
+    "blur": {"type": "number", "label": "模糊强度", "unit": "percent", "default": 30, "min": 0, "max": 100, "animatable": false}
+  },
+  "assets": {}
+}

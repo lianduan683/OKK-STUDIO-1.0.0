@@ -12,14 +12,17 @@ from multicam_core import Cut
 from creative_core import ColorGrade
 from exporter_core import ExportCancelled
 from transition_preview import transition_signature
+from camera_match_workspace import CameraMatchWorkspaceMixin
 
 
-class AutoColorWorkspaceMixin:
+class AutoColorWorkspaceMixin(CameraMatchWorkspaceMixin):
     def _init_auto_color(self):
         self.auto_color_status=tk.StringVar(self,value='默认仅所选片段 · 曝光偏好 +0.25 EV · 分析后可继续手动微调')
         self._auto_color_worker=None
         self._auto_color_cancel=threading.Event()
         self._auto_color_running=False
+        self._camera_match_running=False
+        self.camera_match_status=tk.StringVar(self,value='选择标准机位，再勾选其他机位进行匹配；标准机位不会被修改。')
 
     def _auto_color_context(self):
         return (self.grade_target,tuple(self.selected_program_range) if self.selected_program_range else None,
@@ -34,6 +37,8 @@ class AutoColorWorkspaceMixin:
         workspace=vars(self).get('color_workspace')
         panel=vars(workspace).get('auto_panel') if workspace is not None else None
         if panel is not None:panel.refresh_reference_choices()
+        match_panel=vars(workspace).get('camera_match_panel') if workspace is not None else None
+        if match_panel is not None:match_panel.refresh_choices()
         return True
 
     def _auto_color_set_running(self,value):
@@ -41,6 +46,8 @@ class AutoColorWorkspaceMixin:
         workspace=vars(self).get('color_workspace')
         panel=vars(workspace).get('auto_panel') if workspace is not None else None
         if panel is not None:panel.set_running(value)
+        match_panel=vars(workspace).get('camera_match_panel') if workspace is not None else None
+        if match_panel is not None:match_panel.set_running(value)
 
     def start_auto_color(self,preset='natural',bias_ev=.25,strength=1.,reference_camera=None):
         if not self._available() or self._auto_color_running:return False

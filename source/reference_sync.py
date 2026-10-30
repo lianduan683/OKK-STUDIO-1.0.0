@@ -128,7 +128,8 @@ def align_to_camera(ffmpeg,clips,reference_clips,*,ffprobe_path='',mode='fast',
             errors.append(Path(_path(reference)).name+'：'+str(error));continue
         batches+=1
         for target_index,result in zip(targets,results):
-            offset=float(result.offset_seconds)-_start(reference)
+            offset=(float(result.offset_seconds)-_start(reference)
+                    +float(_get(reference, 'source_in', 0.))-float(_get(clips[target_index], 'source_in', 0.)))
             confidence=float(result.confidence)
             if not math.isfinite(offset) or not math.isfinite(confidence):continue
             confidence=min(1.,max(0.,confidence))
@@ -199,6 +200,9 @@ def align_camera_tracks(ffmpeg, clips, external_audio='', *, reference_clips=Non
         results = align_audio_segments(ffmpeg, [_path(clip) for clip in clips], external_audio,
             max_offset_seconds=0., mode=mode, cancel_event=cancel_event, progress=update,
             cache_dir=cache_dir, continue_on_error=True)
+        results = [AlignmentResult(result.offset_seconds-float(_get(clip, 'source_in', 0.)),
+                    result.confidence, result.envelope_rate, result.engine)
+                   for clip, result in zip(clips, results)]
     if len(results) != len(clips):
         raise RuntimeError('音频同步结果与轨道素材数量不一致')
     output = list(results)
