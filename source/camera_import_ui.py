@@ -94,7 +94,7 @@ class CameraImportMixin:
                 start += info.duration
                 if not project.master_audio and info.has_audio:
                     project.master_audio, project.master_duration = info.path, info.duration
-        if first:
+        if first and not project.project_settings:
             project.fps = groups[0][1][0].fps or 30
             self.fps_var.set(f'{project.fps:.8g}')
         if not project.cuts:

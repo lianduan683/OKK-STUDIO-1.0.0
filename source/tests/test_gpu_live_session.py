@@ -81,6 +81,7 @@ class SessionLoopTests(unittest.TestCase):
             self.assertEqual(core.context.rendered_at,[101_000_000_000])
             self.assertTrue(core.context.free)
         self.assertEqual(self.fixture['presents'],3)
+        self.assertEqual(self.session.presented_video_frames, 1)
         self.assertTrue(self.graphics.closed)
     def test_blank_composition_clears_output_without_sampling_stale_video(self):
         self.session.compose(blank=True)

@@ -20,6 +20,7 @@ ACCENT = '#58a6d6'
 FONT = ('Microsoft YaHei UI', 10)
 CONTAINERS = {'MP4': '.mp4', 'MOV': '.mov', 'MKV': '.mkv'}
 AUDIO_FORMATS = {
+    '工程音频位深': 'project',
     'AAC': 'aac', '复制所选音轨': 'copy', '复制主音频': 'copy', '无音频': 'none',
     'PCM 16-bit': 'pcm_s16le', 'PCM 24-bit': 'pcm_s24le',
     'PCM 32-bit': 'pcm_s32le', 'PCM Float32': 'pcm_f32le', 'FLAC': 'flac',
@@ -146,7 +147,7 @@ def make_delivery_settings(workspace):
     if not callable(factory) and not callable(method):
         settings.codec = codec_from_label(app.codec_var.get())
         settings.preset = app.preset_var.get().split()[-1].lower()
-        settings.resolution = {'保持原分辨率': 'original', '1080p': '1080p',
+        settings.resolution = {'时间线分辨率': 'timeline', '保持原分辨率': 'original', '1080p': '1080p',
                                '1440p': '1440p', '4K': '4k', '8K': '8k'}[app.resolution_var.get()]
         settings.bit_depth = app.depth_var.get().replace('自动', 'auto')
         settings.decode_mode = 'cuda' if (settings.codec.endswith('_nvenc') and
@@ -198,6 +199,9 @@ def make_delivery_settings(workspace):
     if suffix is None:
         raise ValueError('请选择 MP4、MOV 或 MKV 容器。')
     audio = AUDIO_FORMATS.get(ws.delivery_audio_format_var.get())
+    if audio == 'project':
+        from project_settings import BIT_DEPTHS, DEFAULT_SETTINGS
+        audio = BIT_DEPTHS[(ws.project.project_settings or DEFAULT_SETTINGS)['bit_depth']]
     if audio is None:
         raise ValueError('请选择有效的音频格式。')
     if audio.startswith('pcm_') and suffix not in {'.mov', '.mkv'}:
@@ -206,7 +210,11 @@ def make_delivery_settings(workspace):
         raise ValueError('FLAC 音频请选择 MKV 容器。')
     settings.audio = audio
     settings.audio_bitrate = _bitrate(ws.delivery_audio_bitrate_var, '音频码率', audio=True) if audio == 'aac' else ''
-    settings.audio_sample_rate = normalize_audio_sample_rate(ws.delivery_audio_sample_rate_var.get()) if audio not in {'copy', 'none'} else None
+    sample_text = ws.delivery_audio_sample_rate_var.get()
+    if sample_text == '工程采样率':
+        from project_settings import DEFAULT_SETTINGS
+        sample_text = str((ws.project.project_settings or DEFAULT_SETTINGS)['sample_rate'])
+    settings.audio_sample_rate = normalize_audio_sample_rate(sample_text) if audio not in {'copy', 'none'} else None
     if audio == 'aac' and settings.audio_sample_rate and settings.audio_sample_rate > 96000:
         raise ValueError('AAC 最高使用 96 kHz；更高采样率请选择 PCM 或 FLAC。')
     return settings, suffix
@@ -319,7 +327,7 @@ def build_delivery_panel(workspace, delivery_frame):
           ['自动（沿用统一编码设置）', 'CPU H.264（兼容模式）'])
     field(video, '视频编码', app.codec_var, CODECS, key='codec')
     field(video, '速度 / 画质预设', app.preset_var, PRESETS)
-    field(video, '输出分辨率', app.resolution_var, ['保持原分辨率', '1080p', '1440p', '4K', '8K'])
+    field(video, '输出分辨率', app.resolution_var, ['时间线分辨率', '保持原分辨率', '1080p', '1440p', '4K', '8K'])
     field(video, '输出位深', app.depth_var, ['自动', '8-bit', '10-bit'])
     quality_title = tk.StringVar(master=ws, value='质量 CQ（0–51，越低越清晰）')
     quality_control = field(video, '', app.quality_var, key='quality')
@@ -335,7 +343,7 @@ def build_delivery_panel(workspace, delivery_frame):
     field(audio, 'AAC 码率（可输入任意数值）', ws.delivery_audio_bitrate_var,
           ['96k', '128k', '192k', '256k', '320k', '512k'], editable=True, key='audio_bitrate')
     field(audio, '采样率（Hz，可手动输入）', ws.delivery_audio_sample_rate_var,
-          ['保留原采样率', '44100', '48000', '88200', '96000', '192000'], editable=True, key='audio_rate')
+          ['工程采样率', '保留原采样率', '44100', '48000', '88200', '96000', '176400', '192000'], editable=True, key='audio_rate')
     audio_note = note(audio)
 
     rtx = scroll_page('GPU')
@@ -411,6 +419,9 @@ def build_delivery_panel(workspace, delivery_frame):
             ('\nCPU 预设按所选速度映射，10-bit 保留。' if cpu else
              '\nH.264 硬件编码使用 8-bit；10-bit 请选择已验证可用的 HEVC / AV1。'))
         audio_codec = AUDIO_FORMATS.get(ws.delivery_audio_format_var.get(), 'aac')
+        if audio_codec == 'project':
+            from project_settings import BIT_DEPTHS, DEFAULT_SETTINGS
+            audio_codec = BIT_DEPTHS[(ws.project.project_settings or DEFAULT_SETTINGS)['bit_depth']]
         set_enabled('audio_bitrate', audio_codec == 'aac')
         set_enabled('audio_rate', audio_codec not in {'copy', 'none'})
         suffix = CONTAINERS.get(ws.delivery_container_var.get(), '.mp4')

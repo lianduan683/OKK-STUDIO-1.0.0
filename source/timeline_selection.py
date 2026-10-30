@@ -47,6 +47,7 @@ class TimelineSelectionMixin:
         try:
             self.start_var.set(format_time(self.project.range_start))
             self.end_var.set(format_time(self.project.range_end) if self.project.range_end is not None else '')
+            self.fps_var.set(f'{self.project.fps:.12g}')
         finally:
             self._loading_fields = False
 
@@ -61,6 +62,7 @@ class TimelineSelectionMixin:
         return result
 
     def _timeline_hit_key(self, event):
+        if self._timeline_ruler_contains(event): return None
         x, y = self.timeline.canvasx(event.x), self.timeline.canvasy(event.y)
         mapping = self._timeline_item_keys()
         key = next((mapping[item] for item in reversed(self.timeline.find_overlapping(x, y, x, y))
@@ -169,6 +171,7 @@ class TimelineSelectionMixin:
         return 'break'
 
     def _selection_press(self, event):
+        if self._timeline_ruler_contains(event): return False
         y = self.timeline.canvasy(event.y)
         if y < self._timeline_program_bounds[0]: return False
         if self._stack_track_at(event) is not None: return False

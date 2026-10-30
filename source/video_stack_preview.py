@@ -55,6 +55,20 @@ def preview_command(segment, project, ffmpeg, media, width=1280, height=720,
     """Compose at project fps, then sample playback; pause keeps its exact frame."""
     rate = canonical_frame_rate(project.fps)
     project = replace(project, fps=float(rate))
+    if segment.camera == -1:
+        # This is an already composited picture. Applying the graph again
+        # would duplicate layer grades, opacity and burned-in subtitles.
+        layer = segment.layers[0]
+        output_fps = float(rate) if single_frame else min(float(rate), float(max_fps))
+        graph = (f'[0:v]setpts=PTS-STARTPTS,fps={output_fps:.12g},'
+                 f'scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,'
+                 f'pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=rgba[picture]')
+        return ([ffmpeg, '-hide_banner', '-loglevel', 'error', '-nostdin', '-threads', '2',
+                 '-ss', f'{layer.source_start:.9f}', '-i', layer.path, '-filter_complex_threads', '2',
+                 '-filter_complex', graph, '-map', '[picture]', '-an', '-sn', '-dn',
+                 '-c:v', 'rawvideo', '-threads:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgba',
+                 '-r', f'{output_fps:.12g}', '-frames:v', str(1 if single_frame else
+                    max(1, math.ceil(segment.duration*output_fps-1e-8))), 'pipe:1'], output_fps)
     # A nominal MediaInfo.fps alone cannot prove a CFR source. Only use the
     # exact avg/r/time-base gate collected by the cancellable metadata probe.
     source_rates = source_frame_rates or {}
@@ -74,6 +88,27 @@ def preview_command(segment, project, ffmpeg, media, width=1280, height=720,
     timescale = command.index('-video_track_timescale')
     del command[timescale:timescale+2]
     return command, output_fps
+
+
+def cached_stack_segments(segments, items, fps):
+    """Split cache boundaries on the project clock, including partial seeks."""
+    from video_stack_render import StackLayer
+    for segment in segments:
+        first = round(segment.start*fps)
+        last = first+segment.frames
+        edges = sorted({first, last, *(round(time*fps) for _, start, end in items
+                        for time in (start, end) if first < round(time*fps) < last)})
+        for left, right in zip(edges, edges[1:]):
+            cached = next(((path, start) for path, start, end in items
+                           if round(start*fps) <= left < round(end*fps) and Path(path).is_file()), None)
+            if cached:
+                path, start = cached
+                layers = (StackLayer(0, path, path, left/fps-start, start),)
+            else:
+                layers = tuple(replace(layer, source_start=layer.source_start+(left-first)/fps)
+                               for layer in segment.layers)
+            yield replace(segment, start=left/fps, frames=right-left, duration=(right-left)/fps,
+                          layers=layers, camera=-1 if cached else segment.camera)
 
 
 class StackPreview:
@@ -138,7 +173,7 @@ class StackPreview:
                     and self._decoded_time is not None
                     and position-self._decoded_time > threshold)
 
-    def request(self, project, position, playing, request_id, *, ass_path=None, use_proxies=True, preview_epoch=None):
+    def request(self, project, position, playing, request_id, *, ass_path=None, use_proxies=True, preview_epoch=None, cache_items=()):
         with self._condition:
             if self._closed: raise RuntimeError('图层预览已经关闭。')
             if preview_epoch is None or preview_epoch != self._epoch:
@@ -153,7 +188,7 @@ class StackPreview:
             self._decoded_time = None
             self._last_catchup = time.monotonic()
             self._pending = (self._generation, project, float(position), bool(playing), int(request_id),
-                             ass_path, bool(use_proxies), preview_epoch)
+                             ass_path, bool(use_proxies), preview_epoch, tuple(cache_items))
             self._condition.notify()
 
     def cancel(self):
@@ -307,9 +342,10 @@ class StackPreview:
         self.notify('stack_frame', None)
 
     def _render(self, job, cancel):
-        generation, project, position, playing, request_id, ass_path, use_proxies, preview_epoch = job
+        generation, project, position, playing, request_id, ass_path, use_proxies, preview_epoch, *extra = job
         project = replace(project, fps=float(canonical_frame_rate(project.fps)), range_start=0., range_end=None)
         segments = tuple(preview_segments(project, position, single_frame=not playing))
+        if extra and extra[0]: segments = tuple(cached_stack_segments(segments, extra[0], project.fps))
         media = {}
         if project.clips:
             reference_path = project.clips[0].path
@@ -347,9 +383,11 @@ class StackPreview:
         width, height = self.width, self.height
         if project.clips:
             reference = media[project.clips[0].path]
-            ratio = min(width / reference.width, height / reference.height)
-            width = max(2, round(reference.width * ratio / 2) * 2)
-            height = max(2, round(reference.height * ratio / 2) * 2)
+            from project_settings import timeline_dimensions
+            canvas_width, canvas_height = timeline_dimensions(project, (reference.width, reference.height))
+            ratio = min(width / canvas_width, height / canvas_height)
+            width = max(2, round(canvas_width * ratio / 2) * 2)
+            height = max(2, round(canvas_height * ratio / 2) * 2)
         rates = {}
         for path in media:
             stat = Path(path).stat()

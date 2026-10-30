@@ -1,35 +1,41 @@
 {
-  "version": "1.0.4",
-  "build_id": "20261030-181440-07f0c9f5",
-  "regression_tests_run": 154,
-  "regression_tests_passed": 154,
+  "version": "1.0.5",
+  "build_id": "20261030-191345-d1a0fd9c",
+  "regression_tests_run": 118,
+  "regression_tests_passed": 118,
   "regression_tests_skipped": 0,
   "test_modules": [
-    "timeline_controls",
-    "timeline_audio_session",
-    "timeline_edits",
-    "timeline_selection",
-    "timeline_merge",
-    "timeline_drag_merge",
-    "timeline_layout_ui",
-    "proxy_update",
-    "existing_proxy_links",
-    "sync_consensus",
-    "middle_sync",
-    "middle_sync_fallback",
-    "sync_track_recovery",
-    "project_open_compat"
+    "test_prerender",
+    "test_project_settings",
+    "test_configured_proxy",
+    "test_timeline_tracks",
+    "test_timeline_controls",
+    "test_timeline_audio_session",
+    "test_timeline_viewport",
+    "test_timeline_layout_ui",
+    "test_camera_rename",
+    "test_multicam_quick_proxy",
+    "test_gpu_live_session",
+    "test_project_open_compat"
   ],
+  "ffmpeg_media_tests": "included",
   "headless_executable_help_exit_code": 0,
-  "version_metadata": "1.0.4",
+  "version_metadata": "1.0.5",
+  "frozen_modules_verified": [
+    "prerender",
+    "prerender_ui",
+    "project_settings",
+    "project_settings_ui",
+    "configured_proxy",
+    "timeline_tracks"
+  ],
   "archive_crc_checks": "passed",
   "source_allowlist_and_private_path_check": "passed",
-  "github_v1.0.0_resource_size_and_sha256": "matched",
   "installation_and_uninstallation_retested_for_this_build": false,
   "trusted_code_signature": false,
   "not_tested": [
     "production installation and in-place upgrade",
     "online resource download during installation",
-    "full-length user media and all hardware combinations"
+    "full-length media and full-frame-rate playback across physical devices"
   ]
 }

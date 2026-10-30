@@ -30,6 +30,7 @@ from gpu_live_player import GpuLivePlayerMixin
 from proxy_media import PreviewProxyResolver
 from video_stack_player import VideoStackPlayerMixin
 from timeline_audio import audio_track_enabled, source_audio_clips
+from playback_metrics import PlaybackMetricsPlayerMixin
 
 
 def _get(obj: Any, name: str, default: Any = None) -> Any:
@@ -115,7 +116,7 @@ class _PreviewCancel:
         return self.is_set()
 
 
-class MulticamPlayer(VideoStackPlayerMixin, GpuLivePlayerMixin):
+class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLivePlayerMixin):
     """Threaded MPV player.  All times are seconds on the project timeline."""
 
     TICK = 1 / 30
@@ -296,6 +297,7 @@ class MulticamPlayer(VideoStackPlayerMixin, GpuLivePlayerMixin):
         # sound continue on the same project clock.
         self._render_preview: tuple[str, float, float] | None = None
         self._transition_previews = []
+        self._prerender_items = []
         self._transition_signature = None
         self._grade_draft = None
         self._grade_engine = RealtimeGrade()
@@ -368,6 +370,7 @@ class MulticamPlayer(VideoStackPlayerMixin, GpuLivePlayerMixin):
                     self._playing = False
                     self._pause_all()
                 self._state()
+                self._poll_playback_metrics()
                 # Include synchronization work in the frame budget. Waiting a
                 # full TICK again after IPC added its cost to every cut and
                 # also delayed pause/resume commands behind an extra sleep.
@@ -476,6 +479,7 @@ class MulticamPlayer(VideoStackPlayerMixin, GpuLivePlayerMixin):
         elif action == "configure":
             position = self._clock() if self._project is not None else 0.0
             self._project = values["project"]
+            self._prerender_items = []
             self._prune_track_audio_slots()
             resolver = getattr(self, '_proxy_resolver', None)
             if resolver is not None:
@@ -507,6 +511,23 @@ class MulticamPlayer(VideoStackPlayerMixin, GpuLivePlayerMixin):
             # file keeps its running decoder and clock; only an actual file
             # change below freezes playback while it is being opened.
             self._sync(force=stack_changed)
+        elif action == 'prerender_cache':
+            from prerender import picture_signature
+            items = values.get('items', [])
+            if items and values.get('signature') != picture_signature(self._project, values.get('resolution', (1280, 720))):
+                return
+            checked = []
+            previous_end = 0.
+            for path, first, last in items:
+                if (not isinstance(path, str) or not Path(path).is_file() or not math.isfinite(first)
+                        or not math.isfinite(last) or first < previous_end or last <= first
+                        or last > self._duration()+1/self._project.fps):
+                    raise ValueError('预渲染缓存范围或文件无效')
+                checked.append((path, first, last)); previous_end = last
+            if checked != getattr(self, '_prerender_items', []):
+                self._prerender_items = checked
+                self._stack_revision += 1
+                self._sync()
         elif action == "transition_previews":
             if values.get("signature") != self._transition_signature:
                 return  # A newer edit won while the short windows rendered.
@@ -913,7 +934,14 @@ class MulticamPlayer(VideoStackPlayerMixin, GpuLivePlayerMixin):
         key = ('comparison-original',path,_get(clip,'id'),_get(clip,'start',_get(clip,'timeline_start')))
         return key,path,max(0.0,source_time)
 
+    def _prerender_spec(self, position):
+        if self._comparison_enabled or self._audition is not None or self._grade_draft is not None: return None
+        from prerender import cached_spec
+        return cached_spec(getattr(self, '_prerender_items', ()), position)
+
     def _program_spec(self, camera: int, position: float) -> tuple | None:
+        cached = self._prerender_spec(position)
+        if cached is not None: return cached
         if self._comparison_enabled:
             return self._clip(camera, position)
         preview = self._render_preview
@@ -929,7 +957,7 @@ class MulticamPlayer(VideoStackPlayerMixin, GpuLivePlayerMixin):
 
     @staticmethod
     def _is_baked_key(key):
-        return bool(key and key[0] in {'render-preview', 'transition-preview'})
+        return bool(key and key[0] in {'render-preview', 'transition-preview', 'prerender'})
 
     def _prepare_subtitles(self) -> None:
         """Materialise styled track data on the worker, only when it changed."""
@@ -1270,6 +1298,11 @@ class MulticamPlayer(VideoStackPlayerMixin, GpuLivePlayerMixin):
                     controller.command(["set_property", "pause", True])
                     controller.command(["set_property", "mute", not audio])
                     if audio:
+                        audio_settings = getattr(self._project, 'project_settings', {})
+                        if audio_settings:
+                            controller.command(['set_property', 'audio-samplerate', audio_settings['sample_rate']])
+                            audio_format = {'16bit': 's16', '24bit': 's32', '32bit': 's32', '32bit 浮点': 'float'}[audio_settings['bit_depth']]
+                            controller.command(['set_property', 'audio-format', audio_format])
                         controller.command(["set_property", "vid", "no"])
                         controller.command(["loadfile", path, "replace"])
                         self._wait_audio(controller)
@@ -1727,7 +1760,7 @@ class MulticamPlayer(VideoStackPlayerMixin, GpuLivePlayerMixin):
         if staging is None or self._awaiting_program_swap is not None:
             return
         edges = []
-        for _, first, last in self._transition_previews:
+        for _, first, last in [*self._transition_previews, *getattr(self, '_prerender_items', ())]:
             edges.extend((first, last))
         for cut in _get(self._project, 'cuts', []):
             edges.append(_get(cut, 'time', 0.0))

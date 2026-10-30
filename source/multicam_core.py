@@ -48,6 +48,7 @@ from library_overlay import (LibraryOverlayRange, validate_library_overlay,
                              overlay_cache_matches, overlay_from_dict)
 from video_stack import ordered_cameras, validate_stack
 from timeline_audio import audio_sources, probe_audio_sources, build_audio_mix_args
+from project_settings import validate_project_settings, validate_monitor_layout, timeline_dimensions
 
 
 def _number(value, label: str, *, minimum: float | None = None) -> float:
@@ -141,12 +142,15 @@ class MulticamProject:
     video_stack_order: list[int] = field(default_factory=list)
     video_stack_hidden: list[int] = field(default_factory=list)
     timeline_empty_tracks: list[int] = field(default_factory=list)
+    timeline_removed_tracks: list[str] = field(default_factory=list)
     camera_names: dict[int, str] = field(default_factory=dict)
     audio_track_enabled: dict[int, bool] = field(default_factory=dict)
     timeline_markers: list[float] = field(default_factory=list)
     timeline_snap_enabled: bool = True
     timeline_link_enabled: bool = True
     audio_overrides: dict[str, CameraClip | None] = field(default_factory=dict)
+    project_settings: dict = field(default_factory=dict)
+    monitor_layout: dict = field(default_factory=dict, compare=False)
 
     def set_camera_name(self, camera: int, name: str) -> None:
         if _camera(camera) not in self.timeline_cameras:
@@ -242,6 +246,8 @@ class MulticamProject:
         self.cuts = normalized
 
     def validate(self) -> None:
+        validate_project_settings(self.project_settings)
+        validate_monitor_layout(self.monitor_layout)
         fps = _number(self.fps, "工程帧率", minimum=0.001)
         if fps > 1000:
             raise ValueError("工程帧率不能超过 1000")
@@ -255,6 +261,13 @@ class MulticamProject:
             raise ValueError("工程素材或切点数量过多")
         if type(self.timeline_snap_enabled) is not bool or type(self.timeline_link_enabled) is not bool:
             raise ValueError('时间线吸附和链接开关必须是布尔值')
+        removed = self.timeline_removed_tracks
+        if (not isinstance(removed, list) or len(removed) > 100_000
+                or any(not isinstance(value, str) or len(value) < 2 or value[0] not in 'VA'
+                       or not value[1:].isascii() or not value[1:].isdecimal()
+                       or str(int(value[1:])) != value[1:] or (value[0] == 'V' and int(value[1:]) < 1)
+                       for value in removed) or len(set(removed)) != len(removed)):
+            raise ValueError('已删除轨道设置无效')
         if not isinstance(self.audio_overrides, dict) or len(self.audio_overrides) > 100_000:
             raise ValueError('独立音频素材设置无效')
         for identifier, clip in self.audio_overrides.items():
@@ -470,7 +483,12 @@ class MulticamProject:
         extended_audio = bool(self.audio_track_enabled or self.timeline_markers or
                               any(clip.has_audio is not None for clip in self.clips))
         extended_timeline = bool(self.audio_overrides or not self.timeline_snap_enabled or not self.timeline_link_enabled)
-        payload.update(format="okk-multicam", version=12 if extended_timeline else 11 if extended_audio else 10 if self.camera_names else 9 if self.timeline_empty_tracks else 8)
+        payload.update(format="okk-multicam", version=13 if self.timeline_removed_tracks else 12 if extended_timeline else 11 if extended_audio else 10 if self.camera_names else 9 if self.timeline_empty_tracks else 8)
+        if self.project_settings or self.monitor_layout:
+            payload['version'] = 14
+        if not self.project_settings: payload.pop('project_settings')
+        if not self.monitor_layout: payload.pop('monitor_layout')
+        if not self.timeline_removed_tracks: payload.pop('timeline_removed_tracks')
         if not extended_timeline:
             for name in ('audio_overrides', 'timeline_snap_enabled', 'timeline_link_enabled'):
                 payload.pop(name)
@@ -547,13 +565,13 @@ class MulticamProject:
         base = Path(base_directory).resolve()
         try:
             if (not isinstance(payload, dict) or payload.get("format") != "okk-multicam"
-                    or type(payload.get("version")) is not int or payload.get("version") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}):
+                    or type(payload.get("version")) is not int or payload.get("version") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14}):
                 raise ValueError("不是受支持的多机位工程")
             allowed = {"format", "version", "clips", "cuts", "master_audio", "master_duration", "fps",
                        "range_start", "range_end", "global_grade", "camera_grades", "transitions", "subtitles",
                        "edit_points", "clip_grades", "stabilizations", "library_overlays", "alignment_reference_camera", "color_reference_camera",
                        "video_stack_enabled", "video_stack_order", "video_stack_hidden", "timeline_empty_tracks", "camera_names",
-                       "audio_track_enabled", "timeline_markers", "timeline_snap_enabled", "timeline_link_enabled", "audio_overrides"}
+                       "audio_track_enabled", "timeline_markers", "timeline_snap_enabled", "timeline_link_enabled", "audio_overrides", "timeline_removed_tracks", "project_settings", "monitor_layout"}
             if set(payload) - allowed:
                 raise ValueError("工程包含未知字段")
 
@@ -641,12 +659,15 @@ class MulticamProject:
                           video_stack_order=payload.get('video_stack_order', []),
                           video_stack_hidden=payload.get('video_stack_hidden', []),
                           timeline_empty_tracks=payload.get('timeline_empty_tracks', []),
+                          timeline_removed_tracks=payload.get('timeline_removed_tracks', []),
                           camera_names=camera_names,
                           audio_track_enabled=audio_track_states,
                           timeline_markers=payload.get('timeline_markers', []),
                           timeline_snap_enabled=payload.get('timeline_snap_enabled', True),
                           timeline_link_enabled=payload.get('timeline_link_enabled', True),
-                          audio_overrides=audio_overrides)
+                          audio_overrides=audio_overrides,
+                          project_settings=payload.get('project_settings', {}),
+                          monitor_layout=payload.get('monitor_layout', {}))
             project.validate()
             return project
         except (json.JSONDecodeError, TypeError, KeyError, OverflowError) as exc:
@@ -766,6 +787,7 @@ def render_multicam(
     cancel_event=None,
     *,
     metrics: Callable[[dict], None] | None = None,
+    work_directory=None,
 ) -> str:
     """Render programme segments, then copy picture and mux master audio once.
 
@@ -831,6 +853,8 @@ def render_multicam(
     height = _resolution_height(settings.resolution) or reference.height
     width = max(2, round(reference.width * height / reference.height / 2) * 2)
     height = max(2, round(height / 2) * 2)
+    if settings.resolution == 'timeline':
+        width, height = timeline_dimensions(project, (width, height))
     if settings.codec not in {"libx264", "libx265", *HARDWARE_ENCODERS}:
         raise ValueError("多机位导出暂不支持此视频编码器")
     depth = _target_depth(settings, reference)
@@ -932,7 +956,7 @@ def render_multicam(
     gpu_disabled: dict[str,str] = {}
     trace_lock = threading.Lock()
     with tempfile.NamedTemporaryFile(prefix='multicam_',suffix='.jsonl',
-            dir=cache_dir('logs/exports'),delete=False) as stream:
+            dir=work_directory if work_directory is not None else cache_dir('logs/exports'),delete=False) as stream:
         trace_path = Path(stream.name)
 
     def trace(event,**data):
@@ -997,7 +1021,7 @@ def render_multicam(
         publish("准备多机位导出")
     trace('export_start',source_count=len(media),output=str(destination),width=width,height=height,
           frames=total_frames,rate=rate_text,workers=workers)
-    with tempfile.TemporaryDirectory(prefix=".okk_multicam_", dir=cache_dir('exports')) as folder:
+    with tempfile.TemporaryDirectory(prefix=".okk_multicam_", dir=work_directory if work_directory is not None else cache_dir('exports')) as folder:
         temporary = Path(folder)
         ass_path = None
         if project.subtitles.enabled and project.subtitles.burn_in and project.subtitles.cues:

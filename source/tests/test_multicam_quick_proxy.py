@@ -25,6 +25,18 @@ class Workspace(MulticamProxyMixin):
 
 
 class QuickProxyBatchTests(unittest.TestCase):
+    def test_selected_file_batch_uses_chosen_settings_and_binds_only_requested_clip(self):
+        from configured_proxy import ProxyOptions
+        options = ProxyOptions(str(self.folder/'selected'), 'dnxhr_lb', 1280, 720, 0)
+        with patch('configured_proxy.prepare_configured_proxy', return_value=str(self.output)) as prepare:
+            self.assertTrue(self.ws.start_quick_proxy(clips=[self.ws.project.clips[1]], options=options))
+            self.finish()
+        prepare.assert_called_once()
+        self.assertEqual(prepare.call_args.args[0], self.ws.project.clips[1].path)
+        self.assertEqual(prepare.call_args.args[4], options)
+        self.assertEqual(self.ws.project.clips[1].proxy_path, str(self.output))
+        self.assertEqual(self.ws.project.clips[0].proxy_path, '')
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)

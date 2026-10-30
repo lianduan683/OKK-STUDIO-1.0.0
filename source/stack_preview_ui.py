@@ -169,4 +169,6 @@ class StackPreviewUIMixin:
         self.stack_preview_time_label.configure(text='画面 ' + format_time(float(payload.get('time', 0.))))
         self._stack_preview_draw_size = available
         self._stack_preview_last_payload = payload
+        count = getattr(self, '_count_presented_stack_frame', None)
+        if count is not None: count(payload)
         return True

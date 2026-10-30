@@ -9,6 +9,7 @@ import tkinter as tk
 from tkinter import filedialog, ttk
 
 from exporter_core import ExportCancelled
+from proxy_settings_ui import ProxySettingsMixin
 
 
 def _identity(path):
@@ -23,7 +24,7 @@ def _stamp(path):
         return None
 
 
-class MulticamProxyMixin:
+class MulticamProxyMixin(ProxySettingsMixin):
     def _refresh_proxy_badges(self, *, force=False):
         """Show attachment state independently of the proxy-preview switch."""
         now = time.monotonic()
@@ -38,6 +39,7 @@ class MulticamProxyMixin:
         by_camera = {}
         for clip in self.project.clips:
             by_camera.setdefault(clip.camera, []).append(clip)
+        self._refresh_clip_proxy_icons(resolver)
         for camera, badge in vars(self).get('camera_proxy_badges', {}).items():
             clips = by_camera.get(camera, ())
             ready = sum(_identity(resolver(clip.path, clip.proxy_path)) != _identity(clip.path) for clip in clips)
@@ -100,10 +102,10 @@ class MulticamProxyMixin:
             else:
                 cancel.pack_forget()
 
-    def start_quick_proxy(self):
+    def start_quick_proxy(self, *, clips=None, options=None):
         if self._quick_proxy_running:
             return False
-        if not self.project.clips:
+        if not self.project.clips or clips == []:
             self.status.set('请先导入机位素材，再生成 1080p 代理。')
             return False
         if not self.app.caps.ffmpeg_path or not self.app.caps.ffprobe_path:
@@ -111,7 +113,7 @@ class MulticamProxyMixin:
             return False
         # Current-camera material is queued first; repeated files encode once.
         camera = self.project.camera_at(self.current)
-        clips = sorted(self.project.clips, key=lambda c: (
+        clips = sorted(self.project.clips if clips is None else clips, key=lambda c: (
             c.camera != camera, not (c.start <= self.current < c.start+c.duration), c.camera, c.start))
         sources = {}
         for clip in clips:
@@ -120,6 +122,8 @@ class MulticamProxyMixin:
                 sources[key] = {'source': clip.path, 'stamp': _stamp(clip.path), 'clips': []}
             sources[key]['clips'].append((clip.id, clip.proxy_path))
         requests = list(sources.values())
+        self._quick_proxy_description = ({'h264': 'H.264', 'dnxhr_lb': 'DNxHR LB', 'prores_proxy': 'ProRes Proxy'}[options.codec]
+                                         if options is not None else '1080p')
         self._quick_proxy_token += 1
         token = self._quick_proxy_token
         cancel = threading.Event()
@@ -128,7 +132,7 @@ class MulticamProxyMixin:
         self.proxy_var.set(True)
         self._configure_player()
         self.quick_proxy_status.set(f'0/{len(requests)}')
-        self.status.set(f'后台逐个准备 {len(requests)} 份 1080p 代理，完成后自动接入；可以继续剪辑。')
+        self.status.set(f'后台逐个准备 {len(requests)} 份 {self._quick_proxy_description} 代理，完成后自动接入；可以继续剪辑。')
         ffmpeg, ffprobe, caps = self.app.caps.ffmpeg_path, self.app.caps.ffprobe_path, self.app.caps
         jobs = self.jobs
 
@@ -147,8 +151,13 @@ class MulticamProxyMixin:
                             last_report[0] = now
                             jobs.put(('quick_proxy_progress', (token, index, len(requests), float(percent))))
                     try:
-                        path = prepare_1080p_proxy(request['source'], ffmpeg, ffprobe, caps,
-                                                  cancel_event=cancel, progress=progress)
+                        if options is None:
+                            path = prepare_1080p_proxy(request['source'], ffmpeg, ffprobe, caps,
+                                                      cancel_event=cancel, progress=progress)
+                        else:
+                            from configured_proxy import prepare_configured_proxy
+                            path = prepare_configured_proxy(request['source'], ffmpeg, ffprobe, caps, options,
+                                                            cancel_event=cancel, progress=progress)
                         if cancel.is_set():
                             break
                         successful += 1
@@ -177,6 +186,8 @@ class MulticamProxyMixin:
             self.status.set('正在停止代理任务；已完成并挂载的代理会保留。')
 
     def _reset_quick_proxy(self):
+        window = vars(self).get('_proxy_settings_window')
+        if window is not None and window.winfo_exists(): window.destroy()
         self._quick_proxy_cancel.set()
         self._quick_proxy_token += 1
         self._set_quick_proxy_running(False)
@@ -184,6 +195,8 @@ class MulticamProxyMixin:
         self._reset_proxy_link()
 
     def _close_quick_proxy(self):
+        window = vars(self).get('_proxy_settings_window')
+        if window is not None and window.winfo_exists(): window.destroy()
         self._quick_proxy_cancel.set()
         self._quick_proxy_token += 1
         self._reset_proxy_link()
@@ -386,12 +399,13 @@ class MulticamProxyMixin:
                     self.player.submit('proxy_update', bindings=bindings, use_proxies=self.proxy_var.get())
         elif kind == 'quick_proxy_error':
             _, source, error = payload
-            self.app._log(f'1080p 代理失败：{source}\n{error}')
+            self.app._log(f'代理失败：{source}\n{error}')
         elif kind == 'quick_proxy_done':
             _, completed, total, failures, cancelled = payload
             self._set_quick_proxy_running(False)
-            self.quick_proxy_status.set(('已取消 ' if cancelled else '1080p ') + f'{completed}/{total}')
+            description = vars(self).get('_quick_proxy_description', '1080p')
+            self.quick_proxy_status.set(('已取消 ' if cancelled else description+' ') + f'{completed}/{total}')
             self.status.set((f'已取消代理任务，保留 {completed} 份已完成代理。' if cancelled else
-                f'1080p 代理完成 {completed}/{total}；预览使用代理，导出使用原片。') +
+                f'{description} 代理完成 {completed}/{total}；预览使用代理，导出使用原片。') +
                 (f' {len(failures)} 份失败，详见任务日志，可再次点击重试。' if failures else ''))
         return True

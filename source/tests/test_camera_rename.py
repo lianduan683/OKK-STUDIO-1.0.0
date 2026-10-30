@@ -152,9 +152,13 @@ class CameraRenameWorkspaceTests(unittest.TestCase):
         workspace.undo()
         self.assertEqual(workspace.project.camera_names, {1: '正面'})
 
-    def test_clip_and_empty_space_do_not_open_camera_menu(self):
+    def test_clip_opens_proxy_menu_and_empty_space_does_not_open_menu(self):
         _, popup = self.context('a')
-        popup.assert_not_called()
+        popup.assert_called_once()
+        menu = self.workspace.camera_context_menu
+        labels = [menu.entrycget(index, 'label') for index in range(menu.index('end')+1)]
+        self.assertIn('转代理…', labels)
+        self.assertNotIn('重命名机位…', labels)
         with patch('multicam_ui.tk.Menu.tk_popup') as popup:
             self.workspace._camera_context(SimpleNamespace(y=100000))
         popup.assert_not_called()

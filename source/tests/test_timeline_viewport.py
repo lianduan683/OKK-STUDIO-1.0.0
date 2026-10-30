@@ -66,6 +66,49 @@ class TimelineViewportTests(unittest.TestCase):
         self.flush()
         self.assertIn('1', ws.timeline_clip_items.values())
 
+    def test_scrolled_ruler_remains_visible_and_drag_seeks_without_editing_tracks(self):
+        self.dense()
+        ws = self.ws
+        ws.zoom = 1
+        ws.draw_timeline()
+        ws.timeline.yview_moveto(.45)
+        self.flush()
+        canvas = ws.timeline
+        self.assertGreater(canvas.canvasy(0), ws._timeline_ruler_h)
+        items = canvas.find_withtag('timeline-ruler')
+        labels = [item for item in items if canvas.type(item) == 'text']
+        self.assertTrue(labels)
+        for item in labels:
+            y = canvas.coords(item)[1]-canvas.canvasy(0)
+            self.assertGreaterEqual(y, 0)
+            self.assertLessEqual(y, ws._timeline_ruler_h)
+        before = [(clip.id, clip.start, clip.camera) for clip in ws.project.clips]
+        event = SimpleNamespace(x=ws._timeline_left+80, y=ws._timeline_ruler_h/2)
+        expected = ws._timeline_pointer_time(event.x)
+        ws.timeline_press(event)
+        self.assertTrue(ws._timeline_scrubbing)
+        self.assertAlmostEqual(ws.current, expected, delta=1/ws.project.fps)
+        event.x += 60
+        ws.timeline_motion(event)
+        ws.timeline_release(event)
+        self.assertGreater(ws.current, expected)
+        self.assertEqual([(clip.id, clip.start, clip.camera) for clip in ws.project.clips], before)
+        self.assertEqual(ws.undo_stack, [])
+        self.assertEqual(self.fixture.errors, [])
+
+    def test_marker_flag_remains_clickable_on_scrolled_ruler(self):
+        self.dense()
+        ws = self.ws
+        ws.zoom = 1
+        ws.project.timeline_markers = [300.]
+        ws.draw_timeline()
+        ws.timeline.yview_moveto(.6)
+        self.flush()
+        event = SimpleNamespace(x=ws._timeline_x(300.)-ws.timeline.canvasx(0), y=ws._px(5))
+        self.assertEqual(ws._timeline_marker_at(event), 300.)
+        self.assertTrue(ws._timeline_marker_press(event))
+        self.assertEqual(ws.current, 300.)
+
     def test_scroll_events_merge_into_one_pending_redraw(self):
         self.dense()
         ws = self.ws

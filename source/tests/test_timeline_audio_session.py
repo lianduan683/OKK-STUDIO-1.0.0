@@ -13,6 +13,21 @@ class TimelineAudioSessionTests(unittest.TestCase):
     setUp = fixture.ProgramEditWorkspaceTests.setUp
     tearDown = fixture.ProgramEditWorkspaceTests.tearDown
 
+    def test_deleted_video_and_audio_rows_survive_whole_project_save(self):
+        from timeline_tracks import video_tracks, audio_tracks
+        workspace = self.workspace
+        self.root.multicam_workspace = workspace
+        workspace._delete_tracks('V', [1])
+        workspace._delete_tracks('A', [2])
+        original = copy.deepcopy(workspace.project)
+        path = self.folder/'轨道删除.rtxproj'
+        write_project_file(path, build_project_payload(self.root, app_version='1.0.4'))
+        workspace.project = MulticamProject()
+        restore_okk(self.root, read_project_file(path)['state']['okk_multicam'])
+        self.assertEqual(workspace.project, original)
+        self.assertNotIn(1, video_tracks(workspace.project))
+        self.assertNotIn(2, audio_tracks(workspace.project, video_tracks(workspace.project)))
+
     def test_rtxproj_roundtrip_preserves_independent_audio_and_timeline_switches(self):
         from timeline_link import move_source_audio
         workspace = self.workspace

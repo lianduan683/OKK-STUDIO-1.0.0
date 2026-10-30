@@ -323,7 +323,7 @@ class GpuLivePlayerMixin:
             other_slot=incoming.controller.slot if incoming is not None else None,
             kind=plan.kind if plan is not None else 'fade',
             progress=plan.progress(position) if plan is not None else 0., active=active,
-            subtitle=subtitle_payload(self._project, position), progress_rate=rate, start_delay=delay)
+            subtitle=None if self._is_baked_key(outgoing.key) else subtitle_payload(self._project, position), progress_rate=rate, start_delay=delay)
 
     def _gpu_cancel_context(self):
         context, self._gpu_context = self._gpu_context, None
@@ -379,7 +379,8 @@ class GpuLivePlayerMixin:
         # A forced navigation must keep its requested time for both textures.
         position = self._clock() if self._playing and not force else self._position
         rendered = self._render_preview
-        overrides = (self._comparison_enabled or self._audition is not None or
+        cached = getattr(self, '_prerender_spec', lambda _position: None)(position)
+        overrides = (cached is not None or self._comparison_enabled or self._audition is not None or
                      bool(rendered and rendered[1] <= position < rendered[2]))
         if overrides and self._gpu_context: self._gpu_cancel_context()
         active = None if overrides else next((plan for plan in self._gpu_plans if plan.contains(position)), None)

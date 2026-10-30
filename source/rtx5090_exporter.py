@@ -95,7 +95,7 @@ from editor_core import build_proxy_encode_command, proxy_format_labels, resolve
 
 
 APP_NAME = "RTX 视频渲染工坊"
-APP_VERSION = "1.0.4"
+APP_VERSION = "1.0.5"
 BG = "#18191b"
 SURFACE = "#202124"
 PANEL = "#242629"
@@ -4371,7 +4371,7 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
         codec = codec_from_label(self.codec_var.get())
         preset = self.preset_var.get().split()[-1].lower()
         resolution = {
-            "保持原分辨率": "original", "1080p": "1080p", "1440p": "1440p", "4K": "4k", "8K": "8k",
+            "时间线分辨率": "timeline", "保持原分辨率": "original", "1080p": "1080p", "1440p": "1440p", "4K": "4k", "8K": "8k",
         }[self.resolution_var.get()]
         audio_value = self.audio_var.get()
         audio = "aac"

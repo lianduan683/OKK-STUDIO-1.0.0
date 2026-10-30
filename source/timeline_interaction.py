@@ -102,10 +102,22 @@ class TimelineInteractionMixin:
 
     def _timeline_yview_changed(self, first, last):
         self.timeline_vscroll.set(first, last)
+        self._pin_timeline_ruler()
         view = (float(first), float(last))
         if vars(self).get('_timeline_last_yview') != view:
             self._timeline_last_yview = view
             self._queue_timeline_redraw()
+
+    def _timeline_ruler_contains(self, event):
+        return 0 <= event.y < getattr(self, '_timeline_ruler_h', self._px(27))
+
+    def _pin_timeline_ruler(self):
+        top = self.timeline.canvasy(0)
+        previous = vars(self).get('_timeline_ruler_top', top)
+        self.timeline.move('timeline-ruler', 0, top-previous)
+        self._timeline_ruler_top = top
+        self.timeline.tag_raise('timeline-ruler')
+        self.draw_playhead()
 
     def _timeline_zoom_wheel(self, event):
         if event.delta:
@@ -128,6 +140,9 @@ class TimelineInteractionMixin:
 
     def _timeline_hover(self, event):
         if getattr(self, '_selection_gesture', None): return
+        if self._timeline_ruler_contains(event):
+            self.timeline.configure(cursor='sb_h_double_arrow')
+            return
         if self._timeline_layout_hover(event): return
         if getattr(self, '_keyboard_tool', 'select') == 'razor':
             self.timeline.configure(cursor='crosshair')

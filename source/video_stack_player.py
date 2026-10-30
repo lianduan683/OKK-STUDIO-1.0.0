@@ -60,6 +60,10 @@ class VideoStackPlayerMixin:
         self._emit('stack_mode', enabled)
         return True
 
+    def _stack_cache_options(self):
+        items = getattr(self, '_prerender_items', ())
+        return {'cache_items': items} if items and getattr(self, '_grade_draft', None) is None else {}
+
     def _stack_project(self):
         project = copy.deepcopy(self._project)
         project.range_start = 0.
@@ -92,7 +96,8 @@ class VideoStackPlayerMixin:
             self._stack_job_key = key
             preview.request(self._stack_project(), self._position, self._playing, self._request_id,
                             ass_path=self._subtitle_ass_path or None, use_proxies=self._use_proxies,
-                            preview_epoch=getattr(self, '_active_preview_epoch', None))
+                            preview_epoch=getattr(self, '_active_preview_epoch', None),
+                            **self._stack_cache_options())
             self._emit('status', '透明图层实时预览 · 720p · CPU 合成 · 最高 30fps')
 
     def _resync_stack_preview(self, position):
@@ -103,6 +108,6 @@ class VideoStackPlayerMixin:
             # its source probes/proxy cache, and the separate master audio.
             preview.request(self._stack_project(), position, self._playing, self._request_id,
                 ass_path=self._subtitle_ass_path or None, use_proxies=self._use_proxies,
-                preview_epoch=None)
+                preview_epoch=None, **self._stack_cache_options())
             self._stack_job_key = (self._stack_revision, self._active_navigation_serial)
             self._stack_was_playing = self._playing

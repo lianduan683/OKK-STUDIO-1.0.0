@@ -23,7 +23,7 @@ class TimelineLayoutMixin:
         shown = [track for track in tracks if track == 0 or not group_folded]
         minima = {track: compact_h if track in folded and track != 0 else audio_min for track in shown}
         preferred = {track: compact_h if track in folded and track != 0 else audio_h for track in shown}
-        group_total = group_h if cameras else 0
+        group_total = group_h if any(track != 0 for track in tracks) else 0
         divider_h = self._px(12) if tracks and cameras else 0
         video_min = len(cameras) * minimum_row
         default_video = len(cameras) * max(minimum_row, self._px(29))

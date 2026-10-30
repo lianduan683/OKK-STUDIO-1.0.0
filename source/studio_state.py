@@ -22,6 +22,8 @@ def collect_okk(app):
     base = str(Path(__file__).resolve().parent)
     project = copy.deepcopy(workspace.project)
     project.range_start, project.range_end, project.fps = workspace._read_range()
+    if hasattr(workspace, '_capture_monitor_layout'):
+        project.monitor_layout = workspace._capture_monitor_layout()
     variables = {}
     for name, value in vars(workspace).items():
         if _is_saved_setting(name) and hasattr(value, 'get'):
@@ -76,7 +78,7 @@ def restore_okk(app, value, legacy=None):
     workspace.project_path = ''
     workspace.dirty = False
     workspace.selected_program_range = None
-    workspace.camera_page = 0
+    workspace.camera_page = project.monitor_layout.get('page', workspace.camera_page)
     workspace._camera_metadata_attempted.clear()
     workspace.grade_target = None
     workspace._grade_target_chosen = False
@@ -89,6 +91,8 @@ def restore_okk(app, value, legacy=None):
         workspace.start_var.set(format_time(project.range_start))
         workspace.end_var.set(format_time(project.range_end) if project.range_end is not None else '')
         workspace.fps_var.set(f'{project.fps:.12g}')
+        if hasattr(workspace, '_use_project_delivery_defaults') and not (value or {}).get('settings'):
+            workspace._use_project_delivery_defaults()
         for name, setting in (value or {}).get('settings', {}).items():
             if _is_saved_setting(name):
                 variable = getattr(workspace, name, None)
@@ -98,6 +102,8 @@ def restore_okk(app, value, legacy=None):
         workspace._loading_fields = False
     workspace.project_label.configure(text='完整工程中的多机位剪辑')
     workspace._refresh()
+    if hasattr(workspace, '_restore_monitor_layout'):
+        workspace._restore_monitor_layout()
     warnings.extend(f'多机位素材离线：{clip.path}' for clip in project.clips if not Path(clip.path).is_file())
     return warnings
 

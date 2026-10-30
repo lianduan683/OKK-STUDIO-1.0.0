@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import math
+import copy
 import tkinter as tk
 from tkinter import filedialog
+from timeline_tracks import remove_tracks, track_empty
 
 
 class TimelineInsertMixin:
@@ -32,7 +34,8 @@ class TimelineInsertMixin:
     def insert_video_track(self, placement=('top', None)):
         if not self._available(): return None
         self.pause()
-        camera = max(self.project.timeline_cameras, default=0)+1
+        camera = max([*self.project.timeline_cameras,
+                      *[int(track[1:]) for track in self.project.timeline_removed_tracks]], default=0)+1
         self._remember()
         self.project.timeline_empty_tracks.append(camera)
         # An empty track must not change the existing multicam programme.
@@ -44,13 +47,44 @@ class TimelineInsertMixin:
         return camera
 
     def remove_empty_video_track(self, camera):
-        if not self._available() or camera not in self.project.timeline_empty_tracks: return
-        if any(clip.camera == camera for clip in self.project.clips): return
-        self._remember()
-        self.project.timeline_empty_tracks.remove(camera)
-        self.project.camera_names.pop(camera, None)
-        self.project.audio_track_enabled.pop(camera, None)
+        if track_empty(self.project, 'V', camera):
+            return self._delete_tracks('V', [camera])
+
+    def _delete_tracks(self, kind, tracks):
+        if not self._available(): return False
+        available = (self._timeline_camera_order() if kind == 'V' else
+                     self._timeline_audio_tracks(self._timeline_camera_order()))
+        tracks = sorted(set(tracks).intersection(available))
+        if not tracks: return False
+        candidate = copy.deepcopy(self.project)
+        self._capture_timeline_range(candidate)
+        try:
+            remove_tracks(candidate, kind, tracks)
+        except ValueError as error:
+            self.status.set(str(error)); return False
+        self.pause()
+        self._remember_timeline_change()
+        self.project = candidate
+        self._set_timeline_selection(set(), redraw=False)
+        self._restore_timeline_range_fields()
         self._refresh()
+        self.seek(self.current)
+        self.status.set(f'已删除 {len(tracks)} 条'+('视频' if kind == 'V' else '音频')+'轨道；Ctrl+Z 撤销。')
+        return True
+
+    def _empty_timeline_tracks(self, kind):
+        tracks = (self._timeline_camera_order() if kind == 'V' else
+                  self._timeline_audio_tracks(self._timeline_camera_order()))
+        return [track for track in tracks if track_empty(self.project, kind, track)]
+
+    def _append_track_delete_menu(self, menu, kind, track):
+        menu.add_separator()
+        state = 'normal' if not (self.busy or self.app.working) else 'disabled'
+        menu.add_command(label='删除轨道', state=state,
+                         command=lambda: self._delete_tracks(kind, [track]))
+        menu.add_command(label='删除空白轨道',
+                         state=state if self._empty_timeline_tracks(kind) else 'disabled',
+                         command=lambda: self._delete_tracks(kind, self._empty_timeline_tracks(kind)))
 
     def _insert_timeline_media(self, position, camera=None, placement=None):
         if not self._available(): return False
@@ -78,8 +112,17 @@ class TimelineInsertMixin:
             media.add_command(label=f'新轨道 · V{camera} 下方',
                 command=lambda: self._insert_timeline_media(position, placement=('below', camera)))
         menu.add_cascade(label=f'在此位置插入素材…（{position:.3f} 秒）', menu=media)
-        if camera in self.project.timeline_empty_tracks and camera not in self.project.cameras:
-            menu.add_command(label=f'删除空轨道 V{camera}', command=lambda: self.remove_empty_video_track(camera))
+        if camera is not None:
+            key = self._timeline_hit_key(event)
+            if key is not None and key[0] == 'clip':
+                menu.add_command(label='转代理…', command=lambda: self.show_proxy_settings([key[1]]),
+                                 state='disabled' if self._quick_proxy_running else 'normal')
+            self._append_track_delete_menu(menu, 'V', camera)
+        else:
+            y = self.timeline.canvasy(event.y)
+            track = next((track for track, (top, bottom) in self._timeline_audio_track_bounds.items()
+                          if top <= y < bottom), None)
+            if track is not None: self._append_track_delete_menu(menu, 'A', track)
 
     def _show_timeline_insert_menu(self, event):
         self.timeline.focus_set()

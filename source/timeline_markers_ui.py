@@ -76,27 +76,27 @@ class TimelineMarkersMixin:
                 continue
             # Only the ruler flag is clickable; the guide must not steal
             # selection, trimming or dragging from source/programme clips.
-            canvas.create_line(x, self._px(11), x, content_height,
+            canvas.create_line(x, canvas.canvasy(0)+ruler_h, x, content_height,
                                fill='#9b824e', dash=(self._px(2), self._px(4)),
                                tags=('timeline-marker-guide',))
             size = self._px(5)
-            top = self._px(1)
+            top = canvas.canvasy(0)+self._px(1)
             flag = canvas.create_polygon(x-size, top, x+size, top,
                                          x+size, top+size, x, top+2*size,
                                          x-size, top+size, fill=MARKER_COLOR, outline='#f5dda9',
-                                         tags=('timeline-marker',))
+                                         tags=('timeline-marker', 'timeline-ruler'))
             self.timeline_marker_items[flag] = point
             # A compact label remains distinguishable from the time ruler.
             if index == 1 or x - self._timeline_x(self.project.timeline_markers[index-2]) > self._px(90):
                 label = canvas.create_text(x + size + self._px(3), top + size,
                     text=f'M{index}', fill=MARKER_COLOR, anchor='w', font=font,
-                    tags=('timeline-marker',))
+                    tags=('timeline-marker', 'timeline-ruler'))
                 self.timeline_marker_items[label] = point
 
     def _timeline_marker_at(self, event):
         canvas = self.timeline
         x, y = canvas.canvasx(event.x), canvas.canvasy(event.y)
-        if y < 0 or y >= getattr(self, '_timeline_marker_ruler_h', 0):
+        if not self._timeline_ruler_contains(event):
             return None
         for item in reversed(canvas.find_overlapping(x-self._px(2), y-self._px(2),
                                                      x+self._px(2), y+self._px(2))):
@@ -116,8 +116,7 @@ class TimelineMarkersMixin:
 
     def _timeline_marker_context(self, event):
         position = self._timeline_marker_at(event)
-        canvas_y = self.timeline.canvasy(event.y)
-        if position is None and not 0 <= canvas_y < getattr(self, '_timeline_marker_ruler_h', 0):
+        if position is None and not self._timeline_ruler_contains(event):
             return False
         if not self._available():
             return True

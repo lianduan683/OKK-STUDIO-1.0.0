@@ -44,7 +44,8 @@ class VideoStackUIMixin:
         self.project.video_stack_hidden = [camera for camera in self.project.video_stack_hidden if camera not in cameras]
 
     def _timeline_camera_order(self):
-        return self.project.stacked_cameras(include_hidden=True)
+        from timeline_tracks import video_tracks
+        return video_tracks(self.project)
 
     def _stack_track_at(self, event, *, label_only=True):
         if label_only and not 0 <= event.x < self._timeline_left: return None
@@ -64,7 +65,7 @@ class VideoStackUIMixin:
 
     def move_video_layer(self, camera, direction):
         if not self._available(): return False
-        order = self.project.stacked_cameras(include_hidden=True)
+        order = self._timeline_camera_order()
         if camera not in order: return False
         index = order.index(camera)
         target = 0 if direction == 'top' else len(order)-1 if direction == 'bottom' else index+int(direction)
@@ -90,7 +91,7 @@ class VideoStackUIMixin:
         camera = self._stack_track_at(event, label_only=True)
         if camera is None or not self._available(): return False
         self.pause()
-        order = self.project.stacked_cameras(include_hidden=True)
+        order = self._timeline_camera_order()
         index = order.index(camera)
         menu = tk.Menu(self, tearoff=False, bg='#292b2e', fg='#dedfe3', activebackground='#3c5263')
         for label, direction, enabled in (('图层上移', -1, index > 0),
@@ -112,7 +113,7 @@ class VideoStackUIMixin:
         if camera is None: return False
         self.pause()
         self._video_stack_drag = {'project': self.project, 'camera': camera,
-            'order': self.project.stacked_cameras(include_hidden=True),
+            'order': self._timeline_camera_order(),
             'y': self.timeline.canvasy(event.y), 'target': camera, 'moved': False}
         self.timeline.configure(cursor='fleur')
         self.status.set(f'拖动 V{camera} 标签调整图层；上方在画面上层，Esc 取消。')
@@ -121,7 +122,7 @@ class VideoStackUIMixin:
     def _move_video_stack_drag(self, event):
         drag = self._video_stack_drag
         if drag is None: return False
-        if drag['project'] is not self.project or drag['order'] != self.project.stacked_cameras(include_hidden=True):
+        if drag['project'] is not self.project or drag['order'] != self._timeline_camera_order():
             self._end_video_stack_drag(cancel=True)
             self.status.set('图层已变化，请重新拖动轨道标签。')
             return True
@@ -144,7 +145,7 @@ class VideoStackUIMixin:
         if drag is None: return False
         self.timeline.delete('stack-insertion'); self.timeline.configure(cursor='')
         if cancel or not drag['moved'] or drag['target'] == drag['camera']: return True
-        if drag['project'] is not self.project or drag['order'] != self.project.stacked_cameras(include_hidden=True):
+        if drag['project'] is not self.project or drag['order'] != self._timeline_camera_order():
             self.status.set('图层已变化，请重新拖动轨道标签。'); return True
         target = drag['order'].index(drag['target'])
         source = drag['order'].index(drag['camera'])

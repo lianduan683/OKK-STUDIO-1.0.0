@@ -1,6 +1,6 @@
-# 安装与升级 1.0.4
+# 安装与升级 1.0.5
 
-下载并运行 `OKK-STUDIO-1.0.4-Setup.exe`。Windows 10/11 64 位，无需另装 Python。主程序在安装器中；四份运行库/特效资源继续从固定的 v1.0.0 发行附件下载并校验 SHA256。
+下载并运行 `OKK-STUDIO-1.0.5-Setup.exe`。Windows 10/11 64 位，无需另装 Python。主程序在安装器中；四份运行库/特效资源继续从固定的 v1.0.0 发行附件下载并校验 SHA256。
 
 ## 升级
 
@@ -18,7 +18,7 @@
 已有这四份文件时，可运行：
 
 ```powershell
-.\OKK-STUDIO-1.0.4-Setup.exe /PAYLOADDIR="D:\OKK资源包"
+.\OKK-STUDIO-1.0.5-Setup.exe /PAYLOADDIR="D:\OKK资源包"
 ```
 
 `/PAYLOADDIR` 指向 ZIP 所在目录。资源保持完整 ZIP 形式，安装器验证后解压。资源地址与校验见 `resource_packages.json` 和 `RESOURCE-SHA256SUMS.txt`。

@@ -62,6 +62,9 @@ from camera_list_ui import CameraListUIMixin
 from timeline_controls import TimelineControlsMixin
 from timeline_link import preserve_source_audio, move_source_audio
 from timeline_audio import source_audio_clips
+from project_settings_ui import ProjectSettingsMixin
+from playback_metrics import PlaybackMetricsUIMixin
+from prerender_ui import PrerenderUIMixin
 
 BG = '#202124'
 PANEL = '#292b2e'
@@ -75,7 +78,7 @@ COLORS = ['#496e87', '#4b8289', '#667e9e', '#64867c', '#7c718d', '#7e8870', '#80
 VIDEO_TYPES = [('视频', '*.mp4 *.mov *.mkv *.mxf *.avi *.mts *.m2ts *.webm'), ('所有文件', '*.*')]
 
 
-class MulticamWorkspace(TimelineControlsMixin, CameraListUIMixin, KeyboardEditMixin, TimelineAudioUIMixin, TimelineMarkersMixin, CameraImportMixin, PreviewFocusMixin, TimelineMergeMixin, TimelineInsertMixin, TimelineSelectionMixin, StackPreviewUIMixin, VideoStackUIMixin, WorkspaceDockingMixin, TransportControlsMixin, TimelineInteractionMixin, MulticamProxyMixin, LibraryApplyMixin, AutoColorWorkspaceMixin, EffectsWorkspaceMixin, tk.Frame):
+class MulticamWorkspace(PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsUIMixin, TimelineControlsMixin, CameraListUIMixin, KeyboardEditMixin, TimelineAudioUIMixin, TimelineMarkersMixin, CameraImportMixin, PreviewFocusMixin, TimelineMergeMixin, TimelineInsertMixin, TimelineSelectionMixin, StackPreviewUIMixin, VideoStackUIMixin, WorkspaceDockingMixin, TransportControlsMixin, TimelineInteractionMixin, MulticamProxyMixin, LibraryApplyMixin, AutoColorWorkspaceMixin, EffectsWorkspaceMixin, tk.Frame):
     def __init__(self, parent, app):
         super().__init__(parent, bg=BG)
         self.app = app
@@ -179,6 +182,8 @@ class MulticamWorkspace(TimelineControlsMixin, CameraListUIMixin, KeyboardEditMi
         self._init_transport_controls()
         self._init_timeline_audio()
         self._init_timeline_markers()
+        self._init_playback_metrics()
+        self._init_prerender()
         self._build()
         self._set_keyboard_tool('select')
         self._setup_camera_drop()
@@ -228,7 +233,9 @@ class MulticamWorkspace(TimelineControlsMixin, CameraListUIMixin, KeyboardEditMi
 
     def _camera_context(self, event):
         row = self.media_tree.identify_row(event.y)
-        if not row or not row.startswith('camera_'): return
+        if not row: return
+        if not row.startswith('camera_'):
+            return self._clip_proxy_context(event, row)
         camera = int(row.split('_', 1)[1])
         if camera not in self.project.cameras: return
         self.media_tree.selection_set(row)
@@ -392,6 +399,7 @@ class MulticamWorkspace(TimelineControlsMixin, CameraListUIMixin, KeyboardEditMi
         for title, action in [('新建工程', self.new), ('打开工程…', self.open), ('保存工程', self.save)]:
             project_menu.add_command(label=title, command=action)
         project_menu.add_separator()
+        project_menu.add_command(label='工程设置…', command=self.show_project_settings)
         project_menu.add_command(label='操作说明', command=self.help)
         file_button = ttk.Menubutton(bar, text='文件 ▾', menu=project_menu, style='Compact.TMenubutton')
         file_button.pack(side='left', padx=(self._px(8), self._px(4)), pady=self._px(5))
@@ -518,6 +526,9 @@ class MulticamWorkspace(TimelineControlsMixin, CameraListUIMixin, KeyboardEditMi
         source_title.grid(row=0, column=0, sticky='ew')
         tk.Label(source_title, text='多机位', bg=PANEL, fg=INK,
                  font=('Microsoft YaHei UI', 10)).pack(side='left', padx=self._px(10), pady=self._px(5))
+        self.source_fps_label = tk.Label(source_title, textvariable=self.source_fps_var, bg=PANEL, fg=GREEN,
+            font=('Cascadia Mono', 9))
+        self.source_fps_label.pack(side='left', padx=self._px(6))
         self.release_cache_button = ttk.Button(source_title, text='释放缓存',
             command=self.unload_preview_cache, style='Compact.TButton')
         self.release_cache_button.pack(side='right', padx=self._px(3))
@@ -564,9 +575,15 @@ class MulticamWorkspace(TimelineControlsMixin, CameraListUIMixin, KeyboardEditMi
             command=self._toggle_gpu_live,bg=PANEL,fg=ACCENT,activebackground=PANEL,
             activeforeground=INK,selectcolor=INPUT,font=('Microsoft YaHei UI',9)).pack(side='right')
         tk.Label(program_title, textvariable=self.program_var, bg=PANEL, fg=INK,
-                 font=('Microsoft YaHei UI', 10), anchor='w', padx=self._px(10), pady=self._px(5)).pack(side='left',fill='x',expand=True)
-        self.program_surface = tk.Frame(program, bg='#0e0f10', width=self._px(280), height=self._px(180))
-        self.program_surface.grid(row=1, column=0, sticky='nsew')
+                 font=('Microsoft YaHei UI', 10), anchor='w', padx=self._px(10), pady=self._px(5)).pack(side='left')
+        self.program_fps_label = tk.Label(program_title, textvariable=self.program_fps_var, bg=PANEL, fg=GREEN,
+            font=('Cascadia Mono', 9), anchor='w')
+        self.program_fps_label.pack(side='left', padx=self._px(6))
+        self.program_viewport = tk.Frame(program, bg='#0e0f10', width=self._px(280), height=self._px(180))
+        self.program_viewport.grid(row=1, column=0, sticky='nsew')
+        self.program_surface = tk.Frame(self.program_viewport, bg='#0e0f10')
+        self.program_surface.place(x=0, y=0, relwidth=1, relheight=1)
+        self.program_viewport.bind('<Configure>', self._update_program_canvas)
         self.program_views = [tk.Frame(self.program_surface, bg='#0e0f10') for _ in range(2)]
         for view in self.program_views:
             view.place(x=0, y=0, relwidth=1, relheight=1)
@@ -635,7 +652,11 @@ class MulticamWorkspace(TimelineControlsMixin, CameraListUIMixin, KeyboardEditMi
         self.timeline_vscroll.grid(row=1, column=1, sticky='ns')
         self.timeline.configure(yscrollcommand=self.timeline_vscroll.set)
         self.timeline_vscroll.grid_remove()
-        self._label(self, variable=self.status).grid(row=3, column=0, sticky='ew', padx=self._px(8), pady=(self._px(4), self._px(3)))
+        footer = tk.Frame(self, bg=BG)
+        footer.grid(row=3, column=0, sticky='ew', padx=self._px(8), pady=(self._px(4), self._px(3)))
+        self._label(footer, variable=self.status).pack(side='left', fill='x', expand=True)
+        self.project_settings_button = ttk.Button(footer, text='⚙ 工程设置', command=self.show_project_settings, style='Compact.TButton')
+        self.project_settings_button.pack(side='right')
         self._build_inspector()
         self.color_workspace = ColorWorkspace(self, self)
         self._build_export_monitor()
@@ -1243,6 +1264,7 @@ class MulticamWorkspace(TimelineControlsMixin, CameraListUIMixin, KeyboardEditMi
         return next((clip for clip in self.project.clips if selection and clip.id == selection[0]), None)
 
     def _refresh(self, reconfigure=True):
+        self._update_program_canvas()
         self._refresh_timeline_controls()
         self._refresh_video_stack_ui()
         self._cancel_grade_drafts(publishing=reconfigure)
@@ -1320,6 +1342,7 @@ class MulticamWorkspace(TimelineControlsMixin, CameraListUIMixin, KeyboardEditMi
             self.color_workspace.refresh()
         if reconfigure:
             self._configure_player()
+        self._check_prerender_project()
         self._schedule_transition_previews()
         self._refresh_camera_labels()
         self._schedule_camera_metadata()
@@ -1456,6 +1479,8 @@ class MulticamWorkspace(TimelineControlsMixin, CameraListUIMixin, KeyboardEditMi
         page=max(0,min(self.camera_page+delta,pages-1))
         if page==self.camera_page:return
         self.camera_page=page;self._build_camera_frames();self._refresh_camera_labels()
+        self._saved_camera_page = page
+        self._workspace_layout_changed()
         self.status.set(f'监看第 {page+1}/{pages} 页 · 数字1–9选择本页前九格，其余鼠标点选')
 
     def add_camera(self):
@@ -1837,6 +1862,7 @@ class MulticamWorkspace(TimelineControlsMixin, CameraListUIMixin, KeyboardEditMi
             self.player.submit('configure', project=copy.deepcopy(self.project), use_proxies=self.proxy_var.get(),
                                gpu_live=self.gpu_live_var.get())
             self._publish_transition_previews()
+            self._publish_prerender()
             if self.stabilization_compare_var.get():self.player.submit('stabilization_compare',enabled=True)
             if self._color_mode:
                 self._audition_grade_target()
@@ -1866,6 +1892,7 @@ class MulticamWorkspace(TimelineControlsMixin, CameraListUIMixin, KeyboardEditMi
                 self._schedule_transition_previews()
 
     def stop_monitors(self):
+        self._reset_playback_metrics()
         self._set_stack_preview_mode(False)
         self._reset_transport_controls()
         self.clear_grade_preview()
@@ -1881,6 +1908,7 @@ class MulticamWorkspace(TimelineControlsMixin, CameraListUIMixin, KeyboardEditMi
     def pause(self):
         if self.player: self.player.submit('pause')
         self.playing = False
+        self._reset_playback_metrics()
 
     def toggle(self):
         # Playback remains controllable while an independent import/proxy job
@@ -2024,7 +2052,7 @@ class MulticamWorkspace(TimelineControlsMixin, CameraListUIMixin, KeyboardEditMi
             self._reset_quick_proxy()
             self.stop_monitors(); self.project = project; self.project_path = path; self.dirty = False
             self.selected_program_range = None
-            self.camera_page=0
+            self.camera_page=project.monitor_layout.get('page', self.camera_page)
             self._camera_metadata_attempted.clear()
             self.grade_target = None; self._grade_target_chosen = False
             self.sync_results.clear()
@@ -2035,7 +2063,9 @@ class MulticamWorkspace(TimelineControlsMixin, CameraListUIMixin, KeyboardEditMi
             self.fps_var.set(f'{project.fps:.12g}'); self.project_label.configure(text=Path(path).name)
             self._loading_fields = False
             missing = [c.path for c in project.clips if not Path(c.path).is_file()]
+            self._use_project_delivery_defaults()
             self._refresh()
+            self._restore_monitor_layout()
             if missing: messagebox.showwarning('素材缺失', '\n'.join(missing[:8]), parent=self)
 
     def _read_range(self):
@@ -2054,6 +2084,7 @@ class MulticamWorkspace(TimelineControlsMixin, CameraListUIMixin, KeyboardEditMi
         if not path: return False
         try:
             self.project.range_start, self.project.range_end, self.project.fps = self._read_range()
+            self.project.monitor_layout = self._capture_monitor_layout()
             self.project.save(path)
         except Exception as exc: messagebox.showerror('保存工程', str(exc), parent=self); return False
         self.project_path = path; self.dirty = False; self.project_label.configure(text=Path(path).name)
@@ -2281,6 +2312,7 @@ class MulticamWorkspace(TimelineControlsMixin, CameraListUIMixin, KeyboardEditMi
         title_font = self._timeline_title_font
         ruler_font = self._timeline_ruler_font
         ruler_h = max(self._px(27), ruler_font.metrics('linespace') + self._px(9))
+        self._timeline_ruler_h = ruler_h
         program_h = max(self._px(31), title_font.metrics('linespace') + self._px(9))
         self._timeline_program_bounds = (ruler_h, ruler_h + program_h)
         audio_h = max(self._px(40), label_font.metrics('linespace') + self._px(20))
@@ -2452,17 +2484,24 @@ class MulticamWorkspace(TimelineControlsMixin, CameraListUIMixin, KeyboardEditMi
         right = canvas.canvasx(canvas.winfo_width())
         tick = max(math.floor(origin/step)*step, math.floor((origin+(left-left_edge)/pps)/step)*step)
         count = 0
-        while (view_top <= ruler_h and timeline_x(tick) <= right + label_width
+        ruler_top = self._timeline_ruler_top = canvas.canvasy(0)
+        canvas.create_rectangle(0, ruler_top, width, ruler_top+ruler_h,
+                                fill='#292b2e', outline='', tags=('timeline-ruler',))
+        while (timeline_x(tick) <= right + label_width
                and tick <= duration and count < 500):
             x = timeline_x(tick)
-            canvas.create_line(x, ruler_h - self._px(5), x, ruler_h, fill='#63676d')
-            canvas.create_text(x + self._px(3), ruler_h / 2, text=format_signed_time(tick) if tick < 0 else format_time(tick), anchor='w', fill=MUTED,
-                               font=ruler_font)
+            canvas.create_line(x, ruler_top+ruler_h - self._px(5), x, ruler_top+ruler_h,
+                               fill='#63676d', tags=('timeline-ruler',))
+            canvas.create_text(x + self._px(3), ruler_top+ruler_h / 2, text=format_signed_time(tick) if tick < 0 else format_time(tick), anchor='w', fill=MUTED,
+                               font=ruler_font, tags=('timeline-ruler',))
             tick += step
             count += 1
+        self._draw_prerender_line()
         self._draw_timeline_markers(ruler_h, content_height, ruler_font)
         self.draw_playhead()
         getattr(self, '_draw_timeline_selection', lambda: None)()
+        canvas.tag_raise('timeline-ruler')
+        canvas.tag_raise('head')
 
     def draw_playhead(self):
         self.timeline.delete('head')
@@ -2479,6 +2518,18 @@ class MulticamWorkspace(TimelineControlsMixin, CameraListUIMixin, KeyboardEditMi
 
     def timeline_press(self, event):
         if not self._available(): return
+        if self._timeline_ruler_contains(event):
+            if self._timeline_marker_press(event): return 'break'
+            self._stop_transport_hold()
+            self._timeline_drag_geometry = None
+            self._cancel_timeline_redraw()
+            self.timeline.focus_set()
+            self.timeline_drag = self.subtitle_drag = None
+            self._timeline_scrubbing = True
+            self._begin_preview_epoch()
+            self._capture_timeline_geometry()
+            self.seek(self._timeline_pointer_time(event.x))
+            return 'break'
         if self._begin_timeline_divider_drag(event): return 'break'
         if self._timeline_marker_press(event): return 'break'
         if self._timeline_audio_press(event): return 'break'
@@ -2493,13 +2544,6 @@ class MulticamWorkspace(TimelineControlsMixin, CameraListUIMixin, KeyboardEditMi
         x = self.timeline.canvasx(event.x)
         self.timeline_drag = None
         self.subtitle_drag = None
-        ruler_end = getattr(self, '_timeline_program_bounds', (self._px(27),))[0]
-        if self.timeline.canvasy(event.y) < ruler_end:
-            self._timeline_scrubbing = True
-            self._begin_preview_epoch()
-            self._capture_timeline_geometry()
-            self.seek(self._timeline_pointer_time(event.x))
-            return
         self.pause()
         ids = self.timeline.find_overlapping(x-self._px(2), self.timeline.canvasy(event.y)-self._px(2), x+self._px(2), self.timeline.canvasy(event.y)+self._px(2))
         boundary_dragging = self._begin_program_boundary_drag(event)
@@ -2689,6 +2733,7 @@ class MulticamWorkspace(TimelineControlsMixin, CameraListUIMixin, KeyboardEditMi
                     if self.player is not None and self._show_comparison_view(payload):
                         self.update_idletasks();self.player.submit('comparison_swap_ack',window=payload)
                 elif kind=='camera_windows_released':self._release_camera_frames(payload)
+                elif kind == 'playback_metrics': self._apply_playback_metrics(payload)
                 elif kind == 'status': self.status.set(str(payload))
                 elif kind == 'error':
                     self.status.set(str(payload)); self.app._log('多机位监看：' + str(payload))
@@ -2755,7 +2800,7 @@ class MulticamWorkspace(TimelineControlsMixin, CameraListUIMixin, KeyboardEditMi
                         self.project.clips.append(CameraClip(uuid.uuid4().hex,camera,info.path,0.,info.duration,has_alpha=bool(getattr(info,'has_alpha',False)),has_audio=info.has_audio))
                         if not self.project.master_audio and info.has_audio:
                             self.project.master_audio=info.path;self.project.master_duration=info.duration
-                    if first:
+                    if first and not self.project.project_settings:
                         self.project.fps=payload[0][1].fps or 30;self.fps_var.set(f'{self.project.fps:.8g}')
                     if not self.project.cuts:self.project.set_cut(0,payload[0][0])
                     self._refresh();self.fit_timeline()
@@ -2785,7 +2830,7 @@ class MulticamWorkspace(TimelineControlsMixin, CameraListUIMixin, KeyboardEditMi
                         start += info.duration
                         if not self.project.master_audio and info.has_audio:
                             self.project.master_audio = info.path; self.project.master_duration = info.duration
-                    if first:
+                    if first and not self.project.project_settings:
                         self.project.fps = infos[0].fps or 30; self.fps_var.set(f'{self.project.fps:.8g}')
                     if not self.project.cuts: self.project.set_cut(0, camera)
                     self._refresh(); self.status.set(f'机位 {camera} 已导入 {len(infos)} 段；不同机位初始都从 00:00 开始，请同步。')
@@ -2924,6 +2969,7 @@ class MulticamWorkspace(TimelineControlsMixin, CameraListUIMixin, KeyboardEditMi
     def close(self):
         self._finish_selection_gesture(cancel=True)
         self.alive = False
+        self._close_prerender()
         self._close_timeline_audio()
         if getattr(self, '_player_poll_after', None) is not None:
             self.after_cancel(self._player_poll_after)

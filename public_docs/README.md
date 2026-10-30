@@ -1,15 +1,20 @@
-# OKK STUDIO 1.0.4
+# OKK STUDIO 1.0.5
 
 Windows 多机位视频剪辑应用。本版提供逐轨音频、真实波形、时间标记、同步结果明细、机位列表折叠及三套键位，修复旧完整工程打开与保存。
 
 ## 下载
 
-**[下载 OKK-STUDIO-1.0.4-Setup.exe](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.4/OKK-STUDIO-1.0.4-Setup.exe)** · [发行页](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/tag/v1.0.4)
+**[下载 OKK-STUDIO-1.0.5-Setup.exe](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.5/OKK-STUDIO-1.0.5-Setup.exe)** · [发行页](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/tag/v1.0.5)
 
 主程序已内置安装器。安装时下载并校验 v1.0.0 的四份固定资源 ZIP（约 5.75 GB），完整安装约 6.5 GB，建议预留至少 15 GB。已有离线资源可通过 `/PAYLOADDIR` 复用。安装与升级见 [INSTALLATION.md](INSTALLATION.md)。
 
 ## 新增与修复
 
+- “工程设置 → 预渲染”可开启自动缓存、选择保存目录及预设/自定义分辨率；刻度尺下沿以黄色显示预计可直接播放的区间，红色显示待渲染区间，完成校验后变绿并用于回放。暂停且空闲时自动处理，编辑后重新检查。
+- 右下角“工程设置”提供时间线分辨率、帧率、音频采样率与位深；支持 48/96/192 kHz、24bit、32bit 和 32bit 浮点，设置随工程保存。
+- 多机位网格行列与页码随工程恢复，面板位置和分隔比例记住上次使用的布局；两侧监看标题显示各自实时播放 FPS。
+- 向下滚动轨道时，时间刻度和播放头手柄始终可见并可拖动定位；右键视频、音频轨道可删除当前轨道或清理同类型空白轨道，支持撤销与保存。
+- 素材列表逐视频显示代理状态图标；右键“转代理…”可选择 H.264、DNxHR LB、ProRes Proxy、分辨率、帧率及代理保存目录。
 - 时间线“吸附”可控制光标吸附素材边缘与节目切点；“链接”可控制视频及机位原声成对编辑，A0 主音频保持独立。
 - 机位编号旁显示代理状态，包括已代理、部分代理、未代理及代理丢失。
 - 现场音频使用多个分散窗口核对，抑制观众声和缓慢增益变化；分段分别恢复真实起点，不强制消除停录间隔。
@@ -31,10 +36,10 @@ Windows 多机位视频剪辑应用。本版提供逐轨音频、真实波形、
 
 Windows 10/11 64 位。缓存沿用可写的非 C 盘、非系统盘固定磁盘策略，优先 D:。仅有 C 盘的电脑目前无法按该策略正常启动。硬件编解码能力以启动检测和实际驱动为准。
 
-本版尚未做受信任代码签名，Windows 智能应用控制可能拦截。新音轨状态和标记使用工程格式 11；独立音频编辑或非默认吸附/链接设置使用格式 12，需要新版打开；升级后建议另存副本。
+本版尚未做受信任代码签名，Windows 智能应用控制可能拦截。新音轨状态和标记使用工程格式 11；独立音频编辑或非默认吸附/链接设置使用格式 12；删除轨道状态使用格式 13；工程设置及监看布局使用格式 14，需要新版打开；升级后建议另存副本。
 
 ## 源码与构建
 
-[下载 1.0.4 应用源码](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.4/OKK-STUDIO-1.0.4-source.zip)。源码包包含应用模块、回归测试、小型 UI 资源和构建文件；不包含用户工程、媒体、工作缓存或大型第三方二进制。构建步骤见 [BUILDING.md](BUILDING.md)。
+[下载 1.0.5 应用源码](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.5/OKK-STUDIO-1.0.5-source.zip)。源码包包含应用模块、回归测试、小型 UI 资源和构建文件；不包含用户工程、媒体、工作缓存或大型第三方二进制。构建步骤见 [BUILDING.md](BUILDING.md)。
 
 应用许可证见 [LICENSE](LICENSE)，第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

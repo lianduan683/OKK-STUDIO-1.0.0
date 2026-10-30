@@ -43,6 +43,7 @@ class GpuLiveSession:
                    'rate':0.,'received':time.perf_counter()}
         self._present_count=0;self._readbacks=0;self._adapter='';self._output_hwnd=0;self._render_debug=[{},{}]
         self._presented_render_generations={'a':0,'b':0}
+        self.presented_video_frames = 0
         self._visible=True
         layout=json.loads((self.runtime/'shader_layout.json').read_text(encoding='utf-8'))
         names=tuple(layout['side_uniforms'])
@@ -183,6 +184,7 @@ class GpuLiveSession:
                     continue
                 size=gfx.client_size() if self.parent else requested
                 resized=gfx.resize(*size)
+                fresh_slots = set()
                 for index,context in enumerate(contexts):
                     updates=context.update()
                     if updates&1:pending[index]=True
@@ -194,6 +196,8 @@ class GpuLiveSession:
                                or info['target_time']<=context.time_ns()+1_000_000))
                     if due or first_frame or (resized and state.get('render_generation',0)):
                         context.render_to_texture(gfx.videos[index].texture.value.value)
+                        if info and info['present'] and not info['redraw']:
+                            fresh_slots.add(('a', 'b')[index])
                         pending[index]=False
                 front=0 if mix['front_slot']=='a' else 1
                 other=0 if mix['other_slot']=='a' else 1
@@ -210,6 +214,9 @@ class GpuLiveSession:
                     except Exception as error:
                         if not future.done():future.set_exception(error)
                 gfx.present();self._present_count+=1
+                visible_slots = (mix['front_slot'], mix['other_slot']) if mix['active'] else (mix['front_slot'],)
+                if not mix.get('blank') and fresh_slots.intersection(visible_slots):
+                    self.presented_video_frames += 1
                 for index,context in enumerate(contexts):
                     slot=('a','b')[index]
                     generation=self._cores[slot].frame_state().get('render_generation',0)

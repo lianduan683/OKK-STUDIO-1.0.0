@@ -119,6 +119,10 @@ class GpuLiveSession:
         if not isinstance(value, dict): raise RuntimeError('GPU 画面状态结构无效。')
         return value
 
+    @property
+    def presented_video_frames(self):
+        return getattr(self._backend, 'presented_video_frames', None)
+
     def grade(self, slot, values, *, lut_paths=None):
         names, digest = grade_layout()
         if tuple(values) != names:

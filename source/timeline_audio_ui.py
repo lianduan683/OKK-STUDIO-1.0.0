@@ -27,7 +27,8 @@ class TimelineAudioUIMixin(TimelineLayoutMixin):
         self._waveform_poll_after = self.after(120, self._poll_timeline_audio)
 
     def _timeline_audio_tracks(self, cameras):
-        return ([0] if self.project.master_audio else []) + list(cameras)
+        from timeline_tracks import audio_tracks
+        return audio_tracks(self.project, cameras)
 
     def _waveform_for(self, path):
         if not hasattr(self, '_waveform_cache'): self._init_timeline_audio()
@@ -126,6 +127,8 @@ class TimelineAudioUIMixin(TimelineLayoutMixin):
                          command=lambda: self._toggle_timeline_audio_track(track))
         menu.add_command(label='仅此轨出声', state=state,
                          command=lambda: self._set_timeline_audio_track(track, True, solo=True))
+        append_delete = getattr(self, '_append_track_delete_menu', None)
+        if append_delete is not None: append_delete(menu, 'A', track)
         previous = getattr(self, 'audio_track_context_menu', None)
         if previous is not None: previous.destroy()
         self.audio_track_context_menu = menu
@@ -161,7 +164,7 @@ class TimelineAudioUIMixin(TimelineLayoutMixin):
                         text='机位原声', anchor='w',
                         fill='#a7c6b8', font=label_font, tags=('audio-group',))
                     canvas.create_text(view_left+self._timeline_left+self._px(8), y+group_h/2,
-                        text=f'{len(cameras)} 轨 · 点击'+('展开' if group_folded else '收起'),
+                        text=f'{len([track for track in tracks if track != 0])} 轨 · 点击'+('展开' if group_folded else '收起'),
                         anchor='w', fill='#a7c6b8', font=label_font, tags=('audio-group',))
                 y += group_h
                 group_drawn = True

@@ -19,6 +19,9 @@ class WorkspaceDockingMixin:
         self._dock_float_bindings = []
         self._dock_shortcut_windows = set()
         self._dock_layout_path = getattr(self.app, 'workspace_layout_path', None)
+        self._saved_camera_page = 0
+        for pane in (self.body, self.workspace_split):
+            pane.bind('<ButtonRelease-1>', lambda _event: self._workspace_layout_changed(), add='+')
         self.dock_manager = DockManager(self, scale=self._px,
             on_change=self._workspace_layout_changed, on_focus=self._show_dock_home)
         records = (
@@ -200,6 +203,7 @@ class WorkspaceDockingMixin:
                     for index in range(max(0, len(pane.panes())-1))]
         return {'media_visible': self._media_visible, 'inspector_visible': self._inspector_visible,
                 'camera_rows': self.camera_rows, 'camera_columns': self.camera_columns,
+                'camera_page': self.camera_page,
                 'body_sashes': ratios(self.body, True),
                 'main_sashes': ratios(self.workspace_split, False)}
 
@@ -208,6 +212,10 @@ class WorkspaceDockingMixin:
         try: rows, columns = self._checked_camera_grid(data.get('camera_rows', 3), data.get('camera_columns', 3))
         except ValueError: rows, columns = 3, 3
         self.set_camera_grid(rows, columns, persist=False)
+        page = data.get('camera_page', 0)
+        self._saved_camera_page = page if type(page) is int and 0 <= page <= 100000 else 0
+        self.camera_page = self._saved_camera_page
+        self._build_camera_frames()
         if bool(data.get('media_visible', True)) != self._media_visible:
             self.toggle_media_pool()
         if data.get('inspector_visible', False): self._show_inspector_host()
