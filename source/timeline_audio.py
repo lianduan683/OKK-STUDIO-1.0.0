@@ -20,6 +20,8 @@ def _get(value, key, default=None):
 
 
 def _camera_ids(project):
+    if _get(project, 'audio_overrides', {}):
+        return sorted({_get(clip, 'camera') for clip in source_audio_clips(project)})
     cameras = _get(project, 'cameras')
     if cameras is not None:
         return sorted(cameras)
@@ -34,7 +36,7 @@ def audio_track_enabled(project, track: int) -> bool:
     master = _get(project, 'master_audio', '')
     if track == 0: return bool(master)
     if states or master: return False
-    candidates = [_get(clip, 'camera') for clip in _get(project, 'clips', [])
+    candidates = [_get(clip, 'camera') for clip in source_audio_clips(project)
                   if _get(clip, 'has_audio') is not False]
     if not candidates: candidates = _camera_ids(project)
     return bool(candidates) and track == min(candidates)
@@ -54,9 +56,21 @@ class AudioSource:
         return self.start + self.duration
 
 
+def source_audio_clips(project):
+    """Resolve independent audio, including audio whose picture was deleted."""
+    clips = _get(project, 'clips', [])
+    overrides = _get(project, 'audio_overrides', {}) or {}
+    if not overrides:
+        return clips
+    ids = {_get(clip, 'id') for clip in clips}
+    result = [overrides.get(_get(clip, 'id'), clip) for clip in clips]
+    result.extend(clip for identifier, clip in overrides.items() if identifier not in ids)
+    return [clip for clip in result if clip is not None]
+
+
 def audio_sources(project, *, enabled_only=True) -> list[AudioSource]:
     """Resolve track clips against the timeline, with latest clip winning overlaps."""
-    clips = _get(project, 'clips', [])
+    clips = source_audio_clips(project)
     duration = _get(project, 'duration')
     if duration is None:
         duration = max([float(_get(project, 'master_duration', 0.)),

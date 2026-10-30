@@ -142,15 +142,16 @@ class CameraTrackAlignmentTests(unittest.TestCase):
     def test_one_match_cannot_silently_reposition_unmatched_segments(self):
         results = self.align([AlignmentResult(-12, .9, 50), AlignmentResult(0, 0, 50),
                               AlignmentResult(0, 0, 50)])
-        self.assertEqual([-item.offset_seconds for item in results], [0, 100, 200])
-        self.assertTrue(all(item.confidence == 0 for item in results))
+        self.assertEqual([-item.offset_seconds for item in results], [12, 100, 200])
+        self.assertGreaterEqual(results[0].confidence, .2)
+        self.assertTrue(all(item.confidence == 0 for item in results[1:]))
 
-    def test_conflicting_matches_preserve_the_entire_track(self):
+    def test_independent_matches_keep_real_recording_gaps(self):
         results = self.align([AlignmentResult(-12, .9, 50), AlignmentResult(-119, .9, 50),
                               AlignmentResult(-212, .95, 50)])
-        self.assertEqual([-item.offset_seconds for item in results], [0, 100, 200])
-        self.assertTrue(all(item.confidence == 0 for item in results))
-        self.assertIn('不一致', results[0].engine)
+        self.assertEqual([-item.offset_seconds for item in results], [12, 119, 212])
+        self.assertTrue(all(item.confidence >= .2 for item in results))
+        self.assertIn('分段独立对齐', results[0].engine)
 
     def test_disconnected_clips_and_different_cameras_keep_independent_offsets(self):
         clips = [CameraClip('a', 1, 'a.mp4', 0, 10), CameraClip('b', 1, 'b.mp4', 20, 10),
@@ -163,7 +164,8 @@ class CameraTrackAlignmentTests(unittest.TestCase):
         self.clips[2].path = self.clips[0].path
         results = self.align([AlignmentResult(-12, .9, 50), AlignmentResult(0, 0, 50),
                               AlignmentResult(-212, .95, 50)])
-        self.assertTrue(all(item.confidence == 0 for item in results))
+        self.assertEqual(results[1].confidence, 0.)
+        self.assertEqual(-results[1].offset_seconds, self.clips[1].start)
 
 
 if __name__ == '__main__':

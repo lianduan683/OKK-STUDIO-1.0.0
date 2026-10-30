@@ -29,7 +29,8 @@ def transition_signature(project) -> str:
     else:
         payload = vars(project).copy()
     # Audio samples and preview proxy selection do not produce video pixels.
-    for name in ('master_audio', 'range_start', 'range_end','alignment_reference_camera','color_reference_camera'):
+    for name in ('master_audio', 'range_start', 'range_end','alignment_reference_camera','color_reference_camera',
+                 'audio_overrides', 'timeline_snap_enabled', 'timeline_link_enabled'):
         payload.pop(name, None)
     for clip in payload.get('clips',[]):
         for name in ('camera_make','camera_model','camera_metadata_source','proxy_path'):

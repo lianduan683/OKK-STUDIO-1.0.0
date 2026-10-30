@@ -13,6 +13,21 @@ class TimelineAudioSessionTests(unittest.TestCase):
     setUp = fixture.ProgramEditWorkspaceTests.setUp
     tearDown = fixture.ProgramEditWorkspaceTests.tearDown
 
+    def test_rtxproj_roundtrip_preserves_independent_audio_and_timeline_switches(self):
+        from timeline_link import move_source_audio
+        workspace = self.workspace
+        self.root.multicam_workspace = workspace
+        workspace.project.timeline_link_enabled = workspace.project.timeline_snap_enabled = False
+        move_source_audio(workspace.project, {workspace.project.clips[0].id}, 1.)
+        original = copy.deepcopy(workspace.project)
+        path = self.folder/'独立音视频.rtxproj'
+        write_project_file(path, build_project_payload(self.root, app_version='1.0.2'))
+        workspace.project = MulticamProject()
+        restore_okk(self.root, read_project_file(path)['state']['okk_multicam'])
+        self.assertEqual(workspace.project, original)
+        self.assertFalse(workspace.timeline_snap_var.get())
+        self.assertFalse(workspace.timeline_link_var.get())
+
     def test_rtxproj_roundtrip_preserves_names_audio_flags_and_markers(self):
         workspace = self.workspace
         self.root.multicam_workspace = workspace

@@ -144,6 +144,9 @@ class MulticamProject:
     camera_names: dict[int, str] = field(default_factory=dict)
     audio_track_enabled: dict[int, bool] = field(default_factory=dict)
     timeline_markers: list[float] = field(default_factory=list)
+    timeline_snap_enabled: bool = True
+    timeline_link_enabled: bool = True
+    audio_overrides: dict[str, CameraClip | None] = field(default_factory=dict)
 
     def set_camera_name(self, camera: int, name: str) -> None:
         if _camera(camera) not in self.timeline_cameras:
@@ -152,7 +155,8 @@ class MulticamProject:
 
     @property
     def duration(self) -> float:
-        return max(0.0, float(self.master_duration), *(clip.end for clip in self.clips))
+        return max(0.0, float(self.master_duration), *(clip.end for clip in self.clips),
+                   *(clip.end for clip in self.audio_overrides.values() if clip is not None))
 
     @property
     def cameras(self) -> list[int]:
@@ -160,7 +164,8 @@ class MulticamProject:
 
     @property
     def timeline_cameras(self) -> list[int]:
-        return sorted(set(self.cameras) | set(self.timeline_empty_tracks))
+        return sorted(set(self.cameras) | set(self.timeline_empty_tracks) |
+                      {clip.camera for clip in self.audio_overrides.values() if clip is not None})
 
     def stacked_cameras(self, *, include_hidden=False) -> list[int]:
         """Timeline layers ordered from the topmost picture to the bottom."""
@@ -248,6 +253,19 @@ class MulticamProject:
             raise ValueError("工程素材和切点必须是列表")
         if len(self.clips) > 100_000 or len(self.cuts) > 1_000_000:
             raise ValueError("工程素材或切点数量过多")
+        if type(self.timeline_snap_enabled) is not bool or type(self.timeline_link_enabled) is not bool:
+            raise ValueError('时间线吸附和链接开关必须是布尔值')
+        if not isinstance(self.audio_overrides, dict) or len(self.audio_overrides) > 100_000:
+            raise ValueError('独立音频素材设置无效')
+        for identifier, clip in self.audio_overrides.items():
+            if (not isinstance(identifier, str) or not identifier or
+                    (clip is not None and (not isinstance(clip, CameraClip) or clip.id != identifier))):
+                raise ValueError('独立音频素材 ID 无效')
+        # Audio overrides use the same source-instance schema and validation.
+        # Validate them separately because a linked picture/audio pair shares ID.
+        if self.audio_overrides:
+            audio_project = MulticamProject(clips=[clip for clip in self.audio_overrides.values() if clip is not None])
+            audio_project.validate()
         identifiers: set[str] = set()
         for clip in self.clips:
             if not isinstance(clip, CameraClip):
@@ -451,7 +469,16 @@ class MulticamProject:
         payload = asdict(self)
         extended_audio = bool(self.audio_track_enabled or self.timeline_markers or
                               any(clip.has_audio is not None for clip in self.clips))
-        payload.update(format="okk-multicam", version=11 if extended_audio else 10 if self.camera_names else 9 if self.timeline_empty_tracks else 8)
+        extended_timeline = bool(self.audio_overrides or not self.timeline_snap_enabled or not self.timeline_link_enabled)
+        payload.update(format="okk-multicam", version=12 if extended_timeline else 11 if extended_audio else 10 if self.camera_names else 9 if self.timeline_empty_tracks else 8)
+        if not extended_timeline:
+            for name in ('audio_overrides', 'timeline_snap_enabled', 'timeline_link_enabled'):
+                payload.pop(name)
+        else:
+            for clip in payload['audio_overrides'].values():
+                if clip is not None:
+                    clip['path'] = relative(clip['path'])
+                    clip['proxy_path'] = relative(clip['proxy_path'])
         if self.audio_track_enabled:
             payload['audio_track_enabled'] = {str(track): enabled for track, enabled in self.audio_track_enabled.items()}
         else: payload.pop('audio_track_enabled')
@@ -520,13 +547,13 @@ class MulticamProject:
         base = Path(base_directory).resolve()
         try:
             if (not isinstance(payload, dict) or payload.get("format") != "okk-multicam"
-                    or type(payload.get("version")) is not int or payload.get("version") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}):
+                    or type(payload.get("version")) is not int or payload.get("version") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}):
                 raise ValueError("不是受支持的多机位工程")
             allowed = {"format", "version", "clips", "cuts", "master_audio", "master_duration", "fps",
                        "range_start", "range_end", "global_grade", "camera_grades", "transitions", "subtitles",
                        "edit_points", "clip_grades", "stabilizations", "library_overlays", "alignment_reference_camera", "color_reference_camera",
                        "video_stack_enabled", "video_stack_order", "video_stack_hidden", "timeline_empty_tracks", "camera_names",
-                       "audio_track_enabled", "timeline_markers"}
+                       "audio_track_enabled", "timeline_markers", "timeline_snap_enabled", "timeline_link_enabled", "audio_overrides"}
             if set(payload) - allowed:
                 raise ValueError("工程包含未知字段")
 
@@ -548,6 +575,20 @@ class MulticamProject:
                 values["proxy_path"] = absolute(values.get("proxy_path", ""))
                 clips.append(CameraClip(**values))
             cuts = [Cut(**item) for item in raw_cuts]
+            raw_overrides = payload.get('audio_overrides', {})
+            if not isinstance(raw_overrides, dict) or len(raw_overrides) > 100_000:
+                raise ValueError('独立音频素材设置无效')
+            audio_overrides = {}
+            for identifier, item in raw_overrides.items():
+                if item is None:
+                    audio_overrides[identifier] = None
+                    continue
+                if not isinstance(item, dict):
+                    raise ValueError('独立音频素材结构无效')
+                values = dict(item)
+                values['path'] = absolute(values.get('path'))
+                values['proxy_path'] = absolute(values.get('proxy_path', ''))
+                audio_overrides[identifier] = CameraClip(**values)
             grade, camera_grades, transitions = effects_from_dict({
                 key: payload[key] for key in ("global_grade", "camera_grades", "transitions") if key in payload})
             edit_points, clip_grades = program_edits_from_dict({
@@ -602,7 +643,10 @@ class MulticamProject:
                           timeline_empty_tracks=payload.get('timeline_empty_tracks', []),
                           camera_names=camera_names,
                           audio_track_enabled=audio_track_states,
-                          timeline_markers=payload.get('timeline_markers', []))
+                          timeline_markers=payload.get('timeline_markers', []),
+                          timeline_snap_enabled=payload.get('timeline_snap_enabled', True),
+                          timeline_link_enabled=payload.get('timeline_link_enabled', True),
+                          audio_overrides=audio_overrides)
             project.validate()
             return project
         except (json.JSONDecodeError, TypeError, KeyError, OverflowError) as exc:

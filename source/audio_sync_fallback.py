@@ -139,8 +139,14 @@ def _waveform_feature(energy, rate):
 
     if len(energy) < rate * 5 or max(energy, default=0.0) < 1e-4:
         raise RuntimeError("音频静音或不足 5 秒，无法可靠自动对齐")
-    feature = [math.log1p(current) - math.log1p(previous)
-               for previous, current in zip(energy, energy[1:])]
+    values = [math.log1p(value) for value in energy]
+    def smooth(count):
+        count = max(1, int(count)); left = count//2
+        padded = [values[0]]*left+values+[values[-1]]*(count-1-left)
+        sums = [0.]
+        for value in padded: sums.append(sums[-1]+value)
+        return [(sums[i+count]-sums[i])/count for i in range(len(values))]
+    feature = [a-b for a,b in zip(smooth(round(rate*.1)), smooth(round(rate*2)))]
     return _normalize_feature(feature)
 
 
@@ -175,7 +181,7 @@ def align_without_numpy(ffmpeg, videos, external_audio, *, envelope_rate=50,
     ambiguous audible probe requires manual review and never triggers full
     camera decoding; callers must explicitly select ``mode='full'`` for that.
     """
-    from audio_sync import _Reporter, _check_cancel, _duration, _probe_starts
+    from audio_sync import _Reporter, _check_cancel, _duration, _probe_starts, _consensus_match
     from editor_core import AlignmentResult
 
     if mode not in {"fast", "full"}:
@@ -213,37 +219,42 @@ def align_without_numpy(ffmpeg, videos, external_audio, *, envelope_rate=50,
             else:
                 if not Path(video).is_file():
                     raise ValueError(f"音频同步文件不存在：{video}")
+                full_energy = None
                 if mode == "full":
-                    starts, window = [0.0], None
+                    full_energy = _stream_energy_python(ffmpeg, video, envelope_rate, cancel_event=cancel_event)
+                    duration = len(full_energy)/envelope_rate
                 else:
                     duration = _duration(ffmpeg, video, cancel_event)
-                    if not math.isfinite(duration) or duration <= 0:
-                        raise RuntimeError("无法读取视频时长，请检查素材或显式选择完整分析")
-                    window = min(PROBE_SECONDS, duration)
-                    starts = _probe_starts(duration, window, envelope_rate)
-                probe = None
-                start = 0.0
+                if not math.isfinite(duration) or duration < 5:
+                    raise RuntimeError("无法读取有效时长或音频不足5秒")
+                window = min(PROBE_SECONDS, duration)
+                starts = _probe_starts(duration, window, envelope_rate)
+                matches = []
+                consensus = None
+                multiple = duration >= PROBE_SECONDS*1.5
+                spacing = max(5., min(window/2, (duration-window)*.6))
                 for probe_index, start in enumerate(starts):
                     _check_cancel(cancel_event)
-                    report(base + span * 0.5 * probe_index / len(starts),
-                           f"{name} · {'完整波形' if window is None else '中段波形' if not probe_index else '补充有声波形'}", force=True)
-                    energy = _stream_energy_python(ffmpeg, video, envelope_rate, start=start,
-                                                   duration=window, cancel_event=cancel_event)
+                    report(base+span*.7*probe_index/len(starts), f"{name} · 多窗口包络核对", force=True)
+                    if full_energy is None:
+                        energy = _stream_energy_python(ffmpeg, video, envelope_rate, start=start,
+                                                       duration=window, cancel_event=cancel_event)
+                    else:
+                        first = round(start*envelope_rate)
+                        energy = full_energy[first:first+round(window*envelope_rate)]
                     try:
                         probe = _waveform_feature(energy, envelope_rate)
+                        offset, confidence = _match_window(probe, master, envelope_rate, start,
+                                                           max_offset_seconds, cancel_event)
                     except RuntimeError:
                         continue
-                    break  # Only silence permits another short camera read.
-                if probe is None:
-                    raise RuntimeError("抽样音频静音、过短或变化过小，请手动对齐")
-                report(base + span * 0.55, f"{name} · 在完整主录音中匹配波形", force=True)
-                offset, confidence = _match_window(probe, master, envelope_rate, start,
-                                                    max_offset_seconds, cancel_event)
-                engine = "内置兼容 · " + ("完整波形" if mode == "full" else "中段波形")
-                if confidence < 0.1:
-                    if not continue_on_error:
-                        raise RuntimeError("波形匹配不唯一或相似度过低，请手动对齐")
-                    engine += " · 匹配不唯一/待手动"
+                    matches.append((start,(offset,confidence,confidence,0.)))
+                    consensus = _consensus_match(matches,envelope_rate,require_multiple=multiple,spacing=spacing)
+                    if consensus is not None and (not multiple or len(matches)>=(5 if duration>=180 else 3)): break
+                if consensus is None:
+                    raise RuntimeError("多个独立窗口未能确认同一位置，请手动复核")
+                (offset,confidence,_,_), support = consensus
+                engine = f"内置兼容 · 多窗口包络核对 {support}/{len(matches)}"
                 result = AlignmentResult(float(offset), float(confidence), envelope_rate, engine)
         except ExportCancelled:
             raise

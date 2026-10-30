@@ -62,6 +62,10 @@ class WorkspaceDockingMixin:
             item.add_command(label='隐藏', command=lambda value=key: self.dock_manager.hide(value))
             menu.add_cascade(label=title, menu=item)
         menu.add_separator()
+        append_keyboard_menu = getattr(self.app, '_append_keyboard_layout_menu', None)
+        if append_keyboard_menu is not None:
+            append_keyboard_menu(menu)
+            menu.add_separator()
         menu.add_command(label='保存当前布局', command=self.save_workspace_layout)
         menu.add_command(label='载入已保存布局', command=self._load_workspace_layout)
         menu.add_command(label='恢复默认布局', command=self.reset_workspace_layout)

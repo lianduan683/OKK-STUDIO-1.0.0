@@ -66,7 +66,7 @@ def _path(clip):
 
 
 def _manual(clip,reason):
-    return AlignmentResult(-_start(clip),0.,50,'参考机位 · 待手动：'+str(reason)[:300])
+    return AlignmentResult(-_start(clip),0.,50,'音频同步 · 待手动：'+str(reason)[:300])
 
 
 def align_to_camera(ffmpeg,clips,reference_clips,*,ffprobe_path='',mode='fast',
@@ -170,11 +170,10 @@ def align_camera_tracks(ffmpeg, clips, external_audio='', *, reference_clips=Non
                         progress=None, cache_dir=None, fps=30.):
     """Align sequential camera parts as a track, preserving their spacing.
 
-    Clips must already be on their intended camera tracks. Separate cameras and
-    disconnected recording runs are analysed independently. We only transfer a
-    common shift to an unmatchable part when at least two *different* sources
-    provide strong agreeing evidence. Conflicting offsets preserve the whole
-    run for review, rather than overlapping segments or inventing a time warp.
+    Imported adjacency is not proof of uninterrupted recording. Independently
+    confirmed parts retain their measured positions, including recording gaps
+    and out-of-order filenames. A common shift is transferred to an unmatchable
+    part only when two different sources provide strong agreeing evidence.
     This function returns results and never mutates any project clips.
     """
     clips = list(clips)
@@ -240,10 +239,27 @@ def align_camera_tracks(ffmpeg, clips, external_audio='', *, reference_clips=Non
             tolerance = max(.12, 2. / fps,
                             *(3. / max(5, results[index].envelope_rate) for index, _shift, _confidence in reliable))
             if max(item[1] for item in reliable) - min(item[1] for item in reliable) > tolerance:
-                reason = '同轨分段匹配位置不一致，可能存在停录间隔、重复声音或时钟漂移，保留整轨原位置'
+                # Import initially packs recordings back-to-back. That is not
+                # evidence that the camera recorded without pauses. Keep each
+                # independently confirmed match instead of rejecting the track
+                # or forcing real recording gaps out of its timing.
+                for index in run:
+                    original = results[index]
+                    if math.isfinite(original.offset_seconds) and math.isfinite(original.confidence) and original.confidence >= .2:
+                        output[index] = AlignmentResult(original.offset_seconds, original.confidence,
+                            original.envelope_rate, '分段独立对齐（存在停录间隔或偏移变化） · '+original.engine)
+                    else:
+                        output[index] = _manual(clips[index], '该片段未找到独立可靠匹配，其他分段已分别对齐')
+                continue
         if reason:
             for index in run:
-                output[index] = _manual(clips[index], reason)
+                original = results[index]
+                if (math.isfinite(original.offset_seconds) and math.isfinite(original.confidence)
+                        and original.confidence >= .2):
+                    output[index] = AlignmentResult(original.offset_seconds, original.confidence,
+                        original.envelope_rate, '独立确认片段，未强制移动其他分段 · '+original.engine)
+                else:
+                    output[index] = _manual(clips[index], reason)
             continue
         ordered = sorted(reliable, key=lambda item: item[1])
         halfway = sum(item[2] for item in ordered) / 2
@@ -266,7 +282,7 @@ def align_camera_tracks(ffmpeg, clips, external_audio='', *, reference_clips=Non
                                              original.envelope_rate, label)
     _cancel(cancel_event)
     if progress:
-        progress(100., '逐轨同步完成，连续分段间距保持不变')
+        progress(100., '逐段同步完成，保留实际停录间隔；确认连续的分段保持间距')
     return output
 
 

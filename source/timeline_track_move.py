@@ -26,6 +26,10 @@ def validate_track_move(project, gesture, targets, delta):
 
 
 def apply_track_move(project, gesture, targets):
+    if project.timeline_link_enabled:
+        for identifier, camera in targets.items():
+            clip = project.audio_overrides.get(identifier)
+            if clip is not None: clip.camera = camera
     for clip in project.clips:
         if clip.id in targets: clip.camera = targets[clip.id]
     for item in project.stabilizations:

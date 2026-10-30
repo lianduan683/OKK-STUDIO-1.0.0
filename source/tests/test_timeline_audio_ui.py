@@ -111,11 +111,12 @@ class TimelineAudioControlsTests(unittest.TestCase):
     def test_header_button_click_changes_only_the_intended_track(self):
         workspace = Harness('master.wav')
         self.draw(workspace)
-        self.assertTrue(workspace._timeline_audio_press(SimpleNamespace(x=50, y=210)))
+        left, top, right, bottom = workspace._audio_track_buttons[1]
+        self.assertTrue(workspace._timeline_audio_press(SimpleNamespace(x=(left+right)/2, y=(top+bottom)/2)))
         self.assertTrue(audio_track_enabled(workspace.project, 0))
         self.assertTrue(audio_track_enabled(workspace.project, 1))
         self.assertFalse(audio_track_enabled(workspace.project, 2))
-        self.assertFalse(workspace._timeline_audio_press(SimpleNamespace(x=500, y=210)))
+        self.assertFalse(workspace._timeline_audio_press(SimpleNamespace(x=500, y=(top+bottom)/2)))
 
     def test_busy_and_unchanged_action_leave_history_untouched(self):
         workspace = Harness('master.wav')
@@ -128,8 +129,9 @@ class TimelineAudioControlsTests(unittest.TestCase):
     def test_right_click_header_exposes_mute_and_solo(self):
         workspace = Harness('master.wav')
         self.draw(workspace)
+        top, bottom = workspace._timeline_audio_track_bounds[1]
         with patch('timeline_audio_ui.tk.Menu') as constructor:
-            self.assertTrue(workspace._timeline_audio_context(SimpleNamespace(x=40,y=210,x_root=40,y_root=210)))
+            self.assertTrue(workspace._timeline_audio_context(SimpleNamespace(x=40,y=(top+bottom)/2,x_root=40,y_root=210)))
         labels = [call.kwargs['label'] for call in constructor.return_value.add_command.call_args_list]
         self.assertEqual(labels, ['设为出声','仅此轨出声'])
 

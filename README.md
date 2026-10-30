@@ -1,15 +1,22 @@
-# OKK STUDIO 1.0.2
+# OKK STUDIO 1.0.4
 
-Windows 多机位视频剪辑应用。本版新增逐轨音频控制、真实波形和 M 时间标记，支持机位命名，改善中文输入法快捷键，修复旧完整工程打开与保存。
+Windows 多机位视频剪辑应用。本版提供逐轨音频、真实波形、时间标记、同步结果明细、机位列表折叠及三套键位，修复旧完整工程打开与保存。
 
 ## 下载
 
-**[下载 OKK-STUDIO-1.0.2-Setup.exe](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.2/OKK-STUDIO-1.0.2-Setup.exe)** · [发行页](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/tag/v1.0.2)
+**[下载 OKK-STUDIO-1.0.4-Setup.exe](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.4/OKK-STUDIO-1.0.4-Setup.exe)** · [发行页](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/tag/v1.0.4)
 
 主程序已内置安装器。安装时下载并校验 v1.0.0 的四份固定资源 ZIP（约 5.75 GB），完整安装约 6.5 GB，建议预留至少 15 GB。已有离线资源可通过 `/PAYLOADDIR` 复用。安装与升级见 [INSTALLATION.md](INSTALLATION.md)。
 
 ## 新增与修复
 
+- 时间线“吸附”可控制光标吸附素材边缘与节目切点；“链接”可控制视频及机位原声成对编辑，A0 主音频保持独立。
+- 机位编号旁显示代理状态，包括已代理、部分代理、未代理及代理丢失。
+- 现场音频使用多个分散窗口核对，抑制观众声和缓慢增益变化；分段分别恢复真实起点，不强制消除停录间隔。
+- 同步后自动列出未对齐 / 待检查片段，显示机位、文件名、可信度与原因，支持定位；保留未确认片段原位置。
+- 机位列表支持“全部收起 / 全部展开”，刷新后保留展开状态。
+- A0 主音频常显，其他音轨可整体或逐轨折叠；拖动音视频分隔条调整轨道高度。
+- “布局 → 键位选择”可切换当前、DaVinci Resolve、Premiere Pro，并查看键位表，记住上次选择。
 - 右键机位自定义名称，名称随工程保存。
 - A0 主音频、A1/A2 对应视频原声；可逐轨静音、同时混音或仅一轨出声，播放与导出一致。
 - 后台提取真实波形并缓存，静音轨仍显示波形。
@@ -24,10 +31,10 @@ Windows 多机位视频剪辑应用。本版新增逐轨音频控制、真实波
 
 Windows 10/11 64 位。缓存沿用可写的非 C 盘、非系统盘固定磁盘策略，优先 D:。仅有 C 盘的电脑目前无法按该策略正常启动。硬件编解码能力以启动检测和实际驱动为准。
 
-本版尚未做受信任代码签名，Windows 智能应用控制可能拦截。新设置或标记会使用工程格式 11，需要新版打开；升级后建议另存副本。
+本版尚未做受信任代码签名，Windows 智能应用控制可能拦截。新音轨状态和标记使用工程格式 11；独立音频编辑或非默认吸附/链接设置使用格式 12，需要新版打开；升级后建议另存副本。
 
 ## 源码与构建
 
-[下载 1.0.2 应用源码](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.2/OKK-STUDIO-1.0.2-source.zip)。源码包包含应用模块、回归测试、小型 UI 资源和构建文件；不包含用户工程、媒体、工作缓存或大型第三方二进制。构建步骤见 [BUILDING.md](BUILDING.md)。
+[下载 1.0.4 应用源码](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.4/OKK-STUDIO-1.0.4-source.zip)。源码包包含应用模块、回归测试、小型 UI 资源和构建文件；不包含用户工程、媒体、工作缓存或大型第三方二进制。构建步骤见 [BUILDING.md](BUILDING.md)。
 
 应用许可证见 [LICENSE](LICENSE)，第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

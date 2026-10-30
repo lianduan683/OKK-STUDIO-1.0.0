@@ -631,7 +631,7 @@ class LosslessWorkspace:
         canvas.bind("<Shift-MouseWheel>", self._timeline_wheel)
         canvas.bind("<ButtonPress-2>", self._timeline_pan_press)
         canvas.bind("<B2-Motion>", self._timeline_pan_motion)
-        for sequence in ('<Delete>', '<BackSpace>', '<Escape>', '<Control-a>', '<Control-z>', '<Control-y>'):
+        for sequence in ('<Delete>', '<BackSpace>', '<Escape>', '<Control-a>', '<Control-z>', '<Control-y>', '<Control-Shift-Z>'):
             canvas.bind(sequence, self._timeline_key)
         self.timeline = canvas
         body = ttk.Panedwindow(page, orient="horizontal")
@@ -655,7 +655,7 @@ class LosslessWorkspace:
         scroll.grid(row=0, column=1, sticky="ns")
         tree.bind("<<TreeviewSelect>>", self._list_selected)
         tree.bind("<Double-Button-1>", lambda _event: self.play_current_loop())
-        for sequence in ('<Delete>', '<BackSpace>', '<Escape>', '<Control-a>', '<Control-z>', '<Control-y>'):
+        for sequence in ('<Delete>', '<BackSpace>', '<Escape>', '<Control-a>', '<Control-z>', '<Control-y>', '<Control-Shift-Z>'):
             tree.bind(sequence, self._timeline_key)
         self.segment_tree = tree
         self._build_editor_controls(right)
@@ -912,14 +912,17 @@ class LosslessWorkspace:
 
     def _timeline_key(self, event):
         if getattr(event, 'state', 0) & 0x4:
-            key = event.keysym.lower()
-            if key == 'a':
+            from keyboard_profiles import shortcut_action
+            action = shortcut_action(getattr(self.app, 'keyboard_profile', 'current'), event)
+            if action == 'select_all':
                 self._timeline_select(item.id for item in self.state.model.segments)
-            elif key in {'z', 'y'}:
+            elif action == 'deselect':
+                self._timeline_select(())
+            elif action in {'undo', 'redo'}:
                 if self._timeline_gesture is not None:
                     self._timeline_cancel()
                 elif not getattr(self.app, 'working', False):
-                    self.undo() if key == 'z' else self.redo()
+                    self.undo() if action == 'undo' else self.redo()
             else:
                 return
             return 'break'

@@ -116,13 +116,14 @@ class MiddleWindowSyncTests(unittest.TestCase):
             return
         self.assertLess(result.confidence, 0.1, f"Unreliable recording was trusted: {result}")
 
-    def test_real_mp4_uses_one_center_window_and_restores_whole_camera_offset(self):
+    def test_real_mp4_checks_separated_windows_and_restores_whole_camera_offset(self):
         with patch("audio_sync._stream_energy", wraps=audio_sync._stream_energy) as decode:
             result = self.align(self.after)
         self.assertAlmostEqual(result.offset_seconds, -20.24, delta=0.08)
         self.assertGreater(result.confidence, 0.5)
         camera_reads = [call for call in decode.call_args_list if Path(call.args[1]) == self.after]
-        self.assertEqual(len(camera_reads), 1, "Normal fast mode must decode one middle camera window")
+        self.assertGreaterEqual(len(camera_reads), 2, "Long recordings need independent window confirmation")
+        self.assertLessEqual(len(camera_reads), 7)
         start = camera_reads[0].kwargs.get("start", 0.0)
         duration = camera_reads[0].kwargs.get("duration")
         self.assertIsNotNone(duration, "Fast camera alignment decoded the entire recording")
@@ -177,7 +178,7 @@ class MiddleWindowSyncTests(unittest.TestCase):
         camera_reads = [call for call in decode.call_args_list
                         if Path(call.args[1]) == self.middle_silent_camera]
         self.assertGreaterEqual(len(camera_reads), 2)
-        self.assertLessEqual(len(camera_reads), 3)
+        self.assertLessEqual(len(camera_reads), 7)
         self.assertTrue(all(call.kwargs.get("duration") is not None for call in camera_reads))
 
     def test_both_fft_engines_honor_asymmetric_local_bounds(self):

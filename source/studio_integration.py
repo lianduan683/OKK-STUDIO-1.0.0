@@ -7,9 +7,10 @@ from tkinter import ttk, messagebox
 from studio_project import StudioProjectMixin
 from project_file import AUTOSAVE_INTERVAL_MS, autosave_path
 from media_pool_workspace import MediaPoolWorkspace
+from keyboard_profile_ui import KeyboardProfileSettingsMixin
 
 
-class StudioIntegrationMixin(StudioProjectMixin):
+class StudioIntegrationMixin(KeyboardProfileSettingsMixin, StudioProjectMixin):
     def _build_studio_menu(self, parent):
         button = tk.Menubutton(parent, text='工程 ▾', bg='#202124', fg='#dedfe3',
                                activebackground='#2c2e32', activeforeground='#dedfe3',
@@ -27,6 +28,7 @@ class StudioIntegrationMixin(StudioProjectMixin):
         menu.add_command(label='媒体库…', command=lambda: self._show_media_library())
         menu.add_command(label='无损分段', command=lambda: self._show_lossless_tools())
         menu.add_command(label='生成剪辑代理', command=lambda: self._show_proxy_tools())
+        self._init_keyboard_profile()
 
     def _init_studio_integration(self):
         self._project_launcher = None

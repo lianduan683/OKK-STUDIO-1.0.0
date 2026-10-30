@@ -62,19 +62,24 @@ class TimelineInteractionMixin:
         self.timeline.configure(xscrollcommand=self._timeline_xview_changed,
                                 yscrollcommand=self._timeline_yview_changed)
         self.timeline.bind('<Motion>', self._timeline_hover)
+        self.timeline.bind('<FocusOut>', lambda _e: self._end_timeline_divider_drag(cancel=True), add='+')
+        self.timeline.bind('<Unmap>', lambda _e: self._end_timeline_divider_drag(cancel=True), add='+')
         self.timeline.bind('<Leave>', lambda _event: self.timeline.configure(cursor='')
                            if self._program_boundary_drag is None else None)
 
     def _timeline_pan_press(self, event):
+        if getattr(self, '_timeline_divider_drag', None) is not None: return 'break'
         self.timeline.scan_mark(event.x, event.y)
         return 'break'
 
     def _timeline_pan_motion(self, event):
+        if getattr(self, '_timeline_divider_drag', None) is not None: return 'break'
         self.timeline.scan_dragto(event.x, event.y, gain=1)
         self._queue_timeline_redraw()
         return 'break'
 
     def _timeline_vertical_wheel(self, event):
+        if getattr(self, '_timeline_divider_drag', None) is not None: return 'break'
         if not event.delta:
             return 'break'
         self.timeline.yview_scroll(-3 if event.delta > 0 else 3, 'units')
@@ -123,6 +128,10 @@ class TimelineInteractionMixin:
 
     def _timeline_hover(self, event):
         if getattr(self, '_selection_gesture', None): return
+        if self._timeline_layout_hover(event): return
+        if getattr(self, '_keyboard_tool', 'select') == 'razor':
+            self.timeline.configure(cursor='crosshair')
+            return
         if self._video_stack_hover(event): return
         if self._program_boundary_drag is not None:
             return

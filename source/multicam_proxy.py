@@ -24,6 +24,35 @@ def _stamp(path):
 
 
 class MulticamProxyMixin:
+    def _refresh_proxy_badges(self, *, force=False):
+        """Show attachment state independently of the proxy-preview switch."""
+        now = time.monotonic()
+        if not force and now < vars(self).get('_proxy_badges_next_check', 0.):
+            return
+        self._proxy_badges_next_check = now + 1.
+        from proxy_media import PreviewProxyResolver
+        resolver = vars(self).get('_badge_proxy_resolver')
+        if resolver is None:
+            resolver = self._badge_proxy_resolver = PreviewProxyResolver()
+        if force: resolver.reset()
+        by_camera = {}
+        for clip in self.project.clips:
+            by_camera.setdefault(clip.camera, []).append(clip)
+        for camera, badge in vars(self).get('camera_proxy_badges', {}).items():
+            clips = by_camera.get(camera, ())
+            ready = sum(_identity(resolver(clip.path, clip.proxy_path)) != _identity(clip.path) for clip in clips)
+            missing = sum(bool(clip.proxy_path) and not Path(clip.proxy_path).is_file() for clip in clips)
+            if clips and ready == len(clips):
+                text, color = '已代理', '#82c9aa'
+            elif ready:
+                text, color = f'部分代理 {ready}/{len(clips)}', '#dfbc73'
+            elif missing:
+                text, color = '代理丢失', '#ef8d82'
+            else:
+                text, color = '未代理', '#969ba3'
+            if badge.cget('text') != text or badge.cget('fg') != color:
+                badge.configure(text=text, fg=color)
+
     def _init_quick_proxy(self):
         self._quick_proxy_token = 0
         self._quick_proxy_cancel = threading.Event()
@@ -312,6 +341,7 @@ class MulticamProxyMixin:
             for source, path in linked:
                 register_proxy(source, path)
             self._mark_dirty()
+            self._refresh_proxy_badges(force=True)
             if self.player:
                 self.player.submit('proxy_update', bindings=bindings, use_proxies=self.proxy_var.get())
         for source, error in issues:
@@ -351,6 +381,7 @@ class MulticamProxyMixin:
                     bindings.append({'id': clip.id, 'source': clip.path, 'proxy': path})
             if bindings:
                 self._mark_dirty()
+                self._refresh_proxy_badges(force=True)
                 if self.player:
                     self.player.submit('proxy_update', bindings=bindings, use_proxies=self.proxy_var.get())
         elif kind == 'quick_proxy_error':

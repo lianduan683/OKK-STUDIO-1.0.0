@@ -10,10 +10,11 @@ import tkinter as tk
 
 from audio_waveform import Waveform, decode_waveform, envelope_points, waveform_key
 from exporter_core import find_binary
-from timeline_audio import audio_track_enabled
+from timeline_audio import audio_track_enabled, source_audio_clips
+from timeline_layout_ui import TimelineLayoutMixin
 
 
-class TimelineAudioUIMixin:
+class TimelineAudioUIMixin(TimelineLayoutMixin):
     def _init_timeline_audio(self):
         self._waveform_results = queue.Queue()
         self._waveform_cache = OrderedDict()
@@ -103,6 +104,7 @@ class TimelineAudioUIMixin:
         self._set_timeline_audio_track(track, not audio_track_enabled(self.project, track))
 
     def _timeline_audio_press(self, event):
+        if self._timeline_audio_fold_press(event): return True
         x, y = self.timeline.canvasx(event.x), self.timeline.canvasy(event.y)
         for track, (left, top, right, bottom) in getattr(self, '_audio_track_buttons', {}).items():
             if left <= x <= right and top <= y <= bottom:
@@ -134,70 +136,109 @@ class TimelineAudioUIMixin:
     def _draw_timeline_audio(self, cameras, audio_y, audio_h, width, label_font, timeline_x, visible):
         canvas = self.timeline
         self._audio_track_buttons = {}
+        self._audio_fold_buttons = {}
+        self._audio_group_button = None
         self._timeline_audio_track_bounds = {}
+        self.timeline_camera_audio_items = {}
         self._timeline_audio_bounds = None
         tracks = self._timeline_audio_tracks(cameras)
         duration = self._timeline_view_duration()
         view_left = canvas.canvasx(0)
         view_right = canvas.canvasx(canvas.winfo_width())
         pps = self._timeline_scale()
-        for index, track in enumerate(tracks):
-            y = audio_y + index*audio_h
-            self._timeline_audio_track_bounds[track] = (y, y+audio_h)
-            if track == 0: self._timeline_audio_bounds = (y, y+audio_h)
-            if not visible(0, y, width, y+audio_h): continue
-            enabled = audio_track_enabled(self.project, track)
-            canvas.create_rectangle(0, y, width, y+audio_h, fill='#232c29' if enabled else '#27292b', outline='')
-            if track == 0:
-                clips = [(self.project.master_audio, 0., min(duration, self.project.master_duration or duration), True)]
-            else:
-                clips = [(clip.path, clip.start, clip.duration, getattr(clip, 'has_audio', None))
-                         for clip in self.project.clips if clip.camera == track]
-            for path, start, length, has_audio in clips:
-                x, x2 = timeline_x(start), timeline_x(start+length)
-                if x2 <= x or not visible(x, y, x2, y+audio_h): continue
-                fill = '#36594e' if enabled else '#343c3b'
-                item = canvas.create_rectangle(x, y+self._px(2), x2, y+audio_h-self._px(2),
-                                               fill=fill, outline='#5e8074' if enabled else '#465650', tags=('audio-track',))
+        y = audio_y
+        group_drawn = False
+        group_folded = getattr(self, '_camera_audio_collapsed', False)
+        folded = getattr(self, '_collapsed_audio_tracks', set())
+        for track in tracks:
+            if track != 0 and not group_drawn:
+                group_h = getattr(self, '_timeline_audio_group_h', self._px(24))
+                self._audio_group_button = (view_left, y, view_right, y+group_h)
+                if visible(0, y, width, y+group_h):
+                    canvas.create_rectangle(0, y, width, y+group_h, fill='#303a36', outline='', tags=('audio-group',))
+                    self._draw_audio_fold_icon(view_left+self._px(10), y+group_h/2, group_folded, 'audio-group')
+                    canvas.create_text(view_left+self._px(22), y+group_h/2,
+                        text='机位原声', anchor='w',
+                        fill='#a7c6b8', font=label_font, tags=('audio-group',))
+                    canvas.create_text(view_left+self._timeline_left+self._px(8), y+group_h/2,
+                        text=f'{len(cameras)} 轨 · 点击'+('展开' if group_folded else '收起'),
+                        anchor='w', fill='#a7c6b8', font=label_font, tags=('audio-group',))
+                y += group_h
+                group_drawn = True
+            if track != 0 and group_folded: continue
+            row_h = getattr(self, '_timeline_audio_row_heights', {}).get(track, audio_h)
+            top, y = y, y+row_h
+            self._timeline_audio_track_bounds[track] = (top, y)
+            if track == 0: self._timeline_audio_bounds = (top, y)
+            if not visible(0, top, width, y): continue
+            self._draw_timeline_audio_row(track, top, row_h, width, label_font, timeline_x, visible,
+                                          duration, view_left, view_right, pps, track in folded and track != 0)
+
+    def _draw_timeline_audio_row(self, track, y, audio_h, width, label_font, timeline_x, visible,
+                                 duration, view_left, view_right, pps, compact):
+        canvas = self.timeline
+        enabled = audio_track_enabled(self.project, track)
+        canvas.create_rectangle(0, y, width, y+audio_h, fill='#232c29' if enabled else '#27292b', outline='')
+        if track == 0:
+            clips = [(self.project.master_audio, 0., min(duration, self.project.master_duration or duration), True, None)]
+        else:
+            clips = [(clip.path, clip.start, clip.duration, getattr(clip, 'has_audio', None), getattr(clip, 'id', None))
+                     for clip in source_audio_clips(self.project) if clip.camera == track]
+        for path, start, length, has_audio, identifier in clips:
+            x, x2 = timeline_x(start), timeline_x(start+length)
+            if x2 <= x or not visible(x, y, x2, y+audio_h): continue
+            fill = '#36594e' if enabled else '#343c3b'
+            item = canvas.create_rectangle(x, y+self._px(2), x2, y+audio_h-self._px(2),
+                                           fill=fill, outline='#5e8074' if enabled else '#465650', tags=('audio-track',))
+            if track == 0: self.timeline_audio_items.add(item)
+            elif identifier is not None and has_audio is not False:
+                self.timeline_camera_audio_items[item] = identifier
+            waveform = self._waveform_for(path) if has_audio is not False and not compact else None
+            wave_left, wave_right = max(x, view_left), min(x2, view_right)
+            wave_top, wave_bottom = y+self._px(17), y+audio_h-self._px(4)
+            if not compact and waveform is not None and waveform.state == 'ready' and wave_right > wave_left:
+                source_start = max(0., (wave_left-x)/pps)
+                source_end = min(length, (wave_right-x)/pps)
+                peaks = envelope_points(waveform, source_start, source_end,
+                                        max(1, int((wave_right-wave_left)/max(1,self._px(2)))))
+                center, amplitude = (wave_top+wave_bottom)/2, max(1., (wave_bottom-wave_top)/2)
+                if len(peaks):
+                    step = (wave_right-wave_left)/len(peaks)
+                    top = [(wave_left+i*step, center-float(value)*amplitude) for i,value in enumerate(peaks)]
+                    bottom = [(wave_left+i*step, center+float(value)*amplitude) for i,value in reversed(list(enumerate(peaks)))]
+                    points = [value for point in top+bottom for value in point]
+                    if len(points) >= 6:
+                        canvas.create_polygon(*points, fill='#9ed6bf' if enabled else '#6d8f7f', outline='', tags=('audio-waveform',))
+            if x2-x > self._px(65):
+                status = ''
+                if has_audio is False or (waveform is not None and waveform.state == 'no_audio'): status = ' · 无音频'
+                elif compact: pass
+                elif waveform is None: status = ' · 读取波形…' if waveform_key(path) else ' · 离线'
+                elif waveform.state != 'ready': status = ' · 波形不可用'
+                title = Path(path).name+status
+                title = self._timeline_fit_label(label_font, title, x2-x-self._px(10))
+                item = canvas.create_text(x+self._px(5), y+(audio_h/2 if compact else self._px(9)), text=title,
+                    fill='#d1e5db' if enabled else '#a5b0ac', anchor='w', font=label_font, tags=('audio-track',))
                 if track == 0: self.timeline_audio_items.add(item)
-                waveform = self._waveform_for(path) if has_audio is not False else None
-                wave_left, wave_right = max(x, view_left), min(x2, view_right)
-                wave_top, wave_bottom = y+self._px(17), y+audio_h-self._px(4)
-                if waveform is not None and waveform.state == 'ready' and wave_right > wave_left:
-                    source_start = max(0., (wave_left-x)/pps)
-                    source_end = min(length, (wave_right-x)/pps)
-                    peaks = envelope_points(waveform, source_start, source_end,
-                                            max(1, int((wave_right-wave_left)/max(1,self._px(2)))))
-                    center, amplitude = (wave_top+wave_bottom)/2, max(1., (wave_bottom-wave_top)/2)
-                    if len(peaks):
-                        step = (wave_right-wave_left)/len(peaks)
-                        top = [(wave_left+i*step, center-float(value)*amplitude) for i,value in enumerate(peaks)]
-                        bottom = [(wave_left+i*step, center+float(value)*amplitude) for i,value in reversed(list(enumerate(peaks)))]
-                        points = [value for point in top+bottom for value in point]
-                        if len(points) >= 6:
-                            canvas.create_polygon(*points, fill='#9ed6bf' if enabled else '#6d8f7f', outline='', tags=('audio-waveform',))
-                if x2-x > self._px(65):
-                    status = ''
-                    if has_audio is False or (waveform is not None and waveform.state == 'no_audio'): status = ' · 无音频'
-                    elif waveform is None: status = ' · 读取波形…' if waveform_key(path) else ' · 离线'
-                    elif waveform.state != 'ready': status = ' · 波形不可用'
-                    title = Path(path).name+status
-                    title = self._timeline_fit_label(label_font, title, x2-x-self._px(10))
-                    item = canvas.create_text(x+self._px(5), y+self._px(9), text=title,
-                        fill='#d1e5db' if enabled else '#a5b0ac', anchor='w', font=label_font, tags=('audio-track',))
-                    if track == 0: self.timeline_audio_items.add(item)
-            # Draw headers last, covering the part of negative-start audio beneath them.
-            canvas.create_rectangle(view_left, y, view_left+self._timeline_left, y+audio_h, fill='#242c2a', outline='')
-            canvas.create_text(view_left+self._px(5), y+audio_h/2, text=f'A{track}', fill='#8ab7a4', anchor='w', font=label_font)
-            left, right = view_left+self._px(28), view_left+self._timeline_left-self._px(3)
-            if right > left:
-                bounds = left, y+self._px(5), right, y+audio_h-self._px(5)
-                self._audio_track_buttons[track] = bounds
-                canvas.create_rectangle(*bounds, fill='#42715d' if enabled else '#3d4143',
-                                        outline='#77af93' if enabled else '#62686b', tags=('audio-mute-button',))
-                button_label = ('主音频 · ' if track == 0 else '') + ('出声' if enabled else '静音')
-                canvas.create_text((left+right)/2, y+audio_h/2, text=button_label,
-                                   fill='#e3f1e8' if enabled else '#b9bec1', font=label_font, tags=('audio-mute-button',))
+                elif identifier is not None and has_audio is not False:
+                    self.timeline_camera_audio_items[item] = identifier
+        # Draw headers last, covering the part of negative-start audio beneath them.
+        canvas.create_rectangle(view_left, y, view_left+self._timeline_left, y+audio_h, fill='#242c2a', outline='')
+        if track != 0:
+            bounds = view_left, y, view_left+self._px(20), y+audio_h
+            self._audio_fold_buttons[track] = bounds
+            self._draw_audio_fold_icon(view_left+self._px(10), y+audio_h/2, compact, 'audio-fold-button')
+        canvas.create_text(view_left+self._px(5 if track == 0 else 22), y+audio_h/2,
+                           text=f'A{track}', fill='#8ab7a4', anchor='w', font=label_font)
+        left, right = view_left+self._px(28 if track == 0 else 52), view_left+self._timeline_left-self._px(3)
+        if right > left:
+            bounds = left, y+self._px(5), right, y+audio_h-self._px(5)
+            self._audio_track_buttons[track] = bounds
+            canvas.create_rectangle(*bounds, fill='#42715d' if enabled else '#3d4143',
+                                    outline='#77af93' if enabled else '#62686b', tags=('audio-mute-button',))
+            button_label = ('主音频 · ' if track == 0 else '') + ('出声' if enabled else '静音')
+            canvas.create_text((left+right)/2, y+audio_h/2, text=button_label,
+                               fill='#e3f1e8' if enabled else '#b9bec1', font=label_font, tags=('audio-mute-button',))
 
     def _close_timeline_audio(self):
         if not hasattr(self, '_waveform_stop'): return

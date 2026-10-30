@@ -99,6 +99,9 @@ def apply_source_merge(project, plan, result):
             os.path.normcase(os.path.abspath(source.path)) for source in plan.sources}:
         raise ValueError('合并结果必须是新文件，不能替换源素材。')
     candidate=copy.deepcopy(project)
+    if not candidate.timeline_link_enabled:
+        from timeline_link import preserve_source_audio
+        preserve_source_audio(candidate, set(plan.source_ids))
     merged=replace(plan.sources[0],path=result.path,duration=result.duration,proxy_path='')
     selected=set(plan.source_ids)
     candidate.clips=[merged if clip.id==merged.id else clip for clip in candidate.clips

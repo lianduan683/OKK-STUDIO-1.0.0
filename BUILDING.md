@@ -1,4 +1,4 @@
-# 构建 OKK STUDIO 1.0.2
+# 构建 OKK STUDIO 1.0.4
 
 本次构建环境为 Windows x64、Python 3.12.10、PyInstaller 6.22.3、NumPy 2.5.4、tkinterdnd2 0.7.0、Inno Setup 7.1.1 x64。Python 依赖固定在 `source/requirements-build.txt`。
 

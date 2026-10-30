@@ -65,7 +65,10 @@ class TrackInsertionTests(unittest.TestCase):
 
     def test_empty_canvas_context_and_source_context_have_insert_commands(self):
         w = self.workspace
-        events = [SimpleNamespace(x=2, y=2, x_root=0, y_root=0), self.timeline_event('one')]
+        # The ruler now has its own marker menu. Use empty subtitle space.
+        top, bottom = w._timeline_subtitle_bounds
+        events = [SimpleNamespace(x=2, y=(top+bottom)/2-w.timeline.canvasy(0), x_root=0, y_root=0),
+                  self.timeline_event('one')]
         for event in events:
             event.x_root = event.y_root = 0
             with patch('tkinter.Menu.tk_popup'):

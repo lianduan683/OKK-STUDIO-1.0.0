@@ -146,7 +146,10 @@ class TimelineDropTests(unittest.TestCase):
         workspace.zoom = 4
         workspace.draw_timeline()
         workspace.timeline.xview_moveto(.4)
-        workspace.timeline.yview_moveto(1.)
+        # The bottom of the canvas contains linked audio, below video V20.
+        _, bottom = workspace._timeline_track_bounds[20]
+        content_height = float(workspace.timeline.cget('scrollregion').split()[3])
+        workspace.timeline.yview_moveto((bottom-workspace.timeline.winfo_height()+5)/content_height)
         self.root.update_idletasks()
         event = self.root_position(50., 20)
         self.assertEqual(workspace._timeline_drop_position(event.x_root, event.y_root), (50., 20))

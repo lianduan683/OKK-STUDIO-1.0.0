@@ -29,7 +29,7 @@ from transition_preview import transition_signature
 from gpu_live_player import GpuLivePlayerMixin
 from proxy_media import PreviewProxyResolver
 from video_stack_player import VideoStackPlayerMixin
-from timeline_audio import audio_track_enabled
+from timeline_audio import audio_track_enabled, source_audio_clips
 
 
 def _get(obj: Any, name: str, default: Any = None) -> Any:
@@ -839,14 +839,14 @@ class MulticamPlayer(VideoStackPlayerMixin, GpuLivePlayerMixin):
         if not audio_track_enabled(self._project, camera):
             return None
         clip_at = _get(self._project, 'clip_at')
-        if callable(clip_at):
+        if callable(clip_at) and not _get(self._project, 'audio_overrides', {}):
             clip = clip_at(camera, position)
         else:
-            candidates = [clip for clip in _get(self._project, 'clips', ())
+            candidates = [clip for clip in source_audio_clips(self._project)
                           if _get(clip, 'camera') == camera
                           and _number(_get(clip, 'start')) <= position
                           < _number(_get(clip, 'start')) + _number(_get(clip, 'duration'))]
-            clip = max(candidates, key=lambda item: _number(_get(item, 'start')), default=None)
+            clip = max(candidates, key=lambda item: (_number(_get(item, 'start')), _get(item, 'id', '')), default=None)
         if clip is None or _get(clip, 'has_audio', None) is False:
             return None
         path = str(_get(clip, 'path', ''))
@@ -859,7 +859,7 @@ class MulticamPlayer(VideoStackPlayerMixin, GpuLivePlayerMixin):
         slots = getattr(self, '_track_audio_slots', None)
         if slots is None:
             self._track_audio_slots = slots = {}
-        cameras = {_get(clip, 'camera') for clip in _get(self._project, 'clips', ())}
+        cameras = {_get(clip, 'camera') for clip in source_audio_clips(self._project)}
         for camera in sorted(value for value in cameras if type(value) is int and value > 0):
             if audio_track_enabled(self._project, camera):
                 slots.setdefault(camera, _Slot(self.audio_window))
@@ -873,7 +873,7 @@ class MulticamPlayer(VideoStackPlayerMixin, GpuLivePlayerMixin):
 
     def _prune_track_audio_slots(self):
         """Retain failed owners for another configure/close retry, release others."""
-        cameras = {_get(clip, 'camera') for clip in _get(self._project, 'clips', ())}
+        cameras = {_get(clip, 'camera') for clip in source_audio_clips(self._project)}
         slots = getattr(self, '_track_audio_slots', {})
         for camera, slot in tuple(slots.items()):
             if camera in cameras:

@@ -57,7 +57,11 @@ from timeline_merge_ui import TimelineMergeMixin
 from preview_focus import PreviewFocusMixin
 from timeline_audio_ui import TimelineAudioUIMixin
 from timeline_markers_ui import TimelineMarkersMixin
-from shortcut_keys import canonical_key
+from keyboard_edit_ui import KeyboardEditMixin
+from camera_list_ui import CameraListUIMixin
+from timeline_controls import TimelineControlsMixin
+from timeline_link import preserve_source_audio, move_source_audio
+from timeline_audio import source_audio_clips
 
 BG = '#202124'
 PANEL = '#292b2e'
@@ -71,7 +75,7 @@ COLORS = ['#496e87', '#4b8289', '#667e9e', '#64867c', '#7c718d', '#7e8870', '#80
 VIDEO_TYPES = [('视频', '*.mp4 *.mov *.mkv *.mxf *.avi *.mts *.m2ts *.webm'), ('所有文件', '*.*')]
 
 
-class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImportMixin, PreviewFocusMixin, TimelineMergeMixin, TimelineInsertMixin, TimelineSelectionMixin, StackPreviewUIMixin, VideoStackUIMixin, WorkspaceDockingMixin, TransportControlsMixin, TimelineInteractionMixin, MulticamProxyMixin, LibraryApplyMixin, AutoColorWorkspaceMixin, EffectsWorkspaceMixin, tk.Frame):
+class MulticamWorkspace(TimelineControlsMixin, CameraListUIMixin, KeyboardEditMixin, TimelineAudioUIMixin, TimelineMarkersMixin, CameraImportMixin, PreviewFocusMixin, TimelineMergeMixin, TimelineInsertMixin, TimelineSelectionMixin, StackPreviewUIMixin, VideoStackUIMixin, WorkspaceDockingMixin, TransportControlsMixin, TimelineInteractionMixin, MulticamProxyMixin, LibraryApplyMixin, AutoColorWorkspaceMixin, EffectsWorkspaceMixin, tk.Frame):
     def __init__(self, parent, app):
         super().__init__(parent, bg=BG)
         self.app = app
@@ -111,6 +115,7 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
         self.subtitle_drag = None
         self._init_timeline_interaction()
         self._init_timeline_selection()
+        self._init_timeline_controls()
         self.timeline_subtitle_items = {}
         self.timeline_transition_items = {}
         self.timeline_audio_items = set()
@@ -175,6 +180,7 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
         self._init_timeline_audio()
         self._init_timeline_markers()
         self._build()
+        self._set_keyboard_tool('select')
         self._setup_camera_drop()
         self._init_workspace_docking()
         self._bind_timeline_interaction()
@@ -296,18 +302,20 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
         self.program_var.set(text)
 
     def _refresh_camera_labels(self):
+        self._refresh_proxy_badges(force=True)
         for camera,button in self.camera_buttons.items():
             label = self._camera_button_label(camera)
             if button.cget('text') != label: button.configure(text=label)
         for camera in self.project.cameras:
             parent = f'camera_{camera}'
-            if self.media_tree.exists(parent): self.media_tree.item(parent,text=self._label_camera(camera))
+            if self.media_tree.exists(parent):
+                pending = any(self._sync_clip_state(clip.id) == 'review' for clip in self.project.clips if clip.camera == camera)
+                self.media_tree.item(parent, text=self._camera_tree_label(camera), tags=('review',) if pending else ())
         for clip in self.project.clips:
             if self.media_tree.exists(clip.id):
-                text = f'{Path(clip.path).name} · {self._clip_camera_label(clip)}'
-                result = self.sync_results.get(clip.id)
-                if result is not None: text += ' · 已对齐' if result.confidence >= .2 else ' · 待检查'
-                self.media_tree.item(clip.id,text=text)
+                tag = self._sync_clip_state(clip.id)
+                self.media_tree.item(clip.id, text=self._camera_clip_tree_text(clip), tags=(tag,) if tag else ())
+        self._refresh_sync_review()
         camera=self._displayed_camera if self._displayed_camera in self.project.cameras else self.project.camera_at(self.current)
         self._set_program_label(camera)
         self._refresh_sync_reference_choices()
@@ -330,6 +338,8 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
         reference=self._sync_reference_choices.get(self.sync_reference_var.get())
         if reference!=self.project.alignment_reference_camera:
             self.project.alignment_reference_camera=reference;self._mark_dirty()
+            self.sync_results.clear()
+            self._refresh_camera_labels()
 
     def _schedule_camera_metadata(self):
         if not self.alive or (self._camera_metadata_worker and self._camera_metadata_worker.is_alive()): return
@@ -431,6 +441,7 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
         import_menu.configure(menu=menu)
         self._button(line, '追加', self.append_clips)
         self._button(line, '移除', self.remove_clip)
+        self._build_camera_list_tools(media_tab)
         tree_frame = tk.Frame(media_tab, bg=INPUT)
         tree_frame.pack(fill='both', expand=True, padx=self._px(6))
         self.media_tree = ttk.Treeview(tree_frame, columns=('start', 'duration'), show='tree headings',
@@ -447,6 +458,8 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
         self.media_tree.bind('<<TreeviewSelect>>', self._select_clip)
         self.media_tree.bind('<Double-1>', self._jump_clip)
         self.media_tree.bind('<Button-3>', self._camera_context)
+        self.media_tree.bind('<<TreeviewOpen>>', self._queue_camera_fold_update, add='+')
+        self.media_tree.bind('<<TreeviewClose>>', self._queue_camera_fold_update, add='+')
         reference_row=tk.Frame(media_tab,bg=PANEL)
         reference_row.pack(fill='x',padx=self._px(8),pady=self._px(3))
         tk.Label(reference_row,text='对齐参考',bg=PANEL,fg=MUTED,font=('Microsoft YaHei UI',9)).pack(side='left')
@@ -600,8 +613,10 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
         self._button(timeline_bar, '适配', self.fit_timeline)
         self._button(timeline_bar, '＋', lambda: self.change_zoom(2))
         self._button(timeline_bar, '标记 M', self.add_timeline_marker)
+        self._build_timeline_controls(timeline_bar)
         self._build_video_stack_control(timeline_bar)
-        tk.Label(timeline_bar, text='素材可上下换轨 · 中键拖动画布 · Ctrl滚轮缩放', bg=PANEL, fg=MUTED,
+        self._keyboard_hint_var = tk.StringVar(self)
+        tk.Label(timeline_bar, textvariable=self._keyboard_hint_var, bg=PANEL, fg=MUTED,
                  font=('Microsoft YaHei UI', 9)).pack(side='right', padx=self._px(10))
         self.timeline = tk.Canvas(timeline_section, bg='#222427', height=self._px(200), highlightthickness=0)
         self.timeline.grid(row=1, column=0, sticky='nsew')
@@ -852,7 +867,7 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
             self.clip_inspector.refresh()
             if not self._color_mode and (not self._inspector_visible or self.inspector_tabs.select() == str(self.clip_tab)):
                 self.show_inspector('edit')
-        self.status.set(f'已选片段 {format_time(first/fps)} — {format_time(stop/fps)} · C切开 · 数字键切换机位')
+        self.status.set(f'已选片段 {format_time(first/fps)} — {format_time(stop/fps)} · {self._split_shortcut_label()}切开 · 数字键切换机位')
 
     def get_selected_grade(self):
         selected = self.selected_program_range
@@ -1037,7 +1052,7 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
         if not self.player and self.project.clips and self.app.mpv_path:
             self.start_monitors()
         self._audition_grade_target()
-        self.status.set('调色页 · 默认只调所选Cut片段 · 自动识别机位 · 拖动色轮实时显示 · C切开 · ←/→逐帧')
+        self.status.set('调色页 · 默认只调所选Cut片段 · 自动识别机位 · 拖动色轮实时显示 · '+self._split_shortcut_label()+'切开 · ←/→逐帧')
 
     def exit_color_workspace(self):
         if not self._color_mode: return
@@ -1064,7 +1079,7 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
             candidate = copy.deepcopy(self.project)
             changed = split_at(candidate, self.current)
             if not changed:
-                self.status.set('播放头已在片段边界；请逐帧移动后再按 C。'); return False
+                self.status.set('播放头已在片段边界；请逐帧移动后再按 '+self._split_shortcut_label()+'。'); return False
             candidate.validate()
         except Exception as exc:
             messagebox.showerror('切开片段', str(exc), parent=self); return False
@@ -1228,6 +1243,7 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
         return next((clip for clip in self.project.clips if selection and clip.id == selection[0]), None)
 
     def _refresh(self, reconfigure=True):
+        self._refresh_timeline_controls()
         self._refresh_video_stack_ui()
         self._cancel_grade_drafts(publishing=reconfigure)
         if self.project.color_reference_camera not in self.project.cameras:self.project.color_reference_camera=None
@@ -1275,19 +1291,20 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
             span = self._program_span_at(self.current)
             if span: self.selected_program_range = (span.start, span.end)
         selection = self.media_tree.selection()
+        expanded = {parent: self.media_tree.item(parent, 'open') for parent in self.media_tree.get_children()}
         self.media_tree.delete(*self.media_tree.get_children())
         for camera in self.project.cameras:
             parent = f'camera_{camera}'
-            self.media_tree.insert('', 'end', iid=parent, text=self._label_camera(camera), open=True)
+            self.media_tree.insert('', 'end', iid=parent, text=self._camera_tree_label(camera),
+                open=expanded.get(parent, not getattr(self, '_media_tree_collapsed', False)))
             for clip in sorted((c for c in self.project.clips if c.camera == camera), key=lambda c: c.start):
-                result = self.sync_results.get(clip.id)
-                tag = 'synced' if result is not None and result.confidence >= 0.2 else 'review' if result is not None else ''
-                suffix = ' · 已对齐' if tag == 'synced' else ' · 待检查' if tag == 'review' else ''
-                self.media_tree.insert(parent, 'end', iid=clip.id, text=Path(clip.path).name+' · '+self._clip_camera_label(clip) + suffix,
+                tag = self._sync_clip_state(clip.id)
+                self.media_tree.insert(parent, 'end', iid=clip.id, text=self._camera_clip_tree_text(clip),
                                        tags=(tag,) if tag else (),
                                        values=(format_signed_time(clip.start), format_time(clip.duration)))
         selection = tuple(identifier for identifier in selection if self.media_tree.exists(identifier))
         if selection: self.media_tree.selection_set(selection)
+        self._update_camera_fold_button()
         self.cut_tree.delete(*self.cut_tree.get_children())
         self.cut_camera_combo.configure(values=tuple(str(camera) for camera in self.project.cameras))
         for i, cut in enumerate(self.project.cuts):
@@ -1342,6 +1359,7 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
             self._workspace_layout_changed()
 
     def _build_camera_frames(self):
+        self.camera_proxy_badges = vars(self).get('camera_proxy_badges', {})
         all_cameras=tuple(self.project.cameras)
         rows, cols = self.camera_rows, self.camera_columns
         capacity = rows*cols
@@ -1372,6 +1390,7 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
                 self._retired_camera_frames[self.camera_surfaces[camera].winfo_id()]=frame
             else:frame.destroy()
             del self.camera_frames[camera]; del self.camera_surfaces[camera]; del self.camera_buttons[camera]
+            self.camera_proxy_badges.pop(camera, None)
         if can_release:
             self._release_camera_frames(list(self._retired_camera_frames))
         if not cameras:
@@ -1395,12 +1414,19 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
             surface.pack(fill='both', expand=True)
             surface.bind('<Button-1>', lambda event, c=camera: self.switch(c))
             surface.bind('<Button-1>', self._focus_preview, add='+')
-            button = tk.Button(frame, text=self._camera_button_label(camera), bg=PANEL, fg=INK,
+            footer = tk.Frame(frame, bg=PANEL)
+            footer.pack(fill='x')
+            button = tk.Button(footer, text=self._camera_button_label(camera), bg=PANEL, fg=INK,
                                activebackground='#3a4047', activeforeground=INK,
                                relief='flat', borderwidth=0, highlightthickness=0,
                                font=('Microsoft YaHei UI', 9), pady=3,
                                command=lambda c=camera: self.switch(c))
-            button.pack(fill='x')
+            badge = tk.Label(footer, text='', bg=PANEL, fg=GREEN,
+                             font=('Microsoft YaHei UI', 8), padx=self._px(5), cursor='hand2')
+            badge.pack(side='right')
+            badge.bind('<Button-1>', lambda event, c=camera: self.switch(c))
+            self.camera_proxy_badges[camera] = badge
+            button.pack(side='left', fill='x', expand=True)
             self.camera_frames[camera] = frame
             self.camera_surfaces[camera] = surface
             self.camera_buttons[camera] = button
@@ -1497,6 +1523,11 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
     def _move_clip_start(self,clip,value):
         if not self._can_move_timeline_clip(clip, value): return False
         delta=value-clip.start
+        if self.project.timeline_link_enabled:
+            if clip.id in self.project.audio_overrides:
+                move_source_audio(self.project, {clip.id}, delta)
+        else:
+            preserve_source_audio(self.project, {clip.id})
         for item in self.project.stabilizations:
             if item.source_id==clip.id:
                 item.start=max(0.,item.start+delta);item.end+=delta
@@ -1546,7 +1577,7 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
         ffmpeg = self.app.caps.ffmpeg_path
         clip = self._selected_clip()
         # A camera's split recordings already occupy one track. Selecting its
-        # header or any part synchronizes that complete track as a unit.
+        # header or any part analyses the track, validating each part's timing.
         selection = self.media_tree.selection()
         selected_camera = clip.camera if clip else (int(selection[0].split('_')[1])
             if selection and selection[0].startswith('camera_') else None)
@@ -1588,10 +1619,11 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
         self.app._set_working(True)
         self.app._begin_shared_progress('同步并对齐 0.0%')
         self._alignment_reference_label='主音频' if reference is None else self._label_camera(reference)
-        self.status.set('正在按机位轨道匹配'+self._alignment_reference_label+'；连续分段保持间距，无法确认的轨道保留原位。底部可取消。')
+        self.status.set('正在多窗口匹配'+self._alignment_reference_label+'；逐段核对真实起点，未确认的片段保留原位。底部可取消。')
         sync_clips = copy.deepcopy(clips)
         sync_fps = self.project.fps
         ids = [c.id for c in clips]
+        self._alignment_attempt_ids = tuple(ids)
         master = self.project.master_audio
         mode = 'full' if self.sync_mode_var.get().startswith('完整') else 'fast'
         began = time.monotonic()
@@ -1639,8 +1671,8 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
                 placed.append(clip)
             else:
                 review.append(clip)
-            details.append(f'{Path(clip.path).name}: {result.confidence:.3f}, '
-                           f'{format_signed_time(-result.offset_seconds)} · {result.engine}')
+            position = format_signed_time(-result.offset_seconds) if math.isfinite(result.offset_seconds) else '无效位置'
+            details.append(f'{Path(clip.path).name}: {result.confidence:.3f}, {position} · {result.engine}')
         self.app._log('多机位同步并对齐：\n'+'\n'.join(details))
         self._refresh()
         self.fit_timeline()
@@ -1657,6 +1689,8 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
         if review: message += f' · {len(review)} 段待检查（保留原位置）'
         self.status.set(message)
         self.app.progress_text_var.set(message)
+        self._alignment_attempt_ids = ()
+        if review: self._show_sync_review()
 
     def _select_cut(self, event=None):
         selection = self.cut_tree.selection()
@@ -1718,7 +1752,7 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
         self._highlight(camera)
 
     def start_monitors(self):
-        if not self._available() or not self.project.clips: return
+        if not self._available() or not (self.project.clips or source_audio_clips(self.project) or self.project.master_audio): return
         if not self._can_start_transport_monitors(): return
         if not self.app.mpv_path:
             messagebox.showerror('监看', '请将 mpv.exe 放入 bin 文件夹。', parent=self); return
@@ -1876,6 +1910,7 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
         except ValueError as exc: messagebox.showerror('时间码', str(exc), parent=self)
 
     def _show_time(self):
+        self._refresh_proxy_badges()
         self.time_var.set(f'{format_time(self.current)} / {format_time(self.project.duration)}')
         for camera,button in self.camera_buttons.items():
             label=self._camera_button_label(camera)
@@ -1898,29 +1933,17 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
     def _key(self, event):
         if not self.winfo_ismapped(): return
         if self._transport_input_widget(event.widget): return
-        key = canonical_key(event)
-        if event.state & 0x4:
-            if key == 'z': self.undo(); return 'break'
-            if key == 'y': self.redo(); return 'break'
-            if key == 's': self.save(); return 'break'
-            if key == 'a': return self._select_all_timeline(event)
-            return
-        if key in '123456789' and key:
-            index=int(key)-1
-            camera=self._visible_camera_ids[index] if index<len(self._visible_camera_ids) else None
-            if camera is not None:self.switch(camera)
-            return 'break'
-        if key == 'c': self.split_program_at_playhead(); return 'break'
-        if key == 'm': return self._marker_key_press()
-        if key in {'Delete', 'BackSpace'}: return self._delete_timeline_selection(event)
-        if key == 'Escape':
+        action = self._keyboard_action(event)
+        if action == 'escape':
             self._stop_transport_hold()
+            if self._end_timeline_divider_drag(cancel=True): return 'break'
             if self._finish_selection_gesture(cancel=True): return 'break'
             if self._timeline_scrubbing:
                 self._timeline_scrubbing = False
                 self._timeline_drag_geometry = None
             if self._end_video_stack_drag(cancel=True): return 'break'
             if self._end_program_boundary_drag(cancel=True): return 'break'
+            self._set_keyboard_tool('select')
             self.selected_program_range = None
             self._set_timeline_selection(set(), redraw=False)
             self.creative_panel_refresh()
@@ -1928,9 +1951,7 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
             if vars(self).get('color_workspace'): self.color_workspace.refresh()
             self.status.set('已取消片段选中；数字键恢复播放头机位操作。')
             return 'break'
-        if key == 'space': return self._transport_space_press()
-        if key == 'Left': return self._transport_key_press(-1)
-        if key == 'Right': return self._transport_key_press(1)
+        return self._dispatch_keyboard_action(action, event)
 
     def undo(self):
         if self._finish_selection_gesture(cancel=True): return
@@ -2158,7 +2179,7 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
         if (self._timeline_drag_geometry is not None
                 or any(getattr(self, name, None) for name in
                        ('timeline_drag', 'subtitle_drag', '_program_boundary_drag',
-                        '_video_stack_drag', '_selection_gesture', '_timeline_scrubbing'))):
+                        '_video_stack_drag', '_selection_gesture', '_timeline_scrubbing', '_timeline_divider_drag'))):
             return
         canvas = self.timeline
         pointer = canvas.winfo_width()*.3 if anchor_x is None else float(anchor_x)
@@ -2180,7 +2201,8 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
         self._queue_timeline_redraw()
 
     def fit_timeline(self):
-        if self._timeline_drag_geometry is not None or getattr(self, '_selection_gesture', None):
+        if (self._timeline_drag_geometry is not None or getattr(self, '_selection_gesture', None)
+                or getattr(self, '_timeline_divider_drag', None)):
             return
         self.zoom = 1; self.timeline.xview_moveto(0); self.draw_timeline()
 
@@ -2262,16 +2284,13 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
         program_h = max(self._px(31), title_font.metrics('linespace') + self._px(9))
         self._timeline_program_bounds = (ruler_h, ruler_h + program_h)
         audio_h = max(self._px(40), label_font.metrics('linespace') + self._px(20))
-        audio_total_h = len(self._timeline_audio_tracks(cameras)) * audio_h
         subtitle_h = max(self._px(30), label_font.metrics('linespace') + self._px(8))
         subtitle_y = ruler_h + program_h + self._px(3)
         self._timeline_subtitle_bounds = (subtitle_y, subtitle_y+subtitle_h)
         track_top = subtitle_y + subtitle_h + self._px(6)
         minimum_row = label_font.metrics('linespace') + self._px(6)
-        available_row = (height - track_top - audio_total_h - self._px(8)) / max(1, len(cameras))
-        row_h = max(minimum_row, min(self._px(29), available_row))
-        audio_y = max(track_top + len(cameras) * row_h + self._px(3), height - audio_total_h - self._px(4))
-        content_height = max(height, audio_y + audio_total_h + self._px(4))
+        row_h, audio_y, content_height = self._timeline_track_layout(
+            cameras, height, track_top, minimum_row, audio_h)
         canvas.configure(scrollregion=(0, 0, width, content_height))
         if content_height > canvas.winfo_height() + self._px(2):
             self.timeline_vscroll.grid()
@@ -2305,6 +2324,7 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
             cached_spans = self._timeline_span_cache = (span_key, program_spans(displayed_project))
         displayed_spans = cached_spans[1]
         self._timeline_boundary_times = [span.start for span in displayed_spans if span.start > 0]
+        self._update_timeline_snap_points()
         camera_clips = {camera: [] for camera in cameras}
         for clip in self.project.clips:
             camera_clips[clip.camera].append(clip)
@@ -2420,6 +2440,7 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
             canvas.create_line(x, track_top, x, audio_y-self._px(2), fill='#7193aa',
                                dash=(self._px(3), self._px(2)), tags=('edit-boundary',))
         self._draw_timeline_audio(cameras, audio_y, audio_h, width, label_font, timeline_x, visible)
+        self._draw_timeline_divider(width)
         if not cameras:
             canvas.create_text(left_edge + self._px(15), ruler_h + program_h / 2, text='导入机位后开始编辑',
                                fill=MUTED, anchor='w', font=title_font)
@@ -2458,8 +2479,10 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
 
     def timeline_press(self, event):
         if not self._available(): return
+        if self._begin_timeline_divider_drag(event): return 'break'
         if self._timeline_marker_press(event): return 'break'
         if self._timeline_audio_press(event): return 'break'
+        if self._keyboard_blade_press(event): return 'break'
         if self._begin_video_stack_drag(event): return
         if self._selection_press(event): return
         self._stop_transport_hold()
@@ -2475,7 +2498,7 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
             self._timeline_scrubbing = True
             self._begin_preview_epoch()
             self._capture_timeline_geometry()
-            self.seek(self._timeline_origin()+(x-self._timeline_left)/self._timeline_scale())
+            self.seek(self._timeline_pointer_time(event.x))
             return
         self.pause()
         ids = self.timeline.find_overlapping(x-self._px(2), self.timeline.canvasy(event.y)-self._px(2), x+self._px(2), self.timeline.canvasy(event.y)+self._px(2))
@@ -2513,7 +2536,7 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
         clip_id = next((self.timeline_clip_items[i] for i in reversed(ids) if i in self.timeline_clip_items), None)
         selected_range = next((self.timeline_program_items[i] for i in reversed(ids)
                                if i in self.timeline_program_items), None)
-        clicked = self._timeline_origin()+(x-self._timeline_left)/self._timeline_scale()
+        clicked = self._timeline_pointer_time(event.x)
         if selected_range:
             self.select_program_range(*selected_range, seek=False)
         elif clip_id:
@@ -2590,10 +2613,11 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
         finally: menu.grab_release()
 
     def timeline_motion(self, event):
+        if self._move_timeline_divider_drag(event): return 'break'
         if self._selection_motion(event): return
         if self._move_video_stack_drag(event): return
         if self._timeline_scrubbing:
-            self.seek(self._timeline_origin()+(self.timeline.canvasx(event.x)-self._timeline_left)/self._timeline_scale())
+            self.seek(self._timeline_pointer_time(event.x))
             return
         if self._move_program_boundary_drag(event): return
         if self.subtitle_drag:
@@ -2621,6 +2645,7 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
         self._queue_timeline_redraw()
 
     def timeline_release(self, event):
+        if self._end_timeline_divider_drag(): return 'break'
         if self._finish_selection_gesture(): return
         if self._end_video_stack_drag(): return
         if self._timeline_scrubbing:
@@ -2768,6 +2793,7 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
                     self.busy = False; self._remember()
                     self.project.master_audio, self.project.master_duration = payload
                     self.project.alignment_reference_camera = None
+                    self.sync_results.clear()
                     self._refresh(); self.status.set('已选择连续主音频。可自动同步全部或填写片段在主录音中的起点。')
                 elif kind == 'aligned':
                     pairs, elapsed = payload
@@ -2782,7 +2808,8 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
                     self.app._set_working(False)
                     message = '已取消同步，保留原时间线' if kind == 'align_cancelled' else str(payload)
                     self.status.set(message); self.app.progress_text_var.set(message)
-                    if kind == 'align_error': messagebox.showerror('同步并对齐', message, parent=self)
+                    if kind == 'align_error' and not self._record_alignment_failure(message):
+                        messagebox.showerror('同步并对齐', message, parent=self)
                 elif kind == 'error':
                     self.busy = False; self.status.set(str(payload)); messagebox.showerror('多机位', str(payload), parent=self)
                 elif kind == 'preview_progress':
@@ -2846,10 +2873,12 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
             '   监看上方可分别选择1–6行、1–6列，最多6×6同屏36机位；超过当前网格容量时左右箭头翻页。\n'
             '   数字键1–9选择本页前九格，第10–36格请点击机位按钮；网格设置随工作区布局保存。\n'
             '2. “对齐参考”可选主音频或单个机位；参考机位固定，其他机位按其波形对齐。\n'
+            '   无法自动确认的片段会列入“未对齐片段”列表，显示机位、文件名和原因；可定位到所选片段检查。\n'
+            '   机位列表上方“全部收起 / 全部展开”可一键折叠全部机位；刷新后保留展开状态。\n'
             '   也可手填片段起点、拖动时间线或逐帧微调；同步不会替换主音频。\n'
             '3. 点“监看”，勾选“记录”，播放时按 1–9 或点击机位按钮记录切点。\n'
             '4. 空格播放/暂停；←/→按下立即暂停并移动一帧，长按连续倒放/正放，松开保持暂停。\n'
-            '   拖动时间线标尺可连续定位；定位播放头后按 C 切开，切点会保留。\n'
+            f'   拖动时间线标尺可连续定位；定位播放头后按 {self._split_shortcut_label()} 切开，切点会保留。\n'
             '   鼠标移到节目轨两段之间，出现左右箭头后按住拖动可移动切点；Esc 取消，Ctrl+Z 撤销。\n'
             '   切点按帧对齐，两侧至少保留一帧；已有转场会随切点移动并限制可移动范围。\n'
             '   相邻片段已应用库叠加特效时，请先移除特效，调整切点后重新应用。\n'
@@ -2864,8 +2893,9 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
             '   人物预设会纠正偏黄；“色彩参考”可选择其他机位，让白衣与肤色向它靠近。\n'
             '   防抖完成后，右上“防抖对比”可同屏查看原片完整视野与防抖裁切后的画面。\n'
             '   只有显式切换到“整机位”或“全片”目标时才会调其他片段。\n'
-            '   拖动选区两端可修改范围；该页同样支持 C 和逐帧。点“返回剪辑”恢复时间线。\n'
-            '8. Ctrl+Z 撤销、Ctrl+Y 重做。保存工程后，点“导出…”设置并导出。\n\n'
+            f'   拖动选区两端可修改范围；该页同样支持 {self._split_shortcut_label()} 和逐帧。点“返回剪辑”恢复时间线。\n'
+            f'8. Ctrl+Z 撤销、{self._keyboard_shortcut_label("redo")} 重做。保存工程后，点“导出…”设置并导出。\n\n'
+            '“布局 → 键位选择”可选择当前、DaVinci Resolve 或 Premiere Pro；子菜单中的“键位表”可查看本软件支持的映射。\n'
             '媒体库素材可直接拖入时间线；中键可上下左右拖动画布，Shift+滚轮横移，Ctrl+滚轮缩放。\n'
             '时间线右键可插入空视频轨道或在此时间插入素材；上方轨道叠在画面顶层。\n'
             '素材支持上下换轨；Ctrl+左键多选，右键合并会按先后首尾接齐，保留第一段起点。\n'
@@ -2875,8 +2905,11 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
             '拖左侧V轨道标签可上下调序，右键轨道可置顶、下移或隐藏；关闭叠加仍保留原节目切点。\n'
             '叠加模式中，点击监看机位或按数字键只选择该图层的调色目标，不改变合成顺序或写入切点。\n'
             'A0 为连续主音频，A1/A2 等对应同号视频轨原声；点击轨头“出声/静音”选择监听和导出音轨。\n'
+            '点击“机位原声”整体展开/收起非主音频；轨头三角可逐轨折叠；上下拖动音视频之间的分隔条调整轨道大小。\n'
             '音频波形在后台读取；M 在播放头处添加标记，右键标记可删除，标记与音轨状态随工程保存。\n'
             '中文输入法下可直接使用剪辑快捷键；文字输入框保留正常中文输入。所选机位停机处输出黑场。\n'
+            '“吸附”使时间线光标吸附到附近素材边缘和节目切点；“链接”控制视频与机位原声是否一起选择、移动和删除。\n'
+            '机位编号旁显示已代理、部分代理、未代理或代理丢失；关闭代理预览仍保留代理标志。\n'
             '8K 多路监看可点“一键1080p代理”，生成期间仍可剪辑；完成后自动挂载，导出始终读取原片。\n'
             '“释放缓存”回收播放器解码缓存与显存，再加载当前帧并保持暂停，不删除素材或代理。\n'
             '工作面板可拖动标签/标题浮出窗口，拖到其他面板中心合并标签，四边分割停靠。\n'
@@ -2897,6 +2930,7 @@ class MulticamWorkspace(TimelineAudioUIMixin, TimelineMarkersMixin, CameraImport
             self._player_poll_after = None
         self._end_video_stack_drag(cancel=True)
         self._close_preview_focus()
+        self._close_camera_list_ui()
         self._close_camera_drop()
         self._close_workspace_docking()
         self._close_transport_controls()

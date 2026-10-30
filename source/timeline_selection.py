@@ -10,6 +10,8 @@ from timeline_track_move import track_move_targets, validate_track_move, apply_t
 from editor_core import format_signed_time, format_time
 from timeline_edits import (delete_source_clips, move_source_clips, source_move_delta,
                             remove_program_boundaries, program_boundaries_for_ranges, finalize_source_edit)
+from timeline_audio import source_audio_clips
+from timeline_link import edit_keys, preserve_source_audio, move_source_audio, delete_source_audio
 
 
 class TimelineSelectionMixin:
@@ -54,13 +56,19 @@ class TimelineSelectionMixin:
                            ('timeline_transition_items', 'transition'), ('timeline_program_items', 'program')):
             result.update((item, (kind, identifier)) for item, identifier in getattr(self, name, {}).items())
         result.update((item, ('audio', 'master')) for item in getattr(self, 'timeline_audio_items', ()))
+        result.update((item, ('camera_audio', identifier))
+                      for item, identifier in getattr(self, 'timeline_camera_audio_items', {}).items())
         return result
 
     def _timeline_hit_key(self, event):
         x, y = self.timeline.canvasx(event.x), self.timeline.canvasy(event.y)
         mapping = self._timeline_item_keys()
-        return next((mapping[item] for item in reversed(self.timeline.find_overlapping(x, y, x, y))
+        key = next((mapping[item] for item in reversed(self.timeline.find_overlapping(x, y, x, y))
                      if item in mapping), None)
+        if (key and key[0] == 'camera_audio' and self.project.timeline_link_enabled
+                and any(clip.id == key[1] for clip in self.project.clips)):
+            return ('clip', key[1])
+        return key
 
     def _marquee_keys(self, left, top, right, bottom):
         # Geometry comes from the model, so auto-scrolling a selection keeps
@@ -97,6 +105,13 @@ class TimelineSelectionMixin:
                                            tx(end), subtitle[1]-self._px(2)):
                     keys.add(('subtitle', cue.id))
         audio = getattr(self, '_timeline_audio_bounds', None)
+        videos = {clip.id for clip in self.project.clips}
+        for clip in source_audio_clips(self.project):
+            bounds = getattr(self, '_timeline_audio_track_bounds', {}).get(clip.camera)
+            if bounds and clip.has_audio is not False and touches(
+                    tx(clip.start), bounds[0]+self._px(2), tx(clip.end), bounds[1]-self._px(2)):
+                linked = self.project.timeline_link_enabled and clip.id in videos
+                keys.add(('clip' if linked else 'camera_audio', clip.id))
         if audio and self.project.master_audio:
             end = min(self._timeline_view_duration(), self.project.master_duration or self._timeline_view_duration())
             if end > 0 and touches(tx(0.), audio[0]+self._px(3), tx(end), audio[1]-self._px(3)):
@@ -105,6 +120,10 @@ class TimelineSelectionMixin:
 
     def _set_timeline_selection(self, keys, *, redraw=True):
         keys = set(keys)
+        if self.project.timeline_link_enabled:
+            videos = {clip.id for clip in self.project.clips}
+            keys = {('clip', identifier) if kind == 'camera_audio' and identifier in videos else (kind, identifier)
+                    for kind, identifier in keys}
         changed = keys != self._timeline_selection or self._selection_project is not self.project
         self._selection_project = self.project
         self._timeline_selection = keys
@@ -121,8 +140,9 @@ class TimelineSelectionMixin:
         if self._selection_project is not self.project and self._selection_gesture is None:
             self._timeline_selection.clear()
             self._selection_project = self.project
+        selected = edit_keys(self.project, self._timeline_selection)
         for item, key in self._timeline_item_keys().items():
-            if key not in self._timeline_selection or canvas.type(item) != 'rectangle': continue
+            if key not in selected or canvas.type(item) != 'rectangle': continue
             bounds = canvas.coords(item)
             canvas.create_rectangle(*bounds, outline='#7acbff', width=max(2, self._px(2)),
                                     tags=('timeline-selected',))
@@ -139,6 +159,10 @@ class TimelineSelectionMixin:
         # The programme overview duplicates source clips. Select editable media
         # and subtitles, keeping the continuous master audio explicitly chosen.
         keys = {('clip', clip.id) for clip in self.project.clips}
+        videos = {clip.id for clip in self.project.clips}
+        keys.update(('camera_audio', clip.id) for clip in source_audio_clips(self.project)
+                    if clip.has_audio is not False and
+                    (not self.project.timeline_link_enabled or clip.id not in videos))
         keys.update(('subtitle', cue.id) for cue in self.project.subtitles.cues)
         self._set_timeline_selection(keys)
         self.status.set(f'已选中 {len(keys)} 个素材/字幕；可成组拖动或 Delete 删除。')
@@ -169,14 +193,19 @@ class TimelineSelectionMixin:
                 self.status.set('已选中连续主音轨；右键或 Delete 取消绑定，Ctrl+Z 恢复。')
                 return True
             if key[0] in {'program', 'transition'}: return True
-            clips = {clip.id: clip.start for clip in self.project.clips if ('clip', clip.id) in selected}
+            effective = edit_keys(self.project, selected)
+            clips = {clip.id: clip.start for clip in self.project.clips if ('clip', clip.id) in effective}
+            audio = {clip.id: clip.start for clip in source_audio_clips(self.project)
+                     if ('camera_audio', clip.id) in effective and clip.id not in clips}
             cues = {cue.id: (cue.start, cue.end) for cue in self.project.subtitles.cues
                     if ('subtitle', cue.id) in selected}
             self._capture_timeline_geometry()
-            self.seek(self._timeline_origin()+(self.timeline.canvasx(event.x)-self._timeline_left)/self._timeline_scale())
+            self.seek(self._timeline_pointer_time(event.x))
             self._selection_gesture = dict(kind='move', project=self.project,
                 x=self.timeline.canvasx(event.x), y=y, moved=False, changed=False, delta=0.,
-                clips=clips, cues=cues,
+                clips=clips, cues=cues, audio=audio,
+                audio_anchor=any(top <= y <= bottom for top, bottom in
+                                 getattr(self, '_timeline_audio_track_bounds', {}).values()),
                 clip_cameras={clip.id: clip.camera for clip in self.project.clips if clip.id in clips},
                 anchor_camera=next((clip.camera for clip in self.project.clips if key == ('clip', clip.id)), None),
                 track_order=list(self._timeline_camera_order()), track_bounds=dict(self._timeline_track_bounds),
@@ -220,7 +249,7 @@ class TimelineSelectionMixin:
             if drag['cues']:
                 minimum = math.ceil(-min(start for start, _ in drag['cues'].values())*fps-1e-8)/fps
                 delta = max(delta, minimum)
-            targets = track_move_targets(self.project, drag, y)
+            targets = drag['clip_cameras'] if drag['audio_anchor'] else track_move_targets(self.project, drag, y)
             current_cameras = {clip.id: clip.camera for clip in self.project.clips if clip.id in drag['clips']}
             if abs(delta-drag['delta']) < .25/fps and current_cameras == targets:
                 self._schedule_selection_pan()
@@ -233,7 +262,12 @@ class TimelineSelectionMixin:
                 self.status.set(str(error)); return True
             if not drag['changed']:
                 self._remember_timeline_change(); drag['baseline'] = self.undo_stack[-1]; drag['changed'] = True
+                preserve_source_audio(self.project, drag['audio'])
+                # Freeze picture-only audio even for a purely vertical move.
+                if not self.project.timeline_link_enabled:
+                    preserve_source_audio(self.project, drag['clips'])
             if drag['clips']: move_source_clips(self.project, drag['clips'], increment, target_cameras=targets)
+            if drag['audio']: move_source_audio(self.project, drag['audio'], increment)
             apply_track_move(self.project, drag, targets)
             drag['track_changed'] = targets != drag['clip_cameras']
             for cue in self.project.subtitles.cues:
@@ -305,7 +339,7 @@ class TimelineSelectionMixin:
     def _delete_timeline_selection(self, _event=None):
         if not self._available(): return 'break'
         if self._selection_gesture: self._finish_selection_gesture(cancel=True)
-        keys = set(self._timeline_selection)
+        keys = edit_keys(self.project, self._timeline_selection)
         if not keys: return 'break'
         candidate = copy.deepcopy(self.project)
         self._capture_timeline_range(candidate)
@@ -314,7 +348,10 @@ class TimelineSelectionMixin:
             ranges = [key[1] for key in keys if key[0] == 'program']
             points = program_boundaries_for_ranges(self.project, ranges)
             if points: count += remove_program_boundaries(candidate, points)
-            count += delete_source_clips(candidate, [key[1] for key in keys if key[0] == 'clip'])
+            video_ids = {key[1] for key in keys if key[0] == 'clip'}
+            count += delete_source_audio(candidate, {key[1] for key in keys if key[0] == 'camera_audio'} -
+                                         (video_ids if candidate.timeline_link_enabled else set()))
+            count += delete_source_clips(candidate, video_ids)
             ids = {key[1] for key in keys if key[0] == 'subtitle'}
             before = len(candidate.subtitles.cues)
             candidate.subtitles.cues = [cue for cue in candidate.subtitles.cues if cue.id not in ids]

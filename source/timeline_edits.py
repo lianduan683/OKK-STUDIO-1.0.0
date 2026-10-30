@@ -12,6 +12,7 @@ import math
 
 from video_stack import prune_stack
 from program_edits import ClipGrade, grade_at, program_spans
+from timeline_link import preserve_source_audio, delete_source_audio, move_source_audio
 
 
 def _frame(value, fps):
@@ -92,7 +93,14 @@ def delete_source_clips(project, clip_ids):
     if not clips:
         return 0
     candidate = deepcopy(project)
+    if candidate.timeline_link_enabled:
+        delete_source_audio(candidate, identifiers)
+    else:
+        preserve_source_audio(candidate, identifiers)
     candidate.clips = [clip for clip in candidate.clips if clip.id not in identifiers]
+    if candidate.timeline_link_enabled:
+        for identifier in identifiers:
+            candidate.audio_overrides.pop(identifier, None)
     candidate.stabilizations = [item for item in candidate.stabilizations
                                 if item.source_id not in identifiers]
     candidate.library_overlays = [item for item in candidate.library_overlays
@@ -148,6 +156,11 @@ def move_source_clips(project, clip_ids, delta, *, target_cameras=None):
     value = source_move_delta(project, identifiers, delta, target_cameras=target_cameras)
     if not value:
         return 0.
+    if project.timeline_link_enabled:
+        # Implicit pairs follow picture automatically; only detached audio needs moving.
+        move_source_audio(project, identifiers & project.audio_overrides.keys(), value, target_cameras)
+    else:
+        preserve_source_audio(project, identifiers)
     for clip in project.clips:
         if clip.id in identifiers:
             clip.start += value

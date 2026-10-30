@@ -1,10 +1,9 @@
 """Bounded-memory audio synchronization with cached energy and short probes.
 
-PCM is consumed in small chunks and discarded immediately. Only 50 Hz RMS
-energy (about 0.7 MiB/hour) is retained. Fast mode reads one 45-second window centered on each camera recording.
-The original normalized waveform FFT searches the complete master recording.
-Silent or weak windows try bounded adjacent and distributed samples; fast mode
-never reads the entire camera recording as an automatic fallback.
+PCM is consumed in small chunks and discarded immediately. Cached 50 Hz RMS
+energy is converted to band-limited log envelopes for field recordings. Separated windows
+must confirm one offset before a long recording is accepted. Fast mode reads
+at most seven 45-second windows and never silently decodes an entire camera.
 """
 from __future__ import annotations
 
@@ -28,7 +27,7 @@ from cache_paths import cache_dir as app_cache_dir
 
 # Energy-cache schema; waveform matching can reuse the existing RMS samples.
 ALGORITHM_VERSION = "rms-stereo-timeline-v3"
-MATCH_METHOD = "middle-waveform-bounded-rescue-v3"
+MATCH_METHOD = "multi-window-band-envelope-v4"
 PROBE_SECONDS = 45.0
 WAVEFORM_SCORE_THRESHOLD = 0.30
 CACHE_LIMIT_BYTES = 512 * 1024 * 1024
@@ -303,11 +302,23 @@ def _has_signal(energy, rate):
     return float(np.std(feature)) > 0.0002
 
 
-def _normalized_waveform(energy):
-    """The same log-RMS change waveform and normalization as editor_core."""
+def _smooth_envelope(values, count):
+    import numpy as np
+    count = max(1, int(count))
+    left = count // 2
+    padded = np.pad(values, (left, count-1-left), mode='edge')
+    summed = np.concatenate(([0.], np.cumsum(padded, dtype=np.float64)))
+    return (summed[count:]-summed[:-count])/count
+
+
+def _normalized_waveform(energy, rate=50, kind='band'):
+    """Keep speech/music dynamics while suppressing crowd noise and slow AGC."""
     import numpy as np
 
-    feature = _feature(energy).astype(np.float64)
+    log_energy = np.log1p(energy).astype(np.float64)
+    smooth = _smooth_envelope(log_energy, max(1, round(rate*.1)))
+    feature = (np.diff(smooth) if kind == 'transient' else
+               smooth-_smooth_envelope(log_energy, max(1, round(rate*2))))
     feature -= np.mean(feature)
     deviation = float(np.std(feature))
     if not math.isfinite(deviation) or deviation < 1e-6:
@@ -315,7 +326,7 @@ def _normalized_waveform(energy):
     return feature / deviation
 
 
-def _match_waveform_window(start, energy, master_energy, rate, maximum, cancel_event):
+def _match_waveform_window(start, energy, master_energy, rate, maximum, cancel_event, *, kind='band'):
     """Locate a middle sample, then recover the complete camera's delay.
 
     The old matcher treats its reference as starting at zero. A camera sample
@@ -325,8 +336,8 @@ def _match_waveform_window(start, energy, master_energy, rate, maximum, cancel_e
     from editor_core import _normalized_fft_correlation
 
     _check_cancel(cancel_event)
-    reference = _normalized_waveform(energy)
-    master = _normalized_waveform(master_energy)
+    reference = _normalized_waveform(energy, rate, kind)
+    master = _normalized_waveform(master_energy, rate, kind)
     minimum = max(5.0, 0.7 * min(len(reference), len(master)) / rate)
     low = (-maximum-start)*rate if maximum > 0 else None
     high = (maximum-start)*rate if maximum > 0 else None
@@ -338,7 +349,7 @@ def _match_waveform_window(start, energy, master_energy, rate, maximum, cancel_e
     score = max(-1.0, min(1.0, float(score)))
     uniqueness = min(1.0, max(0.03, (score-second)/0.06))
     confidence = max(0.0, score) * uniqueness
-    if score < WAVEFORM_SCORE_THRESHOLD:
+    if score < (0.20 if kind == 'transient' else WAVEFORM_SCORE_THRESHOLD):
         confidence = min(confidence, 0.099)
     return float(offset), float(confidence), score, float(second)
 
@@ -358,9 +369,42 @@ def _probe_starts(duration, window, rate):
     """Prefer the centre, but do not mistake a quiet middle for a silent file."""
     last = max(0.0, float(duration) - float(window))
     middle = last / 2
-    candidates = (middle, max(0.0, middle-window), min(last, middle+window),
-                  0.0, last, last/4, last*3/4)
+    candidates = (middle, last*.15, last*.85, last*.3, last*.7, 0.0, last)
     return list(dict.fromkeys(round(value*rate)/rate for value in candidates))
+
+
+def _consensus_match(matches, rate, *, require_multiple=True, spacing=10., on_conflict=None):
+    """Independent time windows must support one offset; feature votes cannot double-count."""
+    reliable = [(start, value) for start, value in matches if value[1] >= .16 and value[2] >= .20]
+    if not reliable: return None
+    tolerance = max(.25, 3./rate)
+    groups = []
+    for _, center in reliable:
+        per_window = {}
+        for start, value in reliable:
+            if abs(value[0]-center[0]) <= tolerance:
+                if start not in per_window or value[1] > per_window[start][1]: per_window[start] = value
+        separated = []
+        for start, value in sorted(per_window.items(), key=lambda pair: -pair[1][1]):
+            if all(abs(start-other[0]) >= spacing for other in separated): separated.append((start, value))
+        if separated: groups.append(separated)
+    groups.sort(key=lambda group: (len(group), sum(value[1] for _, value in group)), reverse=True)
+    best = groups[0]
+    if require_multiple and len(best) < 2: return None
+    if not require_multiple and len(best) < 2 and best[0][1][1] < .45: return None
+    ordered = sorted(best, key=lambda pair: pair[1][0])
+    total = sum(value[1] for _, value in ordered)
+    cumulative = 0.
+    chosen = ordered[-1][1]
+    for _, value in ordered:
+        cumulative += value[1]
+        if cumulative >= total/2: chosen = value; break
+    for other in groups[1:]:
+        if len(other) >= 2 and abs(other[0][1][0]-chosen[0]) > 2*tolerance:
+            if on_conflict is not None: on_conflict(abs(other[0][1][0]-chosen[0]))
+            return None
+    confidence = min(1., sum(value[1] for _, value in best)/len(best))
+    return (chosen[0], confidence, chosen[2], chosen[3]), len(best)
 
 
 def align_audio_segments_fast(
@@ -430,54 +474,61 @@ def align_audio_segments_fast(
             if Path(video).resolve() == Path(external_audio).resolve():
                 result = AlignmentResult(0.0, 1.0, envelope_rate, "同一音轨 · 缓存复用")
             else:
+                full_energy = None
                 if mode == "full":
-                    report(base+span*0.1, f"{name} · 完整波形分析（手动选择）", force=True)
-                    energy = cache.energy(video, on_decode=lambda seconds: report(
-                        base+span*0.55, f"{name} · 流式读取完整音频"))
-                    if not _has_signal(energy, envelope_rate):
-                        raise RuntimeError(f"{name}：音轨静音、过短或变化过小，请手动对齐")
-                    report(base+span*0.65, f"{name} · 原版归一化波形互相关", force=True)
-                    offset, confidence, score, second = _match_waveform_window(
-                        0.0, energy, master, envelope_rate, max_offset_seconds, cancel_event)
-                    label = "完整波形"
+                    report(base+span*.1, f"{name} · 读取完整音频并分窗核对", force=True)
+                    full_energy = cache.energy(video)
+                    duration = len(full_energy)/envelope_rate
                 else:
                     duration = _duration(ffmpeg, video, cancel_event)
-                    if duration < 5:
-                        raise RuntimeError(f"{name}：无法读取有效时长或音频不足5秒，请检查素材")
-                    window = min(PROBE_SECONDS, duration)
-                    starts = _probe_starts(duration, window, envelope_rate)
-                    matches = []
-                    failure = None
-                    for index_window, sample_start in enumerate(starts):
-                        _check_cancel(cancel_event)
-                        phase = "中间波形" if index_window == 0 else "补充有声片段"
-                        window_progress = index_window / len(starts)
-                        report(base+span*(0.1+0.65*window_progress),
-                               f"{name} · 截取{phase} {sample_start:.2f}秒起 / {window:.0f}秒", force=True)
-                        energy = cache.energy(video, start=sample_start, duration=window,
-                            on_decode=lambda seconds: report(base+span*0.25,
-                                f"{name} · 读取{phase}（只读截取区间）"))
-                        if not _has_signal(energy, envelope_rate):
-                            failure = "抽样片段静音或波形变化太小"
-                            continue
-                        report(base+span*(0.2+0.65*window_progress),
-                               f"{name} · 按原版波形在主录音中搜索", force=True)
-                        try:
-                            match = _match_waveform_window(sample_start, energy, master,
-                                envelope_rate, max_offset_seconds, cancel_event)
-                        except ExportCancelled:
-                            raise
-                        except RuntimeError as exc:
-                            failure = str(exc)
-                            continue
-                        matches.append((sample_start, match))
-                        if match[1] >= 0.2 and match[2] >= WAVEFORM_SCORE_THRESHOLD:
-                            break
-                    if not matches:
-                        raise RuntimeError(f"{name}：{failure or '中段波形未找到可靠重叠'}；可手动选择完整分析或精调")
-                    sample_start, (offset, confidence, score, second) = max(
-                        matches, key=lambda item: (item[1][1], item[1][2]))
-                    label = f"中段波形 {sample_start:.2f}s+{window:.0f}s · 原版互相关"
+                if duration < 5:
+                    raise RuntimeError(f"{name}：无法读取有效时长或音频不足5秒，请检查素材")
+                window = min(PROBE_SECONDS, duration)
+                starts = _probe_starts(duration, window, envelope_rate)
+                matches = []
+                failure = None
+                consensus = None
+                conflicts = []
+                multiple = duration >= PROBE_SECONDS*1.5
+                spacing = max(5., min(window/2, (duration-window)*.6))
+                for index_window, sample_start in enumerate(starts):
+                    _check_cancel(cancel_event)
+                    report(base+span*(.1+.7*index_window/len(starts)),
+                           f"{name} · 多窗口核对 {index_window+1}/{len(starts)} · {sample_start:.2f}秒起", force=True)
+                    if full_energy is not None:
+                        first = round(sample_start*envelope_rate)
+                        energy = full_energy[first:first+round(window*envelope_rate)]
+                    else:
+                        energy = cache.energy(video, start=sample_start, duration=window)
+                    if not _has_signal(energy, envelope_rate):
+                        failure = "抽样片段静音或波形变化太小"
+                        continue
+                    try:
+                        value = _match_waveform_window(sample_start, energy, master,
+                            envelope_rate, max_offset_seconds, cancel_event)
+                        matches.append((sample_start, value))
+                        if value[1] < .55:
+                            transient = _match_waveform_window(sample_start, energy, master,
+                                envelope_rate, max_offset_seconds, cancel_event, kind='transient')
+                            matches.append((sample_start, transient))
+                    except ExportCancelled:
+                        raise
+                    except RuntimeError as exc:
+                        failure = str(exc)
+                        continue
+                    consensus = _consensus_match(matches, envelope_rate,
+                        require_multiple=multiple, spacing=spacing, on_conflict=conflicts.append)
+                    sampled = len({position for position, _ in matches})
+                    if consensus is not None and (not multiple or sampled >= (5 if duration >= 180 else 3)):
+                        break
+                if consensus is None:
+                    if conflicts:
+                        raise RuntimeError(f'{name}：不同时间段测得起点相差约 {conflicts[-1]:.2f} 秒，'
+                                           '可能存在中途剪接或时钟漂移，不能用一个起点对齐整段')
+                    raise RuntimeError(f"{name}：多个独立窗口未能确认同一位置（重复声音、信噪比不足或时钟漂移）；"
+                                       + (failure or "保留原位置，请复核"))
+                (offset, confidence, score, second), support = consensus
+                label = f"多窗口包络核对 {support}/{len({position for position, _ in matches})} · {'完整读取' if mode == 'full' else '限量抽样'}"
                 elapsed = time.perf_counter()-item_started
                 engine = label + f" · 缓存 {cache.hits-item_hits}/{cache.hits-item_hits+cache.decodes-item_decodes} · {elapsed:.1f} 秒"
                 if confidence < 0.2:

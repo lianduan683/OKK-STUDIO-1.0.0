@@ -31,7 +31,9 @@ class SyncTimelineTkTests(unittest.TestCase):
                 self.skipTest(f"Tk display unavailable: {exc}")
             raise
         self.root.withdraw()
-        self.root.geometry("1280x820+20+20")
+        self.root.attributes('-alpha', 0)
+        self.root.overrideredirect(True)
+        self.root.geometry("1280x820+10000+10000")
         self.root.working = False
         self.root.cancel_enabled = False
         self.root.mpv_path = ""
@@ -139,9 +141,9 @@ class SyncTimelineTkTests(unittest.TestCase):
         self.assertLess(rectangles["b"][0], rectangles["a"][0])
         self.assertTrue(all(0 <= coords[0] < coords[2] <= workspace.timeline.winfo_width()
                             for coords in rectangles.values()))
-        audio = [item for item in workspace.timeline.find_all()
+        audio = [item for item in workspace.timeline_audio_items
                  if workspace.timeline.type(item) == "rectangle"
-                 and workspace.timeline.itemcget(item, "fill") == "#3d625c"]
+                 ]
         self.assertEqual(len(audio), 1)
         audio_coords = workspace.timeline.coords(audio[0])
         self.assertGreater(audio_coords[0], rectangles["b"][0])

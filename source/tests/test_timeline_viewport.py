@@ -52,7 +52,11 @@ class TimelineViewportTests(unittest.TestCase):
         self.dense()
         ws = self.ws
         self.assertNotIn('36', ws.timeline_clip_items.values())
-        ws._timeline_vertical_scroll('moveto', 1.)
+        # Audio rows follow the video rows; reveal the last video rather than
+        # jumping past it to the bottom of the audio section.
+        _, bottom = ws._timeline_track_bounds[36]
+        content_height = float(ws.timeline.cget('scrollregion').split()[3])
+        ws._timeline_vertical_scroll('moveto', (bottom-ws.timeline.winfo_height()+5)/content_height)
         self.flush()
         self.assertIn('36', ws.timeline_clip_items.values())
         self.assertNotIn('1', ws.timeline_clip_items.values())
