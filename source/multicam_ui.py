@@ -922,6 +922,30 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
         position = selected[0] if selected else self.current
         return copy.deepcopy(grade_at(self.project, position) or ColorGrade())
 
+    def program_range_at_playhead(self):
+        """A real programme picture at the playhead, without selecting/editing it."""
+        position = self.current
+        if not math.isfinite(position) or not 0 <= position < self.project.duration: return None
+        camera = self.project.camera_at(position)
+        clip = self.project.clip_at(camera, position)
+        if clip is None: return None
+        span = self._program_span_at(position)
+        if span is None: return None
+        fps = self.project.fps
+        first = max(0, round(max(span.start, clip.start)*fps))
+        stop = round(min(span.end, clip.end, self.project.duration)*fps)
+        return (first/fps, stop/fps) if stop > first else None
+
+    def select_program_at_playhead(self):
+        if not self._available(): return False
+        target = self.program_range_at_playhead()
+        if target is None:
+            self.status.set('播放头处没有节目画面，请移动到视频片段后再试。')
+            return False
+        self.select_program_range(*target, seek=False)
+        self._set_timeline_selection({('program', target)})
+        return self.selected_program_range == target
+
     def get_selected_transform(self):
         selected = self.selected_program_range
         return copy.deepcopy(transform_at(self.project, selected[0] if selected else self.current))
@@ -2049,6 +2073,9 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
         for camera,button in self.camera_buttons.items():
             label=self._camera_button_label(camera)
             if button.cget('text')!=label: button.configure(text=label)
+        inspector = vars(self).get('clip_inspector')
+        if inspector is not None and not self.playing and self._inspector_visible:
+            inspector.refresh_playhead()
 
     def _highlight(self, camera):
         states = getattr(self, '_camera_highlight_states', {})
@@ -2484,15 +2511,12 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
             x2 = timeline_x(span.end)
             if not visible(x, ruler_h, x2, ruler_h+program_h):
                 continue
-            chosen = (self.selected_program_range is not None
-                and span.start >= self.selected_program_range[0]-1e-6
-                and span.end <= self.selected_program_range[1]+1e-6)
             span_sources = [clip for clip in camera_clips.get(span.camera, ())
                             if clip.start < span.end and clip.end > span.start]
             disabled = bool(span_sources) and not any(clip.enabled for clip in span_sources)
             item = canvas.create_rectangle(x, ruler_h + self._px(4), x2, ruler_h + program_h - self._px(3),
-                fill='#383a3e' if disabled else COLORS[(span.camera-1) % 9], outline=ACCENT if chosen else '#91a0ac',
-                width=self._px(2) if chosen else 1, tags=('program',))
+                fill='#383a3e' if disabled else COLORS[(span.camera-1) % 9], outline='#91a0ac',
+                width=1, tags=('program',))
             self.timeline_program_items[item] = (span.start, span.end)
             if x2-x > self._px(24):
                 stabilized = self.project.stabilization_at(span.camera,span.start)
@@ -2517,10 +2541,6 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
                     text=title,
                     fill=MUTED if disabled else INK, anchor='w', font=title_font, tags=('program',))
                 self.timeline_program_items[item] = (span.start, span.end)
-        if self.selected_program_range and ruler_h+program_h >= view_top and ruler_h <= view_bottom:
-            x, x2 = (timeline_x(value) for value in self.selected_program_range)
-            canvas.create_rectangle(x, ruler_h+self._px(2), x2, ruler_h+program_h-self._px(1),
-                outline=ACCENT, width=max(1,self._px(2)), tags=('selection',))
         for transition in self.project.transitions:
             x = timeline_x(transition.time - transition.duration / 2)
             x2 = timeline_x(transition.time + transition.duration / 2)
@@ -2664,6 +2684,8 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
     def timeline_press(self, event):
         if not self._available(): return
         if self._timeline_ruler_contains(event):
+            if not getattr(event, 'state', 0) & (0x1 | 0x4):
+                self._clear_timeline_selection()
             if self._timeline_marker_press(event): return 'break'
             self._stop_transport_hold()
             self._timeline_drag_geometry = None

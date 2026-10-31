@@ -154,6 +154,7 @@ class TimelineSelectionMixin:
         return keys
 
     def _set_timeline_selection(self, keys, *, redraw=True):
+        previous_program_range = self.selected_program_range
         keys = set(keys)
         if self.project.timeline_link_enabled:
             videos = {clip.id for clip in self.project.clips}
@@ -168,6 +169,20 @@ class TimelineSelectionMixin:
             ids = [clip.id for clip in self.project.clips if ('clip', clip.id) in keys and self.media_tree.exists(clip.id)]
             self.media_tree.selection_set(ids)
         if redraw: self._draw_timeline_selection()
+        if previous_program_range != self.selected_program_range:
+            if self.selected_program_range is None:
+                self.selected_cut = None
+                if self.cut_tree.selection():
+                    self.cut_tree.selection_remove(*self.cut_tree.selection())
+            refresh = vars(self).get('creative_panel_refresh')
+            if refresh: refresh()
+            if vars(self).get('clip_inspector'): self.clip_inspector.refresh()
+
+    def _clear_timeline_selection(self):
+        had_selection = bool(self._timeline_selection or self.selected_program_range)
+        self._set_timeline_selection(set())
+        if had_selection:
+            self.status.set('已取消片段选中；点击机位将在播放头记录切点。')
 
     def _draw_timeline_selection(self):
         canvas = self.timeline
@@ -175,6 +190,23 @@ class TimelineSelectionMixin:
         if self._selection_project is not self.project and self._selection_gesture is None:
             self._timeline_selection.clear()
             self._selection_project = self.project
+        # Programme outlines belong to selection rendering too. Leaving them
+        # in draw_timeline() makes blank clicks clear state but retain blue
+        # borders until an unrelated full redraw.
+        canvas.delete('selection')
+        program_range = self.selected_program_range
+        for item, (start, end) in self.timeline_program_items.items():
+            if canvas.type(item) != 'rectangle': continue
+            chosen = (program_range is not None and start >= program_range[0]-1e-6
+                      and end <= program_range[1]+1e-6)
+            canvas.itemconfigure(item, outline='#58a6d6' if chosen else '#91a0ac',
+                                 width=self._px(2) if chosen else 1)
+        top, bottom = self._timeline_program_bounds
+        if (program_range and bottom >= canvas.canvasy(0)
+                and top <= canvas.canvasy(canvas.winfo_height())):
+            canvas.create_rectangle(self._timeline_x(program_range[0]), top+self._px(2),
+                self._timeline_x(program_range[1]), bottom-self._px(1),
+                outline='#58a6d6', width=max(1, self._px(2)), tags=('selection',))
         selected = edit_keys(self.project, self._timeline_selection)
         for item, key in self._timeline_item_keys().items():
             if key not in selected or canvas.type(item) != 'rectangle': continue
@@ -255,7 +287,7 @@ class TimelineSelectionMixin:
             return True
         # Empty-space dragging starts a marquee; a partial rectangle overlap
         # counts, including clips much longer than the visible viewport.
-        if not additive: self._set_timeline_selection(set())
+        if not additive: self._clear_timeline_selection()
         self._selection_gesture = dict(kind='marquee', project=self.project,
             x=self.timeline.canvasx(event.x), y=y, last_x=self.timeline.canvasx(event.x), last_y=y,
             moved=False, base=set(self._timeline_selection) if additive else set(), pointer=(event.x, event.y))

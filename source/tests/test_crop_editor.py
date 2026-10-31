@@ -149,7 +149,8 @@ class CropEditorTkTests(CropMediaFixture, unittest.TestCase):
 
     def editor(self, automatic=False):
         result = open_crop_editor(self.workspace, automatic=automatic)
-        self.wait(lambda: not result._pending and result._pixels is not None)
+        self.wait(lambda: not result._pending and result._pixels is not None
+                  and (not automatic or not result._detecting))
         return result
 
     def test_drag_frame_resize_then_commit_is_one_undo_and_saved_in_existing_format(self):
@@ -226,6 +227,24 @@ class CropEditorTkTests(CropMediaFixture, unittest.TestCase):
         self.assertTrue(editor._cancel.is_set())
         ws.selected_program_range = None
         self.assertIsNone(open_crop_editor(ws))
+
+    def test_crop_button_opens_real_frame_without_preselecting_programme_range(self):
+        ws = self.workspace
+        ws.project.edit_points = [2]
+        ws._refresh()
+        ws._set_timeline_selection(set())
+        ws.current = 2.5
+        ws._show_time()
+        original = copy.deepcopy(ws.project)
+        self.assertIsNone(ws.selected_program_range)
+        editor = ws.clip_inspector.manual_framing()
+        self.assertIsNotNone(editor)
+        self.wait(lambda: not editor._pending and editor._pixels is not None)
+        self.assertEqual(ws.selected_program_range, (2, 4))
+        self.assertTrue(editor.canvas.find_withtag('crop'))
+        editor.close()
+        self.assertEqual(ws.project, original)
+        self.assertEqual(ws.undo_stack, [])
 
     def test_reopen_16_9_crop_keeps_rectangle_and_second_adjustment_preserves_neighbours(self):
         ws = self.workspace

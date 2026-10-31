@@ -36,6 +36,8 @@ class ClipInspector(tk.Frame):
         super().__init__(parent, bg=PANEL)
         self.ws = workspace
         self._target = None
+        self._fallback_target = None
+        self._playhead_token = None
         self._probe_token = None
         self.sections = {}
         self.action_widgets = []
@@ -73,6 +75,9 @@ class ClipInspector(tk.Frame):
         heading = tk.Frame(self, bg=PANEL)
         heading.pack(fill='x', padx=self.px(10), pady=(self.px(9), self.px(5)))
         self._label(heading, self.target_text, color=INK, bold=True).pack(fill='x')
+        self.select_current_button = ttk.Button(heading, text='选择播放头处的节目片段',
+            command=self.select_current, style='Inspector.TButton')
+        self.select_current_button.pack(fill='x', pady=(self.px(6), 0))
         navigation = tk.Frame(self, bg=PANEL)
         navigation.pack(fill='x', padx=self.px(8), pady=(0, self.px(7)))
         for i, (key, title) in enumerate((('camera', '机位'), ('framing', '裁切缩放'), ('color', '调色'), ('image', '画面防抖'),
@@ -139,10 +144,13 @@ class ClipInspector(tk.Frame):
     def _actions(self, parent, pairs):
         row = tk.Frame(parent, bg=PANEL)
         row.pack(fill='x', padx=self.px(8), pady=self.px(7))
+        created = []
         for title, callback in pairs:
             button = ttk.Button(row, text=title, command=callback, style='Inspector.TButton')
             button.pack(side='left', fill='x', expand=True, padx=self.px(2))
             self.action_widgets.append(button)
+            created.append(button)
+        return created
 
     def _check(self, parent, title, variable):
         tk.Checkbutton(parent, text=title, variable=variable, bg=PANEL, fg=INK,
@@ -166,8 +174,8 @@ class ClipInspector(tk.Frame):
     def _build_framing(self):
         section = self._section('framing', '裁切与缩放',
             '自动检测黑边或手动拖动 16:9 裁切框，选择保留的画面。')
-        self._actions(section, [('自动裁切 16:9', self.auto_framing), ('手动裁切 / 调整框', self.manual_framing)])
-        self._actions(section, [('一键 16:9 裁切', self.fill_16_9)])
+        self.framing_actions = self._actions(section, [('自动裁切 16:9', self.auto_framing), ('手动裁切 / 调整框', self.manual_framing)])
+        self.framing_actions += self._actions(section, [('一键 16:9 裁切', self.fill_16_9)])
         self._label(section, self.framing_text).pack(fill='x', padx=self.px(10), pady=self.px(4))
         self._row(section, '画面适配', self.framing_mode, list(FRAMING_MODES)).configure(width=18)
         for title, variable in (('缩放 %（100–400）', self.framing_zoom),
@@ -177,7 +185,7 @@ class ClipInspector(tk.Frame):
             field.bind('<Return>', lambda event: self.apply_framing())
         self._label(section, '取景 0 为居中；负值靠左／上，正值靠右／下。原片已含黑边时可增加缩放。').pack(
             fill='x', padx=self.px(10), pady=self.px(4))
-        self._actions(section, [('应用构图', self.apply_framing), ('重置构图', self.reset_framing)])
+        self.framing_actions += self._actions(section, [('应用构图', self.apply_framing), ('重置构图', self.reset_framing)])
 
     def _build_image(self):
         section = self._section('image', '画面防抖', '无需陀螺仪，基于画面运动分析。适用于普通相机素材。')
@@ -240,13 +248,31 @@ class ClipInspector(tk.Frame):
         self.update_idletasks()
         self.canvas.yview_moveto(self.sections[name].winfo_y()/max(1, self.body.winfo_height()))
 
-    def _ready(self):
+    def _ready(self, *, framing=False):
         if not self.ws._available():
             return False
         if self.ws.selected_program_range is None:
+            if framing:
+                # Selecting a range refreshes the inspector. Keep values the
+                # user has already typed for this displayed fallback target.
+                variables = (self.framing_mode, self.framing_zoom, self.framing_x, self.framing_y)
+                draft = [variable.get() for variable in variables]
+                if self.ws.select_program_at_playhead():
+                    for variable, value in zip(variables, draft): variable.set(value)
+                    return True
             self.ws.status.set('请先选中节目轨中的片段。')
             return False
         return True
+
+    def select_current(self):
+        return self.ws.select_program_at_playhead()
+
+    def refresh_playhead(self):
+        token = (id(self.ws.project), self.ws.selected_program_range,
+                 round(self.ws.current*self.ws.project.fps))
+        if token != self._playhead_token:
+            self._playhead_token = token
+            if self.ws.selected_program_range is None: self.refresh()
 
     def _number(self, variable, title):
         try:
@@ -281,7 +307,7 @@ class ClipInspector(tk.Frame):
         if self._ready(): self.ws.apply_selected_grade(ColorGrade())
 
     def apply_framing(self):
-        if not self._ready(): return
+        if not self._ready(framing=True): return
         try:
             transform = ClipTransform(mode=FRAMING_MODES[self.framing_mode.get()],
                 zoom=self._number(self.framing_zoom, '缩放')/100,
@@ -292,21 +318,21 @@ class ClipInspector(tk.Frame):
         except (ValueError, KeyError) as error: self._report(error)
 
     def fill_16_9(self):
-        if self._ready():
+        if self._ready(framing=True):
             return self.ws.apply_selected_transform(ClipTransform(mode='fill'), aspect_16_9=True)
 
     def auto_framing(self):
-        if self._ready():
+        if self._ready(framing=True):
             from crop_editor import open_crop_editor
             return open_crop_editor(self.ws, automatic=True)
 
     def manual_framing(self):
-        if self._ready():
+        if self._ready(framing=True):
             from crop_editor import open_crop_editor
             return open_crop_editor(self.ws)
 
     def reset_framing(self):
-        if self._ready(): return self.ws.apply_selected_transform(ClipTransform())
+        if self._ready(framing=True): return self.ws.apply_selected_transform(ClipTransform())
 
     def start_image(self, automatic=False):
         if not self._ready(): return
@@ -406,14 +432,36 @@ class ClipInspector(tk.Frame):
 
     def refresh(self, force=False):
         selected = self.ws.selected_program_range
+        fallback = self.ws.program_range_at_playhead() if selected is None else None
         self.camera_choices = {self.ws._label_camera(camera): camera for camera in self.ws.project.cameras}
         self.camera_combo.configure(values=list(self.camera_choices))
         for button in self.action_widgets:
-            button.configure(state='normal' if selected else 'disabled')
+            enabled = selected is not None or (fallback is not None and button in self.framing_actions)
+            button.configure(state='normal' if enabled else 'disabled')
+        self.select_current_button.configure(state='normal' if fallback is not None else 'disabled')
         if selected is None:
-            self.target_text.set('请选择节目轨中的片段\n机位、裁切、调色、防抖和转场将在这里显示。')
+            if not self.select_current_button.winfo_manager():
+                self.select_current_button.pack(fill='x', pady=(self.px(6), 0))
+        else:
+            self.select_current_button.pack_forget()
+        if selected is None:
             self._target = None
+            if fallback is None:
+                self.target_text.set('播放头处没有可用的节目画面\n请把播放头移到视频上，或点击最上方“节目”轨中的片段。')
+                self._fallback_target = None
+                return
+            start, end = fallback
+            camera = self.ws.project.camera_at(self.ws.current)
+            clip = self.ws.project.clip_at(camera, self.ws.current)
+            self.target_text.set('播放头处片段 · 点击裁切将自动选中\n'
+                f'{format_time(start)} — {format_time(end)}\n'
+                + self.ws._label_camera(camera, self.ws.current) + (' · '+Path(clip.path).name if clip else ''))
+            token = (id(self.ws.project), fallback)
+            if force or token != self._fallback_target:
+                self._fallback_target = token
+                self._load_framing()
             return
+        self._fallback_target = None
         start, end = selected
         camera = self.ws.project.camera_at(start)
         clip = self.ws.project.clip_at(camera, start)
@@ -431,14 +479,7 @@ class ClipInspector(tk.Frame):
         token = (id(self.ws.project), selected)
         if not force and token == self._target: return
         self._target = token
-        transform = self.ws.get_selected_transform()
-        self.framing_mode.set(next(name for name, value in FRAMING_MODES.items() if value == transform.mode))
-        self.framing_zoom.set(f'{transform.zoom*100:g}')
-        self.framing_x.set(f'{transform.x*100:g}'); self.framing_y.set(f'{transform.y*100:g}')
-        settings = self.ws.project.project_settings or DEFAULT_SETTINGS
-        width, height = settings['width'], settings['height']
-        divisor = math.gcd(width, height)
-        self.framing_text.set(f'时间线画幅 {width//divisor}:{height//divisor} · {width} × {height}')
+        self._load_framing()
         grade = self.ws.get_selected_grade()
         for key, variable in self.grade_vars.items(): variable.set(f'{getattr(grade, key):g}')
         image = record.settings if record and record.settings.engine == 'image' else image_defaults()
@@ -458,3 +499,13 @@ class ClipInspector(tk.Frame):
             self.transition_kind.set(label); self.transition_duration.set(f'{transition.duration:g}')
         else:
             self.transition_kind.set('叠化'); self.transition_duration.set('0.5')
+
+    def _load_framing(self):
+        transform = self.ws.get_selected_transform()
+        self.framing_mode.set(next(name for name, value in FRAMING_MODES.items() if value == transform.mode))
+        self.framing_zoom.set(f'{transform.zoom*100:g}')
+        self.framing_x.set(f'{transform.x*100:g}'); self.framing_y.set(f'{transform.y*100:g}')
+        settings = self.ws.project.project_settings or DEFAULT_SETTINGS
+        width, height = settings['width'], settings['height']
+        divisor = math.gcd(width, height)
+        self.framing_text.set(f'时间线画幅 {width//divisor}:{height//divisor} · {width} × {height}')

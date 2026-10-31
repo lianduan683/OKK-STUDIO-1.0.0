@@ -12,7 +12,8 @@ from crop_geometry import (ASPECT, automatic_crop, crop_at, draw_crop,
                            move_crop, rect_from_transform, resize_crop,
                            transform_from_rect, zoom_crop)
 from crop_frame import (CropCancelled, content_bounds, decode_frame,
-                        pixels_ppm, resize_pixels)
+                        pixels_ppm, resize_pixels, choose_preview_source)
+from crop_video import CropVideoStream
 from editor_core import format_time
 
 BG, PANEL, INK, MUTED, ACCENT = '#18191b', '#292b2e', '#dedfe3', '#969ba3', '#58a6d6'
@@ -33,6 +34,15 @@ class CropEditor(tk.Toplevel):
         self._results = queue.Queue()
         self._workers = []
         self._pending = None
+        self._detecting = False
+        self._job_started = 0.
+        self._phase = ''
+        self._preview_note = ''
+        self._displayed_caption = ''
+        self._preview_context = None
+        self._video_stream = None
+        self._video_started = 0.
+        self._video_received = False
         self._resize_after = None
         self._draw_after = None
         self._poll_after = None
@@ -60,6 +70,7 @@ class CropEditor(tk.Toplevel):
         self._build()
         self.bind('<Escape>', lambda event: self._key_close())
         self.bind('<Return>', lambda event: self._key_apply())
+        self.bind('<space>', lambda event: self._key_play())
         for key, delta in (('Left', (-1, 0)), ('Right', (1, 0)), ('Up', (0, -1)), ('Down', (0, 1))):
             self.bind('<'+key+'>', lambda event, d=delta: self._nudge(event, d))
         self.bind('<Delete>', lambda event: 'break')
@@ -109,6 +120,8 @@ class CropEditor(tk.Toplevel):
         ttk.Button(footer, text='取消', command=self.close, style='Compact.TButton').pack(side='right')
         self.apply_button = ttk.Button(footer, text='应用裁切', command=self.apply, style='Compact.TButton', state='disabled')
         self.apply_button.pack(side='right', padx=self.px(10))
+        ttk.Button(footer, text='重新读取画面', command=self._request_frame,
+                   style='Compact.TButton').pack(side='right', padx=self.px(4))
         self._label(footer, '应用后保存到所选片段，支持撤销。', color=MUTED).pack(side='left')
         body = tk.Frame(self, bg=BG)
         body.pack(fill='both', expand=True)
@@ -132,7 +145,7 @@ class CropEditor(tk.Toplevel):
             highlightthickness=0, activebackground=ACCENT, state='disabled')
         self.zoom_slider.pack(fill='x')
         help_label = self._label(side,
-            '拖动框内：移动取景\n拖动边角：缩放裁切框\n框外按住拖动：重新框选\n方向键：微调位置\nShift + 方向键：快速移动\n\n自动模式检测黑边后居中取景，\n可继续手动选择要保留的部分。', color=MUTED)
+            '拖动框内：移动取景\n拖动边角：缩放裁切框\n框外按住拖动：重新框选\n方向键：微调位置\nShift + 方向键：快速移动\n\n自动裁切仅识别当前这一帧。\n可播放视频检查保留的画面。', color=MUTED)
         help_label.pack(fill='x', pady=self.px(18))
         main = tk.Frame(body, bg=BG)
         main.pack(side='left', fill='both', expand=True)
@@ -147,9 +160,21 @@ class CropEditor(tk.Toplevel):
         seek = tk.Frame(main, bg=BG, padx=self.px(12))
         seek.pack(fill='x', pady=(0, self.px(10)))
         self._label(seek, variable=self.frame_label, color=MUTED).pack(fill='x')
+        controls = tk.Frame(seek, bg=BG)
+        controls.pack(fill='x', pady=self.px(4))
+        self.play_button = ttk.Button(controls, text='播放视频', command=self.toggle_video, style='Compact.TButton', state='disabled')
+        self.play_button.pack(side='left')
+        self.step_buttons = []
+        for title, direction in (('上一帧', -1), ('下一帧', 1)):
+            button = ttk.Button(controls, text=title, command=lambda d=direction: self.step_frame(d),
+                                style='Compact.TButton', state='disabled')
+            button.pack(side='left', padx=self.px(4))
+            self.step_buttons.append(button)
+        self._label(controls, '空格 播放 / 暂停', color=MUTED).pack(side='left', padx=self.px(10))
         self.frame_slider = tk.Scale(seek, from_=0, to=1, orient='horizontal', variable=self.frame_time,
             showvalue=False, bg=BG, fg=INK, troughcolor=PANEL, highlightthickness=0, activebackground=ACCENT)
         self.frame_slider.pack(fill='x')
+        self.frame_slider.bind('<ButtonPress-1>', lambda event: self.pause_video())
         self.frame_slider.bind('<ButtonRelease-1>', lambda event: self._request_frame())
         self.frame_slider.bind('<KeyRelease>', lambda event: self._request_frame())
 
@@ -161,11 +186,16 @@ class CropEditor(tk.Toplevel):
     def _set_loading(self, loading):
         self._pending = bool(loading)
         active = self._pixels is not None and not loading and self._valid_target()
-        for widget in (self.apply_button, self.auto_button, self.max_button, self.center_button, self.zoom_slider):
+        for widget in (self.apply_button, self.auto_button, self.max_button, self.center_button,
+                       self.zoom_slider, self.play_button, *self.step_buttons):
             widget.configure(state='normal' if active else 'disabled')
+
+    def _message(self, generation, kind, **data):
+        self._results.put((generation, kind, data))
 
     def _request_frame(self, *, automatic=False):
         if self._closed or not hasattr(self, 'first'): return
+        self.pause_video()
         if not self._valid_target():
             self.status.set('所选片段已变化，请关闭后重新打开裁切。'); self._set_loading(False); return
         ffmpeg = getattr(self.ws.app.caps, 'ffmpeg_path', '')
@@ -185,40 +215,39 @@ class CropEditor(tk.Toplevel):
         self._cancel = cancel = threading.Event()
         self._generation += 1
         generation = self._generation
+        self._job_started = time.monotonic()
+        self._detecting = automatic
         self._set_loading(True)
-        self.status.set('正在抽样检测黑边并生成 16:9 裁切框…' if automatic else '正在读取完整原画面…')
+        self._phase = '正在读取裁切画面'
+        self.status.set(self._phase+'…')
         path, source_time, _ = media
-        self.frame_label.set(f'{Path(path).name} · {format_time(position)} · 拖动下方滑块查看片段其他位置')
-        # Resolve every sample through the same unproxied media pipeline as
-        # export, including source trims and prepared stabilization handles.
-        samples = []
-        if automatic:
-            for fraction in (.1, .4, .7, .9):
-                sample_time = self.first+(self.last-self.first)*fraction
-                try:
-                    sample = self.project.media_at(self.project.camera_at(sample_time), sample_time, use_proxies=False)
-                except (ValueError, OSError):
-                    continue
-                if sample is not None and str(sample[0]) == str(path):
-                    samples.append(float(sample[1]))
+        caption = f'{Path(path).name} · {format_time(position)}'
+        self.frame_label.set(caption+' · 正在读取画面…')
+        proxy = ''
+        clip = self.project.clip_at(camera, position)
+        if clip is not None and str(path) == str(clip.path):
+            candidate = self.project.media_at(camera, position, use_proxies=True)
+            if candidate is not None and str(candidate[0]) != str(path): proxy = str(candidate[0])
+        ffprobe = getattr(self.ws.app.caps, 'ffprobe_path', '')
         def work():
             try:
-                pixels = decode_frame(ffmpeg, path, float(source_time), cancel)
-                frames = [pixels]
-                for sample in samples:
-                    if abs(sample-float(source_time)) > .5/self.project.fps:
-                        try:
-                            frames.append(decode_frame(ffmpeg, path, sample, cancel))
-                        except (ValueError, OSError):
-                            # A damaged/end-of-file sample must not discard a
-                            # valid current frame or trap the editing window.
-                            continue
-                bounds = content_bounds(frames) if automatic else None
-                self._results.put((generation, pixels, bounds, automatic, None))
+                self._message(generation, 'phase', text='正在校验代理画幅与时长' if proxy else '正在读取原片画面')
+                preview_path, note = choose_preview_source(ffprobe, path, proxy, cancel)
+                self._message(generation, 'phase', text='正在读取代理画面' if preview_path != str(path) else '正在读取原片画面')
+                try:
+                    pixels = decode_frame(ffmpeg, preview_path, float(source_time), cancel)
+                except (ValueError, OSError):
+                    if preview_path == str(path): raise
+                    preview_path, note = str(path), '代理取帧失败，使用原片预览'
+                    self._message(generation, 'phase', text='代理取帧失败，正在读取原片画面')
+                    pixels = decode_frame(ffmpeg, preview_path, float(source_time), cancel)
+                self._message(generation, 'preview', pixels=pixels, automatic=automatic,
+                              caption=caption, note=note, path=preview_path,
+                              source_time=float(source_time), timeline_time=position)
             except CropCancelled:
                 pass
             except Exception as error:
-                self._results.put((generation, None, None, automatic, str(error)))
+                self._message(generation, 'error', text=str(error))
         worker = threading.Thread(target=work, name='okk-crop-frame', daemon=True)
         self._workers = [thread for thread in self._workers if thread.is_alive()]
         self._workers.append(worker)
@@ -232,27 +261,121 @@ class CropEditor(tk.Toplevel):
         if self._closed: return
         try:
             while True:
-                generation, pixels, bounds, automatic, error = self._results.get_nowait()
+                generation, kind, data = self._results.get_nowait()
                 if generation != self._generation: continue
                 if not self._valid_target():
+                    self._cancel.set(); self._detecting = False
                     self.status.set('所选片段已变化，未应用裁切。'); self._set_loading(False); continue
-                if error:
-                    self.status.set(error); self._set_loading(False); continue
-                self._pixels = pixels
-                self.rect = (automatic_crop(self.source_size, bounds) if automatic else
-                             rect_from_transform(self._draft_transform, self.source_size))
-                self._set_loading(False)
-                self._render_source()
-                if automatic:
-                    w, h = self.source_size
-                    found = bounds != (0., 0., float(w), float(h))
-                    self.status.set(('已按抽样画面的黑边生成裁切框。' if found else '未检测到稳定黑边，已按原画幅居中裁成 16:9。')
-                        + '可拖动或缩放裁切框，点击“应用裁切”保存。')
-                else:
-                    self.status.set('拖动框内调整位置，拖动边角调整大小；暗区为将被裁掉的部分。')
+                if kind in ('phase', 'progress'):
+                    self._phase = data['text']
+                    self.status.set(self._phase)
+                elif kind == 'error':
+                    self._detecting = False
+                    self.status.set(data['text']+'；可重新读取或拖动时间滑块换一帧。')
+                    if self._displayed_caption: self.frame_label.set(self._displayed_caption)
+                    self._set_loading(False)
+                    logger = getattr(self.ws.app, '_log', None)
+                    if callable(logger): logger('裁切预览：'+data['text'])
+                elif kind == 'preview':
+                    self._detecting = False
+                    self._pixels = data['pixels']
+                    self.rect = (automatic_crop(self.source_size, content_bounds([self._pixels])) if data['automatic'] else
+                                 rect_from_transform(self._draft_transform, self.source_size))
+                    self._preview_context = data
+                    self._preview_note = data['note']
+                    self._displayed_caption = data['caption']+' · '+self._preview_note
+                    self.frame_label.set(self._displayed_caption)
+                    self._set_loading(False)
+                    self._render_source()
+                    self.status.set('已仅按当前帧识别黑边并生成 16:9 框，可手动调整或播放视频检查。' if data['automatic'] else
+                        '视频已暂停在当前帧，可直接拖框裁切；点击“播放视频”检查其他画面。')
         except queue.Empty:
             pass
+        except Exception as error:
+            self._cancel.set(); self._detecting = False; self._pixels = None; self.rect = None
+            self._generation += 1
+            self._set_loading(False)
+            self.status.set('裁切画面显示失败：'+str(error)+'；请点击“重新读取画面”。')
+            logger = getattr(self.ws.app, '_log', None)
+            if callable(logger): logger('裁切画面显示失败：'+str(error))
+        if self._pending:
+            elapsed = time.monotonic()-self._job_started
+            if elapsed > 35:
+                self._cancel.set(); self._generation += 1; self._detecting = False
+                self._set_loading(False)
+                self.status.set('读取画面超时，已停止。请重新读取或拖动时间滑块换一帧。')
+            elif elapsed >= 1:
+                self.status.set(f'{self._phase}… {elapsed:.0f} 秒；可取消或重新读取。')
+        self._poll_video()
         self._poll_after = self.after(50, self._poll)
+
+    def toggle_video(self):
+        if self._video_stream is not None:
+            self._poll_video()
+            self.pause_video(report=True)
+            return
+        if self._pending or self._pixels is None or self._preview_context is None or not self._valid_target(): return
+        context = self._preview_context
+        position = self.frame_time.get()
+        origin = context['timeline_time']-context['source_time']
+        if position >= self.last-.5/self.project.fps:
+            position = max(self.first, origin)
+        source_time = max(0., position-origin)
+        duration = self.last-position+1/self.project.fps
+        self._video_stream = CropVideoStream(self.ws.app.caps.ffmpeg_path, context['path'], source_time, duration)
+        self._video_started = time.monotonic()
+        self._video_received = False
+        self.play_button.configure(text='暂停视频')
+        self.status.set('正在播放视频；可直接调整裁切框，空格暂停在当前帧。')
+
+    def _poll_video(self):
+        stream = self._video_stream
+        if stream is None: return
+        if not self._valid_target():
+            self.pause_video()
+            self.status.set('所选片段已变化，视频预览已停止。')
+            return
+        try:
+            picture = stream.read()
+            if picture is not None:
+                seconds, pixels = picture
+                saved = transform_from_rect(self.rect, self.source_size)
+                self._pixels = pixels
+                self.rect = rect_from_transform(saved, self.source_size)
+                context = self._preview_context
+                position = min(self.last, max(self.first, seconds+context['timeline_time']-context['source_time']))
+                self.frame_time.set(position)
+                self._displayed_caption = f"{Path(context['path']).name} · {format_time(position)} · {self._preview_note}"
+                self.frame_label.set(self._displayed_caption)
+                self._video_received = True
+                self._render_source()
+            if stream.done.is_set():
+                message = stream.error or '视频播放到末尾，已停在当前帧。可拖动时间滑块或继续调整裁切框。'
+                self.pause_video()
+                self.status.set(message)
+            elif not self._video_received and time.monotonic()-self._video_started > 15:
+                self.pause_video()
+                self.status.set('视频预览读取超时，已保留当前帧，可重新读取或继续裁切。')
+        except Exception as error:
+            self.pause_video()
+            self.status.set('视频预览失败，已保留当前帧：'+str(error))
+
+    def pause_video(self, *, report=False):
+        stream, self._video_stream = self._video_stream, None
+        if stream is not None: stream.close()
+        self.play_button.configure(text='播放视频')
+        if report and self._pixels is not None:
+            self.status.set('视频已暂停，直接使用当前这一帧调整裁切。')
+
+    def step_frame(self, direction):
+        if self._pending or not hasattr(self, 'first'): return
+        self.pause_video()
+        self.frame_time.set(min(self.last, max(self.first, self.frame_time.get()+direction/self.project.fps)))
+        self._request_frame()
+
+    def _key_play(self):
+        self.toggle_video()
+        return 'break'
 
     def _canvas_resize(self, event=None):
         if self._resize_after is not None: self.after_cancel(self._resize_after)
@@ -373,7 +496,9 @@ class CropEditor(tk.Toplevel):
 
     def _zoom_changed(self, value):
         if self._updating or self.rect is None or self._pending: return
-        self.rect = zoom_crop(self.rect, float(value)/100, self.source_size)
+        rectangle = zoom_crop(self.rect, float(value)/100, self.source_size)
+        if max(abs(a-b) for a, b in zip(rectangle, self.rect)) < 1e-6: return
+        self.rect = rectangle
         self._schedule_draw()
 
     def _nudge(self, event, delta):
@@ -396,12 +521,19 @@ class CropEditor(tk.Toplevel):
         self._schedule_draw()
 
     def automatic(self):
-        self._request_frame(automatic=True)
+        if self._pixels is None:
+            self._request_frame(automatic=True)
+            return
+        self.pause_video()
+        self.rect = automatic_crop(self.source_size, content_bounds([self._pixels]))
+        self._draw()
+        self.status.set('已仅按当前这一帧识别黑边并裁成 16:9，可继续手动调整或播放视频检查。')
 
     def apply(self):
         if not self._valid_target():
             self.status.set('所选片段已变化，未应用裁切。'); return False
         if self.rect is None or self._pending: return False
+        self.pause_video()
         transform = transform_from_rect(self.rect, self.source_size)
         if self.ws.apply_selected_transform(transform, aspect_16_9=True):
             self.close()
@@ -419,6 +551,7 @@ class CropEditor(tk.Toplevel):
     def close(self):
         if self._closed: return
         self._closed = True
+        self.pause_video()
         self._cancel.set()
         deadline = time.monotonic()+.5
         for worker in self._workers:
