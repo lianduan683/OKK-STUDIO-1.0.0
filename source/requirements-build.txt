@@ -4,3 +4,4 @@ tkinterdnd2==0.7.0
 opentimelineio==0.18.1
 otio-aaf-adapter==2.0.0
 pyaaf2==1.7.1
+Pillow==13.0.0

@@ -25,6 +25,7 @@ from effects_catalog import (GROUPS, catalog_categories, category_sort_key, over
                              mask_metadata, query_words, searchable_text)
 from cache_paths import cache_dir
 from effects_drag import EffectDragMixin
+from effects_tiles import EffectTiles
 
 PANEL, INPUT, INK, MUTED, ACCENT = '#292b2e', '#18191b', '#dedfe3', '#969ba3', '#58a6d6'
 FONT = ('Microsoft YaHei UI', 9)
@@ -98,7 +99,8 @@ def library_presets():
 def filtered_presets(category='全部', query='', presets=PRESETS):
     words = query_words(query)
     return tuple(item for item in presets
-                 if (category in ('全部',item.category) or item.category.startswith(category+' / ')) and all(word in
+                 if (category in ('全部',item.category) or item.category.startswith(category+' / ')
+                     or category == '视频转场' and item.kind in ('transition','mask')) and all(word in
                     searchable_text(item) for word in words))
 
 
@@ -179,6 +181,9 @@ class EffectsBrowser(EffectDragMixin, tk.Frame):
         self.detail_text = tk.StringVar(self)
         self.category_text = tk.StringVar(self)
         self.feedback = tk.StringVar(self,value='拖动特效到节目／合成轨片段；拖动转场到两个片段的接缝。')
+        self.selection_text = tk.StringVar(self)
+        self._details_visible = False
+        self._navigating = False
         self._previewing = False
         self._preview_selection = None
         self._poll_id = None
@@ -198,45 +203,66 @@ class EffectsBrowser(EffectDragMixin, tk.Frame):
         self._filtering = False
         px = workspace._px
         self.columnconfigure(0,weight=1)
-        self.rowconfigure(3,weight=2,minsize=px(128))
-        self.rowconfigure(4,weight=3,minsize=px(57))
+        self.rowconfigure(2,weight=1,minsize=px(100))
         header=tk.Frame(self,bg=PANEL)
         header.grid(row=0,column=0,sticky='ew',padx=px(10),pady=(px(10),px(5)))
         tk.Label(header,text='特效库',bg=PANEL,fg=INK,font=('Microsoft YaHei UI',12,'bold')).pack(side='left')
         ttk.Button(header,text='刷新',width=4,command=self.reload_library,style='Compact.TButton').pack(side='right')
         self.count_label=tk.Label(header,bg=PANEL,fg=MUTED,font=FONT)
         self.count_label.pack(side='right')
+        self.navigation_menu=tk.Menu(self,tearoff=False,bg=PANEL,fg=INK,
+                                     activebackground='#3c5263',activeforeground=INK)
+        self.subcategories=tk.Menubutton(header,text='分类 ▾',menu=self.navigation_menu,
+            bg=PANEL,fg=INK,activebackground=INPUT,activeforeground=INK,relief='flat',font=FONT)
+        self.subcategories.pack(side='left',padx=px(8))
         filters=tk.Frame(self,bg=PANEL)
         filters.grid(row=1,column=0,sticky='ew',padx=px(10),pady=px(4))
         tk.Label(filters,text='搜索',bg=PANEL,fg=MUTED,font=FONT).pack(side='left',padx=(0,px(5)))
         self.search_entry=tk.Entry(filters,textvariable=self.query,bg=INPUT,fg=INK,insertbackground=INK,
                                   relief='flat',font=FONT)
         self.search_entry.pack(side='left',fill='x',expand=True,ipady=px(4))
-        self.category_filters=tk.Frame(self,bg=PANEL)
-        self.category_filters.grid(row=2,column=0,sticky='ew',padx=px(10),pady=(0,px(7)))
-        self.category_filters.columnconfigure(0,weight=1,uniform='effect-filter')
-        self.category_filters.columnconfigure(1,weight=1,uniform='effect-filter')
-        self.categories=ttk.Combobox(self.category_filters,textvariable=self.category,
-            values=self._categories(),state='readonly',width=8)
-        self.categories.grid(row=0,column=0,sticky='ew',padx=(0,px(4)))
-        self.subcategories=ttk.Combobox(self.category_filters,textvariable=self.subcategory,
-            values=('全部类型',),state='readonly',width=10)
-        self.subcategories.grid(row=0,column=1,sticky='ew')
-        results=tk.Frame(self,bg=INPUT)
-        results.grid(row=3,column=0,sticky='nsew',padx=px(10))
-        self.list = ttk.Treeview(results,columns=('category',),show='tree headings',selectmode='browse',
-                                height=5,style='Multicam.Treeview')
-        self.list.heading('#0',text='预设名称');self.list.heading('category',text='分类')
-        self.list.column('#0',width=px(150),minwidth=px(90));self.list.column('category',width=px(70),stretch=False)
+        self.category_filters=tk.Frame(self,bg='#25262b')
+        self.category_filters.grid(row=2,column=0,sticky='nsew',padx=px(6),pady=px(3))
+        self.category_filters.columnconfigure(1,weight=1)
+        self.category_filters.rowconfigure(0,weight=1)
+        self.navigation=tk.Frame(self.category_filters,bg='#222328',width=px(174))
+        self.navigation.grid(row=0,column=0,sticky='ns',padx=(0,px(1)))
+        self.navigation.grid_propagate(False)
+        self.navigation.rowconfigure(0,weight=1)
+        self.navigation.columnconfigure(0,weight=1)
+        style=ttk.Style(self)
+        style.configure('Effects.Navigation.Treeview',background='#222328',fieldbackground='#222328',
+                        foreground=MUTED,borderwidth=0,rowheight=px(29),font=FONT)
+        style.map('Effects.Navigation.Treeview',background=[('selected','#393b43')],
+                  foreground=[('selected',INK)])
+        self.categories=ttk.Treeview(self.navigation,show='tree',selectmode='browse',
+                                   style='Effects.Navigation.Treeview',height=5)
+        self.categories.column('#0',width=px(154),minwidth=px(70))
+        self.categories.grid(row=0,column=0,sticky='nsew')
+        nav_scroll=ttk.Scrollbar(self.navigation,orient='vertical',command=self.categories.yview)
+        nav_scroll.grid(row=0,column=1,sticky='ns');self.categories.configure(yscrollcommand=nav_scroll.set)
+        self.categories.bind('<<TreeviewSelect>>',self._navigation_selected)
+        self.results=results=tk.Frame(self.category_filters,bg='#25262b')
+        results.grid(row=0,column=1,sticky='nsew')
+        self.list = EffectTiles(results,scale=px)
         self.list.pack(side='left',fill='both',expand=True)
         scroll=ttk.Scrollbar(results,orient='vertical',command=self.list.yview)
         scroll.pack(side='right',fill='y');self.list.configure(yscrollcommand=scroll.set)
         self.list.bind('<<TreeviewSelect>>',self._selection_changed)
-        self.list.bind('<Double-1>',lambda event:self.apply())
+        self.list.bind('<<ApplyEffect>>',lambda event:self.apply())
         self._init_effect_drag()
+        self.quick_settings=tk.Frame(self,bg=PANEL)
+        self.quick_settings.grid(row=3,column=0,sticky='ew',padx=px(10),pady=(px(4),0))
+        self.quick_settings.columnconfigure(0,weight=1)
+        tk.Label(self.quick_settings,textvariable=self.selection_text,bg=PANEL,fg=INK,font=FONT,
+                 anchor='w',width=1).grid(row=0,column=0,sticky='ew')
+        self.details_button=ttk.Button(self.quick_settings,text='详情 ▸',width=6,
+                                      command=self._toggle_details,style='Compact.TButton')
+        self.details_button.grid(row=0,column=1,padx=(px(6),0))
         detail_outer=tk.Frame(self,bg=PANEL)
+        self.detail_outer=detail_outer
         detail_outer.grid(row=4,column=0,sticky='nsew',padx=px(10),pady=(px(5),0))
-        self.detail_canvas=tk.Canvas(detail_outer,bg=PANEL,highlightthickness=0,width=1,height=1,
+        self.detail_canvas=tk.Canvas(detail_outer,bg=PANEL,highlightthickness=0,width=1,height=px(110),
                                      yscrollincrement=px(16))
         detail_scroll=ttk.Scrollbar(detail_outer,orient='vertical',command=self.detail_canvas.yview)
         detail_scroll.pack(side='right',fill='y');self.detail_canvas.pack(side='left',fill='both',expand=True)
@@ -254,14 +280,14 @@ class EffectsBrowser(EffectDragMixin, tk.Frame):
         self._wrapped(details,self.category_text,ACCENT).pack(fill='x',pady=(0,px(4)))
         self._wrapped(details,self.detail_text,INK).pack(fill='x')
         self._wrapped(details,self.target_text,MUTED).pack(fill='x',pady=(px(6),0))
-        self.strength_row=tk.Frame(self.detail_body,bg=PANEL)
-        self.strength_row.grid(row=1,column=0,sticky='ew',pady=px(6))
+        self.strength_row=tk.Frame(self.quick_settings,bg=PANEL)
+        self.strength_row.grid(row=1,column=0,columnspan=2,sticky='ew',pady=px(4))
         self.strength_label=tk.Label(self.strength_row,text='强度',bg=PANEL,fg=MUTED,font=FONT)
         self.strength_label.pack(side='left')
         self.scale=ttk.Scale(self.strength_row,from_=0,to=100,variable=self.strength,command=self._strength_changed)
         self.scale.pack(side='left',fill='x',expand=True,padx=px(5))
         tk.Label(self.strength_row,textvariable=self.strength_text,bg=PANEL,fg=INK,font=FONT,width=5).pack(side='right')
-        self.duration_row=tk.Frame(self.detail_body,bg=PANEL)
+        self.duration_row=tk.Frame(self.quick_settings,bg=PANEL)
         tk.Label(self.duration_row,text='转场时长（秒）',bg=PANEL,fg=MUTED,font=FONT).pack(side='left')
         tk.Entry(self.duration_row,textvariable=self.duration,width=7,bg=INPUT,fg=INK,insertbackground=INK,relief='flat').pack(side='right')
         self.actions=tk.Frame(self,bg=PANEL);self.actions.grid(row=5,column=0,sticky='ew',padx=px(8),pady=(px(4),px(5)))
@@ -272,14 +298,16 @@ class EffectsBrowser(EffectDragMixin, tk.Frame):
         self.apply_button=ttk.Button(self.actions,text='应用到所选片段',command=self.apply,style='Compact.TButton')
         self.apply_button.grid(row=0,column=1,sticky='ew',padx=px(2))
         self.secondary_actions=tk.Frame(self.detail_body,bg=PANEL)
-        self.secondary_actions.grid(row=2,column=0,sticky='ew',pady=px(3))
+        self.secondary_actions.grid(row=1,column=0,sticky='ew',pady=px(3))
         self.secondary_actions.columnconfigure(0,weight=1)
         self.secondary_actions.columnconfigure(1,weight=1)
         self.secondary_button=ttk.Button(self.secondary_actions,text='停止试看',command=self.stop_preview,style='Compact.TButton')
         self.secondary_button.grid(row=0,column=0,sticky='ew',padx=px(2))
         self.applied_preview_button=ttk.Button(self.secondary_actions,text='预览已应用效果',command=self.preview_applied,style='Compact.TButton')
         self.applied_preview_button.grid(row=0,column=1,sticky='ew',padx=px(2))
-        self._wrapped(self.detail_body,self.feedback,MUTED).grid(row=3,column=0,sticky='ew',pady=(px(4),px(8)))
+        tk.Label(self,textvariable=self.feedback,bg=PANEL,fg=MUTED,font=('Microsoft YaHei UI',8),
+                 anchor='w',width=1).grid(row=6,column=0,sticky='ew',padx=px(10),pady=px(3))
+        self.detail_outer.grid_remove()
         self._bind_detail_wheel(self.detail_body)
         self.detail_canvas.bind('<MouseWheel>',self._detail_wheel)
         self.query.trace_add('write',self._filter)
@@ -288,7 +316,78 @@ class EffectsBrowser(EffectDragMixin, tk.Frame):
         self.bind('<Configure>',self._responsive_layout,add='+')
         self.bind('<Unmap>',self._unmap,add='+')
         self.bind('<Map>',lambda event:self.refresh(),add='+')
-        self._category_changed();self._poll_selection()
+        self._rebuild_navigation();self._category_changed();self._poll_selection()
+
+    def _toggle_details(self):
+        self._details_visible=not self._details_visible
+        if self._details_visible:
+            self.detail_outer.grid()
+            self._request_thumbnail(self.selected_preset())
+        else:self.detail_outer.grid_remove()
+        self.details_button.configure(text='详情 ▾' if self._details_visible else '详情 ▸')
+        self._fit_details()
+
+    def _fit_details(self):
+        self.rowconfigure(2,minsize=self.ws._px(50 if self._details_visible else 100))
+        if self._details_visible:
+            height=max(self.ws._px(28),min(self.ws._px(110),self.winfo_height()-self.ws._px(300)))
+            self.detail_canvas.configure(height=height)
+
+    def _rebuild_navigation(self):
+        self.categories.delete(*self.categories.get_children())
+        self._navigation_values={}
+        def add(parent,title,category,subcategory='全部类型',opened=False):
+            key='nav'+str(len(self._navigation_values))
+            self._navigation_values[key]=(category,subcategory)
+            self.categories.insert(parent,'end',iid=key,text=title,open=opened)
+            return key
+        add('','全部效果','全部')
+        video=add('','视频转场','视频转场',opened=True)
+        add(video,'内置转场','转场')
+        masks=add(video,'遮罩转场','遮罩转场')
+        for category in catalog_categories(self._catalog,'遮罩转场'):
+            add(masks,category.split(' / ',1)[1],'遮罩转场',category.split(' / ',1)[1])
+        add('','调色风格','调色风格')
+        overlays=add('','叠加素材','叠加')
+        for category in catalog_categories(self._catalog,'叠加'):
+            add(overlays,category.split(' / ',1)[1],'叠加',category.split(' / ',1)[1])
+        add('','字幕与标题','字幕工具')
+        add('','防抖工具','防抖工具')
+        self.navigation_menu.delete(0,'end')
+        for child in self.navigation_menu.winfo_children():child.destroy()
+        self.navigation_menu.add_command(label='全部效果',command=lambda:self._navigate('全部'))
+        self.navigation_menu.add_command(label='视频转场 · 全部',command=lambda:self._navigate('视频转场'))
+        for group in self._categories():
+            if group=='全部':continue
+            menu=tk.Menu(self.navigation_menu,tearoff=False,bg=PANEL,fg=INK)
+            menu.add_command(label='全部',command=lambda value=group:self._navigate(value))
+            for category in catalog_categories(self._catalog,group):
+                label=category.split(' / ',1)[1]
+                menu.add_command(label=label,command=lambda g=group,s=label:self._navigate(g,s))
+            self.navigation_menu.add_cascade(label=group,menu=menu)
+
+    def _navigate(self,category,subcategory='全部类型'):
+        if (self.category.get(),self.subcategory.get())==(category,subcategory):return
+        self._navigating=True
+        try:
+            self.category.set(category)
+            self.subcategory.set(subcategory)
+        finally:self._navigating=False
+        self._category_changed()
+
+    def _navigation_selected(self,event=None):
+        selection=self.categories.selection()
+        if selection and selection[0] in self._navigation_values:
+            self._navigate(*self._navigation_values[selection[0]])
+
+    def _sync_navigation(self):
+        value=(self.category.get(),self.subcategory.get())
+        key=next((key for key,pair in self._navigation_values.items() if pair==value),None)
+        if key and self.categories.selection()!=(key,):
+            self.categories.selection_set(key)
+            self.categories.see(key)
+        label=value[1] if value[1]!='全部类型' else value[0]
+        self.subcategories.configure(text=label+' ▾')
 
     def _wrapped(self,parent,variable,color):
         label=tk.Label(parent,textvariable=variable,bg=PANEL,fg=color,font=FONT,anchor='w',justify='left',wraplength=self.ws._px(260))
@@ -312,28 +411,33 @@ class EffectsBrowser(EffectDragMixin, tk.Frame):
         return tuple(group for group in CATEGORIES if group=='全部' or group in present)
 
     def _category_changed(self,*_):
+        if self._navigating:return
         categories=catalog_categories(self._catalog,self.category.get())
         # A short leaf label fits alongside the main group in narrow inspectors.
         self._subcategory_values={'全部类型': self.category.get()}
         for category in categories:
             label=category if self.category.get()=='全部' else category.split(' / ',1)[1]
             self._subcategory_values[label]=category
-        self.subcategories.configure(values=tuple(self._subcategory_values),
-            state='readonly' if categories else 'disabled')
         if self.subcategory.get() not in self._subcategory_values:
             self.subcategory.set('全部类型')
         self._filter()
+        self._sync_navigation()
 
     def _responsive_layout(self,event):
         if event.widget is not self:return
+        self._fit_details()
         px=self.ws._px
-        compact=event.width<px(430)
+        compact=event.width<px(460)
         stacked=event.width<px(295)
         key=compact,stacked
         if key==self._responsive_key:return
         self._responsive_key=key
-        self.list.configure(displaycolumns=() if compact else ('category',))
-        self.list.column('category',width=px(125),stretch=False)
+        if compact:
+            self.navigation.grid_remove()
+            self.results.grid_configure(column=0,columnspan=2)
+        else:
+            self.navigation.grid()
+            self.results.grid_configure(column=1,columnspan=1)
         for first,second in ((self.preview_button,self.apply_button),
                              (self.secondary_button,self.applied_preview_button)):
             first.grid_configure(row=0,column=0,columnspan=2 if stacked else 1)
@@ -343,19 +447,18 @@ class EffectsBrowser(EffectDragMixin, tk.Frame):
     def reload_library(self):
         self._catalog=library_presets()
         self._catalog_by_key={item.key:item for item in self._catalog}
-        self.categories.configure(values=self._categories())
+        self._rebuild_navigation()
         self._selected_detail_key=None
         if self.category.get() not in self._categories():self.category.set('全部')
         self._category_changed()
 
     def _filter(self,*_):
-        if self._filtering:return
+        if self._filtering or self._navigating:return
         self._filtering=True
         selected=self.list.selection()
         category=getattr(self,'_subcategory_values',{}).get(self.subcategory.get(),self.category.get())
         self._items=filtered_presets(category,self.query.get(),self._catalog)
-        self.list.delete(*self.list.get_children())
-        for item in self._items:self.list.insert('','end',iid=item.key,text=item.name,values=(item.category.split(' / ',1)[-1],))
+        self.list.set_items(self._items)
         self.count_label.configure(text=f'{len(self._items)}/{len(self._catalog)} 项')
         if self._items:
             key=selected[0] if selected and any(item.key==selected[0] for item in self._items) else self._items[0].key
@@ -363,6 +466,7 @@ class EffectsBrowser(EffectDragMixin, tk.Frame):
             self.list.see(key)
         self._filtering=False
         self._selection_changed()
+        self._sync_navigation()
 
     def _selection_changed(self,event=None):
         item=self.selected_preset()
@@ -370,6 +474,7 @@ class EffectsBrowser(EffectDragMixin, tk.Frame):
         if key==self._selected_detail_key:
             self.refresh();return
         self._selected_detail_key=key
+        self.selection_text.set(item.name if item else '没有匹配的效果')
         self.stop_preview(quiet=True)
         self.category_text.set(f'{item.category}\n{item.name}' if item else '')
         self.detail_text.set(item.description if item else '没有匹配的效果，请更换搜索词或分类。')
@@ -382,7 +487,7 @@ class EffectsBrowser(EffectDragMixin, tk.Frame):
         self.duration_row.grid_remove();self.strength_row.grid()
         if item and item.kind in ('transition','mask'):
             self.strength_row.grid_remove()
-            self.duration_row.grid(row=1,column=0,sticky='ew',pady=self.ws._px(6))
+            self.duration_row.grid(row=1,column=0,columnspan=2,sticky='ew',pady=self.ws._px(4))
         available=bool(item)
         if item and item.kind in ('overlay','mask'):
             available=callable(getattr(self.ws,'apply_library_'+item.kind,None))
@@ -410,6 +515,8 @@ class EffectsBrowser(EffectDragMixin, tk.Frame):
         self._thumb_serial+=1
         self.thumbnail.delete('all');self._thumb_photo=None;self._thumb_original=None
         self._thumb_message=''
+        if not self._details_visible:
+            self.thumbnail.pack_forget();return
         if item is None or item.kind not in ('overlay','mask'):
             self.thumbnail.pack_forget();return
         self.thumbnail.pack(fill='x',before=self.swatch,pady=(0,self.ws._px(6)))
@@ -579,6 +686,14 @@ def show_effects_browser(workspace):
     """Open the library at its current dock location or in its floating window."""
     workspace.exit_color_workspace()
     browser=ensure_effects_browser(workspace)
+    manager=vars(workspace).get('dock_manager')
+    if manager is not None and manager.panel_location('library')=='home':
+        manager.dock('library','media',side='center')
+        workspace.update_idletasks()
+        width=min(workspace._px(680),round(workspace.body.winfo_width()*.43))
+        workspace._media_width=max(workspace._px(304),width)
+        if workspace._media_visible and len(workspace.body.panes())>1:
+            workspace.body.sashpos(0,workspace._media_width)
     workspace.show_inspector('library')
     browser.refresh()
     return browser

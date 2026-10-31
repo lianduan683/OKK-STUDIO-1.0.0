@@ -1,4 +1,4 @@
-# OKK STUDIO 1.0.10
+# OKK STUDIO 1.0.11
 
 Windows 多机位视频剪辑应用。本版提供逐轨音频、真实波形、时间标记、同步结果明细、机位列表折叠及三套键位，修复旧完整工程打开与保存。
 
@@ -6,11 +6,13 @@ Windows 多机位视频剪辑应用。本版提供逐轨音频、真实波形、
 
 ## 下载
 
-**[下载 OKK-STUDIO-1.0.10-Setup.exe](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.10/OKK-STUDIO-1.0.10-Setup.exe)** · [发行页](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/tag/v1.0.10)
+**[下载 OKK-STUDIO-1.0.11-Setup.exe](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.11/OKK-STUDIO-1.0.11-Setup.exe)** · [发行页](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/tag/v1.0.11)
 
 主程序已内置安装器。安装时下载并校验 v1.0.0 的四份固定资源 ZIP（约 5.75 GB），完整安装约 6.5 GB，建议预留至少 15 GB。已有离线资源可通过 `/PAYLOADDIR` 复用。安装与升级见 [INSTALLATION.md](INSTALLATION.md)。
 
 ## 新增与修复
+
+- 特效库提供分类、搜索与卡片拖放；支持将调色、叠加拖到片段，将转场拖到接缝。包含 355 个遮罩转场，其中新增 137 个 PR 风格几何遮罩，属于近似适配。
 
 - 裁切窗口支持视频播放、逐帧和时间滑块；自动裁切分析当前帧，可优先使用合适代理预览；未选片段时可处理播放头处视频，点击时间线空白处可取消选择。
 
@@ -58,6 +60,6 @@ Windows 10/11 64 位。缓存沿用可写的非 C 盘、非系统盘固定磁盘
 
 ## 源码与构建
 
-[下载 1.0.10 应用源码](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.10/OKK-STUDIO-1.0.10-source.zip)。源码包包含应用模块、回归测试、小型 UI 资源和构建文件；不包含用户工程、媒体、工作缓存或大型第三方二进制。构建步骤见 [BUILDING.md](BUILDING.md)。
+[下载 1.0.11 应用源码](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.11/OKK-STUDIO-1.0.11-source.zip)。源码包包含应用模块、回归测试、小型 UI 资源和构建文件；不包含用户工程、媒体、工作缓存或大型第三方二进制。构建步骤见 [BUILDING.md](BUILDING.md)。
 
 应用许可证见 [LICENSE](LICENSE)，第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

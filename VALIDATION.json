@@ -1,53 +1,39 @@
 {
-  "version": "1.0.10",
-  "build_id": "20261031-154336-5874a6bd",
+  "version": "1.0.11",
+  "build_id": "20261031-185657-475d793d",
   "focused_regression": {
-    "run": 102,
-    "passed": 102,
-    "skipped": 0,
-    "gpu_pixel_check": "passed",
+    "run": 33,
+    "passed": 33,
     "modules": [
-      "crop_video",
-      "crop_editor",
-      "inspector_target_selection",
-      "timeline_blank_deselect",
-      "clip_transform",
-      "clip_transform_render",
-      "clip_transform_ui",
-      "clip_inspector",
-      "navigation",
-      "multicam_click_follow",
-      "realtime_transform_preview"
+      "effects_browser",
+      "effect_catalog_layout",
+      "effects_drag",
+      "library_overlay"
     ]
   },
-  "frozen_headless_export": {
-    "exit_code": 0,
-    "status": "done",
-    "output_bytes": 20102
-  },
-  "frozen_modules_source_parity": [
-    "crop_editor",
-    "crop_video",
-    "crop_geometry",
-    "crop_frame",
-    "clip_inspector",
-    "multicam_ui",
-    "timeline_selection"
+  "isolated_offline_install": "passed",
+  "transition_catalog_count": 355,
+  "new_transition_png_count": 137,
+  "frozen_headless_export": "passed",
+  "packaged_module_presence": [
+    "effects_tiles",
+    "effects_browser",
+    "effects_drag",
+    "effects_library",
+    "PIL",
+    "PIL.PngImagePlugin"
   ],
-  "headless_executable_help_exit_code": 0,
-  "version_metadata": "1.0.10",
+  "version_metadata": "1.0.11",
   "archive_crc_checks": "passed",
   "source_allowlist_and_known_private_path_and_key_pattern_scan": "passed",
-  "prior_same_feature_build_validation": "compiled crop UI modules were checked with real media in a disposable Tk harness; full frozen GUI not exercised",
   "historical_tests_not_rerun": [
     "1.0.8: two preview seek fixture errors",
     "1.0.7: one offscreen pointer hit failure"
   ],
   "trusted_code_signature": false,
-  "installation_and_uninstallation_retested_for_this_build": false,
   "not_tested": [
     "full test suite",
-    "production install and in-place upgrade",
+    "production in-place upgrade",
     "online resource download during installation",
     "all physical display and hardware combinations"
   ]

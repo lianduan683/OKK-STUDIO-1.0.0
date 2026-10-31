@@ -66,15 +66,14 @@ class ResponsiveLibraryGeometryTests(unittest.TestCase):
                         root.geometry(f'304x{height}+10000+10000');root.update()
                         visible=sum(bool(panel.list.bbox(key)) for key in panel.list.get_children())
                         bottom=panel.apply_button.winfo_rooty()+panel.apply_button.winfo_height()-panel.winfo_rooty()
-                        self.assertGreaterEqual(visible,4)
+                        self.assertGreaterEqual(visible,3)
                         self.assertLessEqual(bottom,height)
-                        self.assertGreaterEqual(panel.detail_canvas.winfo_height(),48)
-                        self.assertGreater(panel.detail_body.winfo_height(),panel.detail_canvas.winfo_height())
-                panel.feedback.set('这是一段需要在详情区域内滚动的较长说明。'*20)
+                        self.assertFalse(panel.detail_outer.winfo_ismapped())
+                panel._toggle_details()
                 root.update()
-                self.assertGreaterEqual(sum(bool(panel.list.bbox(key)) for key in panel.list.get_children()),4)
-                panel.detail_canvas.yview_moveto(1)
-                self.assertGreater(panel.detail_canvas.yview()[0],0)
+                self.assertTrue(panel.detail_outer.winfo_ismapped())
+                panel._toggle_details()
+                self.assertFalse(panel.detail_outer.winfo_ismapped())
                 panel.destroy()
         finally:root.destroy()
 
@@ -92,9 +91,10 @@ class EffectsBrowserUITests(unittest.TestCase):
 
     def test_native_library_stays_beside_the_programme_and_timeline(self):
         browser=self.browser()
-        self.assertEqual(self.workspace.inspector_tabs.select(),str(self.workspace.library_tab))
+        self.assertEqual(self.workspace.dock_manager.focus_home('library'),'media')
+        self.assertFalse(self.workspace._inspector_visible)
         self.assertEqual(browser.master,self.workspace.library_tab)
-        self.assertIn(str(self.workspace.timeline_section),self.workspace.workspace_split.panes())
+        self.assertTrue(self.workspace.timeline.winfo_ismapped())
         self.assertEqual(browser.list.get_children(),tuple(item.key for item in PRESETS))
         browser.category.set('转场');browser.query.set('向左')
         self.assertEqual(len(browser.list.get_children()),2)
@@ -152,7 +152,7 @@ class EffectsBrowserUITests(unittest.TestCase):
     def test_hiding_library_clears_color_audition(self):
         ws=self.workspace;ws.selected_program_range=(1,3);ws.player=Mock()
         browser=self.browser();self.assertTrue(browser.preview());ws._flush_grade_preview()
-        ws.inspector_tabs.select(ws.program_inspector_tab);self.root.update()
+        ws.dock_manager.focus('media');self.root.update()
         self.assertFalse(browser._previewing)
         ws.player.submit.assert_called_with('grade_preview',grade=None)
 

@@ -162,5 +162,45 @@ class EffectsDragTests(unittest.TestCase):
         self.assertIsNone(grade_at(self.workspace.project, 2))
         self.assertEqual(self.callback_errors, [])
 
+    def test_right_column_card_drops_its_own_preset(self):
+        from program_edits import grade_at
+        browser=self.browser()
+        self.workspace.dock_manager.float_panel('library',geometry='900x650+10000+10000')
+        self.root.update()
+        self.assertGreaterEqual(browser.list._columns,2)
+        self.assertGreater(browser.list.bbox('warm')[0],browser.list.bbox('clean')[0])
+        self.drag(browser,'warm',self.point(6))
+        self.assertAlmostEqual(grade_at(self.workspace.project,6).temperature,.16)
+        self.assertEqual(len(self.workspace.undo_stack),1)
+        self.assertEqual(self.callback_errors,[])
+
+    def test_installed_pr_card_drop_undo_redo_and_save(self):
+        from effects_browser import library_presets
+        ws=self.workspace
+        browser=self.browser()
+        app=Path(__file__).resolve().parents[1]
+        with patch('effects_library.default_app_dir',return_value=app):
+            browser._catalog=library_presets()
+            browser._catalog_by_key={item.key:item for item in browser._catalog}
+            browser._rebuild_navigation()
+            browser._navigate('遮罩转场','PR 四向组合')
+            self.root.update()
+            self.assertEqual(len(browser.list.get_children()),30)
+            key=browser.list.get_children()[0]
+            browser.duration.set('.8')
+            before=copy.deepcopy(ws.project)
+            self.drag(browser,key,self.point(4))
+            transition,=ws.project.transitions
+            self.assertEqual((transition.time,transition.duration),(4,.8))
+            self.assertIn('pr106_',transition.mask_path)
+            self.assertTrue(Path(transition.mask_path).is_file())
+            self.assertEqual(len(ws.undo_stack),1)
+            path=self.folder/'pr-card.multicam.json'
+            ws.project.save(path)
+            self.assertEqual(MulticamProject.load(path).transitions,[transition])
+            ws.undo();self.assertEqual(ws.project,before)
+            ws.redo();self.assertEqual(ws.project.transitions,[transition])
+        self.assertEqual(self.callback_errors,[])
+
 
 if __name__ == '__main__': unittest.main()

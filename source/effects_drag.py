@@ -62,8 +62,8 @@ class EffectDragMixin:
 
     def _effect_drag_press(self, event):
         self._effect_drag_cancel()
-        row = self.list.identify_row(event.y)
-        if self.list.identify_region(event.x, event.y) not in ('tree', 'cell') or not row:
+        row = self.list.item_at(event.x,event.y)
+        if not row:
             return
         item = self._catalog_by_key.get(row)
         if item is None or not self.ws._available():
@@ -82,6 +82,7 @@ class EffectDragMixin:
                 return
             drag['active'] = True
             self.stop_preview(quiet=True)
+            self.list.grab_set()
         self._effect_drag_hover()
         if self._effect_drag_after is None:
             self._effect_drag_after = self.after(80, self._effect_drag_scroll)
@@ -111,6 +112,11 @@ class EffectDragMixin:
                 outline='#8fdbb1', width=self.ws._px(3), tags='effect-drop')
             message = f'松开在 {format_time(target.boundary)} 接缝添加「{drag["preset"].name}」'
         self.feedback.set(message + ' · Esc 取消')
+        canvas.create_text(max(self.ws._timeline_left+self.ws._px(8),
+            min(tx(target.boundary if target.boundary is not None else target.start),
+                canvas.canvasx(canvas.winfo_width())-self.ws._px(260))),bottom+self.ws._px(8),
+            text=drag['preset'].name+' · 松开添加',anchor='nw',fill='#b6e8ce',
+            font=('Microsoft YaHei UI',9),tags='effect-drop')
 
     def _effect_drag_scroll(self):
         self._effect_drag_after = None
@@ -152,6 +158,8 @@ class EffectDragMixin:
             self.after_cancel(self._effect_drag_after)
             self._effect_drag_after = None
         try:
+            if self.list.grab_current() is self.list:
+                self.list.grab_release()
             self.list.configure(cursor='')
             canvas = getattr(self.ws, 'timeline', None)
             if canvas is not None:

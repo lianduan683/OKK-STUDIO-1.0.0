@@ -68,12 +68,14 @@ class EffectCatalogLayoutTests(unittest.TestCase):
             apply_library_overlay=Mock(),apply_library_mask=Mock())
         self.thumbnail_patch=patch('effects_browser.EffectsBrowser._request_thumbnail')
         self.thumbnail_patch.start()
+        self.asset_patch=patch('effects_library.default_app_dir',return_value=Path(__file__).resolve().parents[1])
+        self.asset_patch.start()
         ttk.Style(self.root).configure('Multicam.Treeview',rowheight=25)
         self.panel=EffectsBrowser(self.root,self.workspace)
         self.panel.pack(fill='both',expand=True)
 
     def tearDown(self):
-        self.panel.destroy();self.root.destroy();self.thumbnail_patch.stop()
+        self.panel.destroy();self.root.destroy();self.thumbnail_patch.stop();self.asset_patch.stop()
 
     def resize(self,width,height):
         self.root.geometry(f'{width}x{height}+10000+10000');self.root.deiconify();self.root.update()
@@ -82,15 +84,16 @@ class EffectCatalogLayoutTests(unittest.TestCase):
         for width,height in ((260,380),(304,340),(460,400),(900,560),(304,340)):
             with self.subTest(width=width,height=height):
                 self.resize(width,height)
-                for widget in (self.panel.categories,self.panel.subcategories,self.panel.apply_button,self.panel.preview_button):
+                for widget in (self.panel.subcategories,self.panel.apply_button,self.panel.preview_button):
                     left=widget.winfo_rootx()-self.panel.winfo_rootx()
                     top=widget.winfo_rooty()-self.panel.winfo_rooty()
                     self.assertGreaterEqual(left,0)
                     self.assertLessEqual(left+widget.winfo_width(),width)
                     self.assertGreaterEqual(top,0)
                     self.assertLessEqual(top+widget.winfo_height(),height)
-                self.assertGreaterEqual(sum(bool(self.panel.list.bbox(key)) for key in self.panel.list.get_children()),4)
-                self.assertEqual(bool(self.panel.list['displaycolumns']),width>=430)
+                self.assertGreaterEqual(sum(bool(self.panel.list.bbox(key)) for key in self.panel.list.get_children()),3)
+                self.assertEqual(bool(self.panel.navigation.winfo_ismapped()),width>=460)
+                self.assertGreaterEqual(self.panel.list._columns,1)
         self.assertEqual(self.errors,[])
 
     def test_categories_search_and_reload_preserve_selected_asset(self):
@@ -134,10 +137,21 @@ class EffectCatalogLayoutTests(unittest.TestCase):
         self.panel=EffectsBrowser(self.root,self.workspace)
         self.panel.pack(fill='both',expand=True)
         self.resize(456,540)
-        for widget in (self.panel.apply_button,self.panel.categories,self.panel.subcategories):
+        for widget in (self.panel.apply_button,self.panel.subcategories):
             self.assertLessEqual(widget.winfo_rootx()+widget.winfo_width(),self.panel.winfo_rootx()+456)
             self.assertLessEqual(widget.winfo_rooty()+widget.winfo_height(),self.panel.winfo_rooty()+540)
-        self.assertGreaterEqual(sum(bool(self.panel.list.bbox(key)) for key in self.panel.list.get_children()),4)
+        self.assertGreaterEqual(sum(bool(self.panel.list.bbox(key)) for key in self.panel.list.get_children()),3)
+        self.assertEqual(self.errors,[])
+
+    def test_expanded_details_keep_actions_visible_in_small_panel(self):
+        for width,height in ((260,380),(304,340),(520,400)):
+            self.resize(width,height)
+            if not self.panel._details_visible:self.panel._toggle_details()
+            self.root.update()
+            self.assertTrue(self.panel.detail_outer.winfo_ismapped())
+            bottom=self.panel.apply_button.winfo_rooty()+self.panel.apply_button.winfo_height()
+            self.assertLessEqual(bottom,self.panel.winfo_rooty()+height)
+            self.assertGreater(self.panel.list.winfo_height(),40)
         self.assertEqual(self.errors,[])
 
 
