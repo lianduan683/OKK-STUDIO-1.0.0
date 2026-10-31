@@ -25,7 +25,7 @@ class FloatingDockGroup:
         self.notebook.bind('<B1-Motion>',manager._motion,add='+')
         self.notebook.bind('<ButtonRelease-1>',manager._release,add='+')
         self.window.bind('<Configure>',self._configure,add='+')
-        self.window.bind('<Escape>',manager._cancel_drag,add='+')
+        self.window.bind('<Escape>',manager._escape_drag,add='+')
         manager._bind_header(self.header,lambda:self.group['tabs'][0],whole_group=True)
         self.window.geometry(group['geometry'])
 
@@ -62,6 +62,9 @@ class FloatingDockGroup:
         path=str(self.notebook.select())
         key=next((key for key,page in self.pages.items() if str(page)==path),None)
         if key is None:return
+        fullscreen=self.manager.fullscreen
+        if fullscreen.active is not None and fullscreen.active['window'] is self.window and fullscreen.active['key']!=key:
+            fullscreen.exit()
         changed=self.group.get('selected')!=key
         self.group['selected']=key
         self.window.title(self.manager.panels[key].title+' · 面板组 · OKK STUDIO')

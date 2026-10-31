@@ -113,6 +113,12 @@ class WorkspaceDockingMixin:
         self._tag_transport_widgets(self)
         self._bind_floating_transport()
 
+    def _toggle_program_fullscreen(self, _event=None):
+        self.dock_manager.fullscreen.toggle('program')
+        self._tag_transport_widgets(self)
+        self._bind_floating_transport()
+        return 'break'
+
     def _bind_floating_transport(self):
         enumerate_windows = getattr(self.dock_manager, 'iter_floating_windows', None)
         windows = (enumerate_windows() if enumerate_windows is not None else
@@ -206,11 +212,16 @@ class WorkspaceDockingMixin:
         return {'media_visible': self._media_visible, 'inspector_visible': self._inspector_visible,
                 'camera_rows': self.camera_rows, 'camera_columns': self.camera_columns,
                 'camera_page': self.camera_page,
+                'timeline_track_heights': {'video': self._timeline_video_height, 'audio': self._timeline_audio_height},
                 'body_sashes': ratios(self.body, True),
                 'main_sashes': ratios(self.workspace_split, False)}
 
     def _restore_workspace_chrome(self, data):
         if not isinstance(data, dict): return
+        heights = data.get('timeline_track_heights', {})
+        if isinstance(heights, dict):
+            for kind in ('video', 'audio'):
+                self._set_timeline_track_height(kind, heights.get(kind), persist=False)
         try: rows, columns = self._checked_camera_grid(data.get('camera_rows', 3), data.get('camera_columns', 3))
         except ValueError: rows, columns = 3, 3
         self.set_camera_grid(rows, columns, persist=False)

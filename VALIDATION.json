@@ -1,51 +1,49 @@
 {
-  "version": "1.0.6",
-  "build_id": "20261030-224059-131e5661",
-  "feature_regression": {
-    "run": 132,
-    "passed": 132,
+  "version": "1.0.7",
+  "build_id": "20261031-120109-41e8792b",
+  "focused_regression": {
+    "run": 103,
+    "passed": 103,
     "skipped": 0,
     "modules": [
-      "exposure_check",
-      "exposure_ui",
-      "vision_review",
-      "camera_match",
-      "camera_match_ui",
-      "timeline_import",
-      "timeline_split",
-      "timeline_enable",
-      "effects_drag",
-      "autosave_settings",
-      "effect_contract",
+      "premiere_docking",
+      "monitor_fullscreen",
       "finishing_workspace",
-      "project_open_compat"
+      "floating_page_switch",
+      "multicam_monitor_fixes",
+      "docking",
+      "docking_groups",
+      "native_panel_host",
+      "multicam_frame_clock"
     ]
   },
-  "mcp_regression": {
-    "run": 26,
-    "passed": 26,
-    "skipped": 0,
-    "modules": [
-      "okk_automation",
-      "okk_mcp_bridge",
-      "okk_mcp_server",
-      "exposure_mcp"
-    ]
+  "workspace_regression": {
+    "run": 14,
+    "passed": 13,
+    "failed": 1,
+    "failure": "test_float_entire_monitor_group_preserves_tabs_transport_and_video_handles: offscreen pointer hit returned None",
+    "baseline": "same failure reproduced in an unchanged earlier build"
   },
+  "prior_same_feature_build_validation": "three-display fullscreen restore, native caption drag and generated-media playback verified on build 20261031-115620-003e9358; not rerun for this build",
   "headless_executable_help_exit_code": 0,
-  "version_metadata": "1.0.6",
-  "frozen_modules_and_timeline_adapters": "verified",
+  "version_metadata": "1.0.7",
+  "frozen_modules_verified": [
+    "docking",
+    "dock_feedback",
+    "dock_fullscreen",
+    "monitor_fullscreen",
+    "native_dock_drag",
+    "floating_dock",
+    "tk_native_calls"
+  ],
   "archive_crc_checks": "passed",
   "source_allowlist_and_known_private_path_and_key_pattern_scan": "passed",
   "trusted_code_signature": false,
   "installation_and_uninstallation_retested_for_this_build": false,
-  "real_provider_api_tested": false,
   "not_tested": [
     "full test suite",
     "production install and in-place upgrade",
     "online resource download during installation",
-    "real external model provider calls",
-    "long media workloads across physical devices"
-  ],
-  "historical_test_failures": "See historical MCP_VALIDATION.json; not rerun as a full suite"
+    "all physical display and hardware combinations"
+  ]
 }

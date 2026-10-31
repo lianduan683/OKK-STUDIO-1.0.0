@@ -20,7 +20,11 @@ from multicam_frame_clock import canonical_frame_rate, probe_partition_rates
 
 class CanonicalFrameRateTests(unittest.TestCase):
     def test_rounded_ui_ntsc_rates_recover_the_exact_clock(self):
-        for value, expected in ((23.976024, Fraction(24000, 1001)),
+        for value, expected in ((23.976, Fraction(24000, 1001)),
+                                (29.97, Fraction(30000, 1001)),
+                                (59.94, Fraction(60000, 1001)),
+                                (119.88, Fraction(120000, 1001)),
+                                (23.976024, Fraction(24000, 1001)),
                                 (29.97003, Fraction(30000, 1001)),
                                 (47.952048, Fraction(48000, 1001)),
                                 (59.94006, Fraction(60000, 1001)),
@@ -29,7 +33,8 @@ class CanonicalFrameRateTests(unittest.TestCase):
                 self.assertEqual(canonical_frame_rate(value), expected)
 
     def test_custom_rates_outside_the_tolerance_remain_custom(self):
-        for value in (29.97, 59.94, 24, 25, 30, 60, 47.99, Fraction(12345, 271)):
+        for value in (Fraction(2997, 100), Fraction(2997, 50), 29.971, 59.941,
+                      24, 25, 30, 60, 47.99, Fraction(12345, 271)):
             with self.subTest(value=value):
                 self.assertEqual(canonical_frame_rate(value), Fraction(value).limit_denominator(100000))
         ntsc = float(Fraction(60000, 1001))

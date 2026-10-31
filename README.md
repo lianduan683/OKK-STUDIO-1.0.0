@@ -1,4 +1,4 @@
-# OKK STUDIO 1.0.6
+# OKK STUDIO 1.0.7
 
 Windows 多机位视频剪辑应用。本版提供逐轨音频、真实波形、时间标记、同步结果明细、机位列表折叠及三套键位，修复旧完整工程打开与保存。
 
@@ -6,11 +6,13 @@ Windows 多机位视频剪辑应用。本版提供逐轨音频、真实波形、
 
 ## 下载
 
-**[下载 OKK-STUDIO-1.0.6-Setup.exe](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.6/OKK-STUDIO-1.0.6-Setup.exe)** · [发行页](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/tag/v1.0.6)
+**[下载 OKK-STUDIO-1.0.7-Setup.exe](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.7/OKK-STUDIO-1.0.7-Setup.exe)** · [发行页](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/tag/v1.0.7)
 
 主程序已内置安装器。安装时下载并校验 v1.0.0 的四份固定资源 ZIP（约 5.75 GB），完整安装约 6.5 GB，建议预留至少 15 GB。已有离线资源可通过 `/PAYLOADDIR` 复用。安装与升级见 [INSTALLATION.md](INSTALLATION.md)。
 
 ## 新增与修复
+
+- 面板支持浮动、四边停靠、标签合并与排序和整组拖动；成片监看可在所在屏幕全屏并恢复原布局。
 
 - 本地曝光抽样及可选模型复核、机位匹配和调色导出。
 - D 键启用 / 禁用片段，支持撤销和工程保存。
@@ -50,6 +52,6 @@ Windows 10/11 64 位。缓存沿用可写的非 C 盘、非系统盘固定磁盘
 
 ## 源码与构建
 
-[下载 1.0.6 应用源码](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.6/OKK-STUDIO-1.0.6-source.zip)。源码包包含应用模块、回归测试、小型 UI 资源和构建文件；不包含用户工程、媒体、工作缓存或大型第三方二进制。构建步骤见 [BUILDING.md](BUILDING.md)。
+[下载 1.0.7 应用源码](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.7/OKK-STUDIO-1.0.7-source.zip)。源码包包含应用模块、回归测试、小型 UI 资源和构建文件；不包含用户工程、媒体、工作缓存或大型第三方二进制。构建步骤见 [BUILDING.md](BUILDING.md)。
 
 应用许可证见 [LICENSE](LICENSE)，第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

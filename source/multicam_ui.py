@@ -574,6 +574,9 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
         program.grid_rowconfigure(1, weight=1)
         program_title=self.program_title=tk.Frame(program,bg=PANEL)
         program_title.grid(row=0,column=0,sticky='ew')
+        self.program_fullscreen_button=ttk.Button(program_title,text='全屏 (F11)',
+            command=self._toggle_program_fullscreen,style='Compact.TButton')
+        self.program_fullscreen_button.pack(side='right',padx=self._px(4))
         self.compare_button=tk.Checkbutton(program_title,text='防抖对比',variable=self.stabilization_compare_var,
             command=self.toggle_stabilization_compare,bg=PANEL,fg=INK,activebackground=PANEL,activeforeground=INK,
             selectcolor=INPUT,font=('Microsoft YaHei UI',9),state='disabled')
@@ -625,10 +628,11 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
         timeline_section = tk.Frame(self, bg=BG, height=self._px(230))
         self.timeline_section = timeline_section
         timeline_section.grid_columnconfigure(0, weight=1)
-        timeline_section.grid_rowconfigure(1, weight=1)
+        timeline_section.grid_rowconfigure(2, weight=1)
         self.workspace_split.add(timeline_section, weight=2)
+        self._build_timeline_resize_grip(timeline_section)
         timeline_bar = self.timeline_bar = tk.Frame(timeline_section, bg=PANEL)
-        timeline_bar.grid(row=0, column=0, sticky='ew', pady=(self._px(1), self._px(0)))
+        timeline_bar.grid(row=1, column=0, sticky='ew', pady=(self._px(1), self._px(0)))
         tk.Label(timeline_bar, text='时间线', bg=PANEL, fg=INK,
                  font=('Microsoft YaHei UI', 10)).pack(side='left', padx=self._px(10))
         self._entry(timeline_bar, self.seek_var, 13).pack(side='left', padx=(self._px(5), self._px(2)), pady=self._px(5), ipady=self._px(2))
@@ -639,11 +643,12 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
         self._button(timeline_bar, '标记 M', self.add_timeline_marker)
         self._build_timeline_controls(timeline_bar)
         self._build_video_stack_control(timeline_bar)
+        self._build_timeline_size_control(timeline_bar)
         self._keyboard_hint_var = tk.StringVar(self)
         tk.Label(timeline_bar, textvariable=self._keyboard_hint_var, bg=PANEL, fg=MUTED,
                  font=('Microsoft YaHei UI', 9)).pack(side='right', padx=self._px(10))
         self.timeline = tk.Canvas(timeline_section, bg='#222427', height=self._px(200), highlightthickness=0)
-        self.timeline.grid(row=1, column=0, sticky='nsew')
+        self.timeline.grid(row=2, column=0, sticky='nsew')
         self.timeline.bind('<Configure>', lambda e: self.draw_timeline())
         self.timeline.bind('<ButtonPress-1>', self.timeline_press)
         self.timeline.bind('<B1-Motion>', self.timeline_motion)
@@ -653,10 +658,10 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
         self.timeline.bind('<Control-MouseWheel>', lambda e: self.change_zoom(2 if e.delta > 0 else 0.5))
         self.timeline.bind('<Shift-MouseWheel>', self.pan_timeline)
         self.scroll = ttk.Scrollbar(timeline_section, orient='horizontal', command=self._scroll_timeline)
-        self.scroll.grid(row=2, column=0, sticky='ew')
+        self.scroll.grid(row=3, column=0, sticky='ew')
         self.timeline.configure(xscrollcommand=self.scroll.set)
         self.timeline_vscroll = ttk.Scrollbar(timeline_section, orient='vertical', command=self.timeline.yview)
-        self.timeline_vscroll.grid(row=1, column=1, sticky='ns')
+        self.timeline_vscroll.grid(row=2, column=1, sticky='ns')
         self.timeline.configure(yscrollcommand=self.timeline_vscroll.set)
         self.timeline_vscroll.grid_remove()
         footer = tk.Frame(self, bg=BG)
@@ -1149,10 +1154,14 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
         try:
             candidate = copy.deepcopy(self.project)
             set_camera_on_range(candidate, *self.selected_program_range, camera)
+            candidate.video_stack_enabled = False
             candidate.validate()
         except Exception as exc:
             messagebox.showerror('切换片段机位', str(exc), parent=self); return
-        self._remember(); self.project = candidate; self._refresh()
+        self._remember(); self.project = candidate
+        self._finish_preview_epoch(seek=False)
+        self._set_stack_preview_mode(False)
+        self._refresh()
         self._set_program_label(self.project.camera_at(self.current))
         self.status.set(f'所选片段已切换到机位 {camera}。')
 
@@ -1794,7 +1803,7 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
 
     def switch(self, camera):
         if not self._available() or camera not in self.project.cameras: return
-        if self.project.video_stack_enabled:
+        if self.project.video_stack_enabled and self._color_mode:
             self._displayed_camera = camera
             self.set_grade_target(camera)
             self._highlight(camera)
@@ -1804,17 +1813,25 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
         if self.selected_program_range is not None:
             self._switch_selected_camera(camera)
             return
-        if self.record_var.get():
-            self._remember(); self.project.set_cut(self.current, camera)
+        was_stack = self.project.video_stack_enabled
+        recording = self.record_var.get()
+        if recording or was_stack:
+            self._remember()
+        if was_stack:
+            self._finish_preview_epoch(seek=False)
+            self.project.video_stack_enabled = False
+            self._set_stack_preview_mode(False)
+        if recording:
+            self.project.set_cut(self.current, camera)
+        if recording or was_stack:
             self._refresh(False)
-            if self.player:
-                self.player.submit('configure', project=copy.deepcopy(self.project), use_proxies=self.proxy_var.get())
-                self.player.submit('audition', camera=None)
-        elif self.player:
+            self._configure_player()
+        if not recording and self.player:
             self.player.submit('audition', camera=camera)
         self._displayed_camera = camera
         self.program_var.set('成片监看 · '+self._label_camera(camera) + ('' if self.record_var.get() else '（试听）'))
         self._highlight(camera)
+        self.status.set(f'已切换到机位 {camera}' + ('，已在播放头记录切点。' if recording else '（试听，未记录切点）。'))
 
     def start_monitors(self):
         if not self._available() or not (self.project.clips or source_audio_clips(self.project) or self.project.master_audio): return
@@ -2001,6 +2018,10 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
     def _key(self, event):
         if not self.winfo_ismapped(): return
         if self._transport_input_widget(event.widget): return
+        if event.keysym == 'F11':
+            return self._toggle_program_fullscreen(event)
+        if event.keysym == 'Escape' and self.dock_manager.fullscreen.exit():
+            return 'break'
         action = self._keyboard_action(event)
         if action == 'escape':
             browser = vars(self).get('effects_browser')

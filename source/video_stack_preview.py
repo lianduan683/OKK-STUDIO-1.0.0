@@ -11,6 +11,7 @@ from contextlib import ExitStack, contextmanager
 from fractions import Fraction
 import json
 import math
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -302,8 +303,13 @@ class StackPreview:
             try: yield process, fps, error_log
             finally: self._reap(process)
 
+    @staticmethod
+    def _media_key(path):
+        stat = Path(path).stat()
+        return (os.path.normcase(os.path.abspath(path)), stat.st_size, stat.st_mtime_ns)
+
     def _probe(self, path, cancel):
-        stat = Path(path).stat(); key = (path, stat.st_size, stat.st_mtime_ns)
+        key = self._media_key(path)
         if key in self._media: return self._media[key]
         command = _media_probe_command(self.ffprobe, path)
         entries = command.index('-show_entries')+1
@@ -408,8 +414,11 @@ class StackPreview:
                     resolved.append(layer)
                 segment = replace(segment, layers=tuple(resolved))
             for layer in segment.layers:
-                stat = Path(layer.path).stat()
-                rate = self._rates.get((layer.path, stat.st_size, stat.st_mtime_ns))
+                # Proxy validation resolves the file path, while the linked
+                # proxy may use different Windows casing. Reuse the same
+                # timing identity or a known CFR source looks unknown and
+                # every seek decodes all preceding frames again.
+                rate = self._rates.get(self._media_key(layer.path))
                 if rate is not None: rates[layer.path] = rate
             return segment
         # Alpha identity comes from an actual probe, including old projects.

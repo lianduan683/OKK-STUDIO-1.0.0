@@ -134,6 +134,7 @@ class VideoStackUITests(unittest.TestCase):
     def test_camera_click_and_digits_select_grade_layer_without_recording_or_audition(self):
         self.stack()
         ws = self.workspace
+        ws._color_mode = True
         original = copy.deepcopy(ws.project)
         ws.player = RecordingPlayer()
         ws.selected_program_range = (0., 4.)

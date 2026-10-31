@@ -16,6 +16,7 @@ from timeline_layout_ui import TimelineLayoutMixin
 
 class TimelineAudioUIMixin(TimelineLayoutMixin):
     def _init_timeline_audio(self):
+        self._init_timeline_layout()
         self._waveform_results = queue.Queue()
         self._waveform_cache = OrderedDict()
         self._waveform_pending = set()

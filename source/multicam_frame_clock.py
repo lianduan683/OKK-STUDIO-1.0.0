@@ -17,6 +17,8 @@ from exporter_core import CREATE_NO_WINDOW, ExportCancelled
 
 _NTSC_RATES = tuple(Fraction(value, 1001) for value in
                     (12000, 15000, 24000, 30000, 48000, 60000, 120000, 240000))
+_UI_NTSC_RATES = {23.976: Fraction(24000, 1001), 29.97: Fraction(30000, 1001),
+                  59.94: Fraction(60000, 1001), 119.88: Fraction(120000, 1001)}
 
 
 def canonical_frame_rate(fps: int | float | Fraction) -> Fraction:
@@ -26,6 +28,12 @@ def canonical_frame_rate(fps: int | float | Fraction) -> Fraction:
     value = float(fps)
     if not math.isfinite(value) or value <= 0:
         raise ValueError("帧率必须是正数。")
+    # These are the editor's standard frame-rate presets. Treating 29.97 as
+    # 2997/100 against a 30000/1001 source creates a 999999-frame resampling
+    # period and makes an ordinary timeline seek decode from the file start.
+    # Explicit fractions still allow callers to request an exact custom clock.
+    if not isinstance(fps, Fraction) and value in _UI_NTSC_RATES:
+        return _UI_NTSC_RATES[value]
     for rate in _NTSC_RATES:
         if abs(value - float(rate)) <= 1e-6:
             return rate

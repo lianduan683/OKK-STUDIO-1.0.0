@@ -11,13 +11,15 @@ import ctypes as C
 from ctypes import wintypes as W
 import os
 import tkinter as tk
+from tk_native_calls import TkNativeCalls
 
 
 class _Windows:
-    def __init__(self):
+    def __init__(self, widget):
         if os.name != 'nt':
             raise RuntimeError('整组浮动面板当前需要 Windows。')
         self.api = C.WinDLL('user32', use_last_error=True)
+        self._calls = TkNativeCalls.for_widget(widget)
         self.api.GetParent.argtypes = [W.HWND]
         self.api.GetParent.restype = W.HWND
         self.api.SetParent.argtypes = [W.HWND, W.HWND]
@@ -41,13 +43,13 @@ class _Windows:
 
     def set_style(self, hwnd, value, extended=False):
         C.set_last_error(0)
-        previous = self.api.SetWindowLongPtrW(hwnd, -20 if extended else -16, value)
+        previous = self._calls.call(self.api.SetWindowLongPtrW, hwnd, -20 if extended else -16, value)
         if not previous and C.get_last_error():
             raise C.WinError(C.get_last_error())
 
     def set_parent(self, hwnd, parent):
         C.set_last_error(0)
-        previous = self.api.SetParent(hwnd, parent or None)
+        previous = self._calls.call(self.api.SetParent, hwnd, parent or None)
         if not previous and C.get_last_error():
             raise C.WinError(C.get_last_error())
 
@@ -55,11 +57,11 @@ class _Windows:
         # Reapplying FRAMECHANGED on every idle resize invalidates all child
         # video surfaces even when their size has not changed.
         flags = 0x0014 | (0x0020 if frame_changed else 0) | (0x0040 if visible else 0)
-        if not self.api.SetWindowPos(hwnd, None, 0, 0, width, height, flags):
+        if not self._calls.call(self.api.SetWindowPos, hwnd, None, 0, 0, width, height, flags):
             raise C.WinError(C.get_last_error())
 
     def show(self, hwnd, visible):
-        self.api.ShowWindow(hwnd, 4 if visible else 0)  # SHOWNOACTIVATE/HIDE
+        self._calls.call(self.api.ShowWindow, hwnd, 4 if visible else 0)  # SHOWNOACTIVATE/HIDE
 
 
 class NativePanelHost:
@@ -74,7 +76,7 @@ class NativePanelHost:
         if widget.winfo_class() != 'Frame' or widget.tk is not container.tk:
             raise ValueError('浮动面板和容器必须是同一 Tk 实例内的原有 Frame。')
         self.widget, self.container = widget, container
-        self._native = _Windows()
+        self._native = _Windows(widget)
         self._leaf_hwnd = int(widget.winfo_id())
         self._wrapper = 0
         self._original_style = self._original_exstyle = None

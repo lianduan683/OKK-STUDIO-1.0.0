@@ -95,7 +95,7 @@ from editor_core import build_proxy_encode_command, proxy_format_labels, resolve
 
 
 APP_NAME = "RTX 视频渲染工坊"
-APP_VERSION = "1.0.6"
+APP_VERSION = "1.0.7"
 BG = "#18191b"
 SURFACE = "#202124"
 PANEL = "#242629"

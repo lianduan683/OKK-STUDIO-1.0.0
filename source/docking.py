@@ -17,6 +17,7 @@ from pathlib import Path
 import re
 import tkinter as tk
 from tkinter import ttk
+from dock_fullscreen import DockFullscreen
 
 PANEL='#292b2e'; BORDER='#18191b'; TEXT='#dedfe3'; ACCENT='#58a6d6'
 
@@ -68,8 +69,11 @@ class DockManager:
         self._home_anchors={};self._default_hidden={}
         self._grid_defaults={}
         self._containers=[];self._groups={};self._sashes=[];self._bound={}
-        self._drag=None;self._overlay=None;self._closed=False;self._after=None
+        self._drag=None;self._overlay=None;self._drag_preview=None;self._closed=False;self._after=None
+        self._native_drag=None;self._native_sync_after=None
         self._binding_ids=[]
+        self.fullscreen=DockFullscreen(self)
+        self._bind(workspace.winfo_toplevel(),'<Escape>',self._escape_drag)
         for event in ('<Map>','<Unmap>'):
             identity=workspace.bind(event,self._workspace_map,add='+')
             self._binding_ids.append((workspace,event,identity))
@@ -151,7 +155,7 @@ class DockManager:
         self._bind(widget,'<Alt-ButtonPress-1>',lambda event:self._press(event,key))
         self._bind(widget,'<Alt-B1-Motion>',self._motion)
         self._bind(widget,'<Alt-ButtonRelease-1>',self._release)
-        self._bind(widget,'<Escape>',self._cancel_drag)
+        self._bind(widget,'<Escape>',self._escape_drag)
 
     def _bind_header(self,header,key,*,whole_group=False):
         current=lambda:key() if callable(key) else key
@@ -191,6 +195,8 @@ class DockManager:
         return 'break'
 
     def _detach(self,widget):
+        if self.fullscreen.active is not None and self.panels[self.fullscreen.active['key']].widget is widget:
+            self.fullscreen.exit()
         manager=widget.winfo_manager()
         if manager=='wm':self.workspace.tk.call('wm','forget',widget)
         elif manager in ('pack','grid','place'):getattr(widget,manager+'_forget')()
@@ -289,7 +295,7 @@ class DockManager:
         for key in self._floating:self._floating[key]=self._float_geometry(key)
         for identity,host in self._float_hosts.items():
             if identity in self._floating_groups:
-                self._floating_groups[identity]['geometry']=host.window.geometry()
+                self._floating_groups[identity]['geometry']=self.fullscreen.geometry(host.window)
         for node,widget in self._sashes:
             try:
                 length=widget.winfo_width() if node['orient']=='horizontal' else widget.winfo_height()
@@ -313,15 +319,35 @@ class DockManager:
                 host.close();del self._float_hosts[identity]
 
     def _sync_float_hosts(self):
-        if not self._floating_groups:return
         from floating_dock import FloatingDockGroup
         for identity,group in self._floating_groups.items():
             host=self._float_hosts.get(identity)
             if host is None:
                 host=FloatingDockGroup(self,group);self._float_hosts[identity]=host
             host.sync(group)
+        self._sync_native_drag()
+
+    def _sync_native_drag(self,*,settled=False):
+        if os.name!='nt' or self._closed:return
+        if not settled:
+            # Tk replaces a wm-managed Frame's wrapper while mapping it. Wait
+            # for that map before recording the HWND used by caption hit tests.
+            if self._native_sync_after is None:
+                def sync():
+                    self._native_sync_after=None
+                    self._sync_native_drag(settled=True)
+                self._native_sync_after=self.workspace.after_idle(sync)
+            return
+        if self._native_drag is None and (self._floating or self._float_hosts):
+            from native_dock_drag import NativeDockDrag
+            self._native_drag=NativeDockDrag(self)
+        if self._native_drag is not None:
+            windows=[(key,False,self.panels[key].widget) for key in self._floating]
+            windows.extend((host.group['tabs'][0],True,host.window) for host in self._float_hosts.values())
+            self._native_drag.sync(windows)
 
     def _close_float_hosts(self):
+        self.fullscreen.exit()
         errors=[]
         for identity,host in list(self._float_hosts.items()):
             try:host.close()
@@ -382,6 +408,7 @@ class DockManager:
         return pane
 
     def _render(self):
+        self.fullscreen.exit()
         self._active=True;self._prepare_float_hosts();self._clear_runtime()
         for header in self._home_headers.values():header.pack_forget()
         for entry in self._anchors.values():
@@ -496,7 +523,7 @@ class DockManager:
 
     def _geometry(self,key,geometry=None):
         panel=self.panels[key];w,h=panel.minsize
-        if geometry and re.fullmatch(r'\d+x\d+[+-]\d+[+-]\d+',str(geometry)):
+        if geometry and re.fullmatch(r'\d+x\d+(?:[+-]\d+|\+-\d+){2}',str(geometry)):
             return str(geometry)
         width=max(self._px(w),panel.widget.winfo_width(),self._px(360))
         height=max(self._px(h),panel.widget.winfo_height(),self._px(240))
@@ -513,19 +540,18 @@ class DockManager:
 
     def _restore_geometry(self,key,geometry,saved_scale):
         geometry=self._geometry(key,geometry)
-        match=re.fullmatch(r'(\d+)x(\d+)([+-]\d+)([+-]\d+)',geometry)
-        width,height,x,y=map(int,match.groups())
+        match=re.fullmatch(r'(\d+)x(\d+)([+-]-?\d+)([+-]-?\d+)',geometry)
+        width,height,x,y=(int(value.replace('+-','-')) for value in match.groups())
         factor=self.scale/saved_scale if saved_scale>0 else 1.
         left,top,sw,sh=self._screen_bounds()
         minimum=self.panels[key].minsize
         width=min(sw,max(self._px(minimum[0]),round(width*factor)))
         height=min(sh,max(self._px(minimum[1]),round(height*factor)))
-        # Keep a title/drag area reachable after monitors are unplugged. Tk's
-        # negative geometry coordinates are right/bottom offsets, so use the
-        # primary screen for an entirely missing or negative saved location.
-        if x<0 or x+width<left+self._px(40) or x>left+sw-self._px(40):x=max(0,left)+self._px(40)
-        if y<0 or y+height<top+self._px(40) or y>top+sh-self._px(40):y=max(0,top)+self._px(40)
-        return f'{width}x{height}{x:+d}{y:+d}'
+        # Preserve reachable secondary-screen coordinates; recover a title
+        # area on the primary display only when its old monitor is missing.
+        if x+width<left+self._px(40) or x>left+sw-self._px(40):x=max(0,left)+self._px(40)
+        if y+height<top+self._px(40) or y>top+sh-self._px(40):y=max(0,top)+self._px(40)
+        return f'{width}x{height}+{x}+{y}'
 
     def _add_grip(self,panel):
         if panel.header is not None or panel.grip is not None:return
@@ -568,12 +594,14 @@ class DockManager:
             self.workspace.tk.call('wm','minsize',widget,*map(self._px,panel.minsize))
             if panel.close_command is None:panel.close_command=widget.register(lambda:self._return_home(key))
             self.workspace.tk.call('wm','protocol',widget,'WM_DELETE_WINDOW',panel.close_command)
-            self.workspace.tk.call('wm','geometry',widget,geometry)
             if not self.workspace.winfo_viewable():self.workspace.tk.call('wm','withdraw',widget)
+        # wm manage can report its previous geometry before the new wrapper
+        # is mapped; explicitly apply it even when the text appears unchanged.
+        self.workspace.tk.call('wm','geometry',widget,geometry)
         panel.location='floating'
 
     def _float_geometry(self,key):
-        try:return str(self.workspace.tk.call('wm','geometry',self.panels[key].widget))
+        try:return self.fullscreen.geometry(self.panels[key].widget)
         except tk.TclError:return self._floating.get(key)
 
     def float_panel(self,key,geometry=None):
@@ -630,27 +658,34 @@ class DockManager:
             group['tabs'].append(key);group['selected']=key
         self._render();self.focus(key);self._changed()
 
-    def dock(self,key,target,side='center'):
-        return self._dock_members((key,),target,side)
+    def dock(self,key,target,side='center',*,index=None):
+        return self._dock_members((key,),target,side,index=index)
 
-    def _dock_members(self,keys,target,side='center'):
+    def _dock_members(self,keys,target,side='center',*,index=None):
         if side not in ('center','left','right','top','bottom'):raise ValueError('Invalid docking side')
         for key in (*keys,target):
             if key not in self.panels:raise KeyError(key)
         if target in keys:return self.focus(target)
         if target in self._hidden:self.show(target)
         self._capture_ratios()
+        # Insertion refers to the visible tab strip before removing the source.
+        old=self._floating_group(target) or self._find(target)[1]
+        if index is not None and old is not None:
+            index-=sum(item in keys for item in old['tabs'][:index])
         for key in keys:self._remove(key)
         group=self._floating_group(target)
         if target in self._floating:
             geometry=self._floating.pop(target);group=self._group([target]);group['geometry']=geometry
             self._floating_groups[group['id']]=group
         if group is not None:
-            group['tabs'].extend(keys);group['selected']=keys[0]
+            position=len(group['tabs']) if index is None else max(0,min(index,len(group['tabs'])))
+            group['tabs'][position:position]=keys;group['selected']=keys[0]
         else:
             anchor,group=self._find(target)
             if group is None:raise ValueError('目标面板没有停靠位置。')
-            if side=='center':group['tabs'].extend(keys);group['selected']=keys[0]
+            if side=='center':
+                position=len(group['tabs']) if index is None else max(0,min(index,len(group['tabs'])))
+                group['tabs'][position:position]=keys;group['selected']=keys[0]
             else:
                 new=self._group(keys);before=side in ('left','top')
                 split={'type':'split','orient':'horizontal' if side in ('left','right') else 'vertical',
@@ -660,6 +695,7 @@ class DockManager:
 
     def restore_defaults(self):
         self._cancel_drag()
+        if self._native_drag is not None:self._native_drag.sync([])
         self._close_float_hosts();self._floating_groups={}
         for panel in self.panels.values():self._detach(panel.widget);self._remove_grip(panel)
         self._clear_runtime()
@@ -770,12 +806,13 @@ class DockManager:
 
     def load(self,path):self.restore(json.loads(Path(path).read_text(encoding='utf-8')))
 
-    def _targets(self):
+    def _targets(self,exclude=()):
         for group in self._floating_groups.values():
-            if self._drag and self._drag.get('whole_group') and self._drag['key'] in group['tabs']:continue
+            if set(group['tabs']).issubset(exclude):continue
             host=self._float_hosts.get(group['id'])
             if host and host.window.winfo_viewable():yield group['tabs'][0],host.notebook
         for key in self._floating:
+            if key in exclude:continue
             if self.panels[key].widget.winfo_viewable():yield key,self.panels[key].widget
         if self._active:
             for node,notebook in self._groups.values():
@@ -785,10 +822,14 @@ class DockManager:
                 widget=self._anchors[anchor]['original']
                 if node and widget.winfo_viewable():yield node['tabs'][0],widget
 
-    def drop_target(self,x,y):
-        for key,widget in self._targets():
+    def drop_target(self,x,y,*,exclude=()):
+        for key,widget in self._targets(exclude):
             left,top=widget.winfo_rootx(),widget.winfo_rooty();width,height=widget.winfo_width(),widget.winfo_height()
             if left<=x<left+width and top<=y<top+height:
+                if isinstance(widget,ttk.Notebook):
+                    from dock_feedback import tab_insertion
+                    insertion=tab_insertion(widget,x,y,self._px)
+                    if insertion is not None:return key,'tab:'+str(insertion[0]),insertion[1]
                 distances={'left':(x-left)/width,'right':(left+width-x)/width,
                            'top':(y-top)/height,'bottom':(top+height-y)/height}
                 side=min(distances,key=distances.get)
@@ -796,8 +837,38 @@ class DockManager:
                 return key,side,(left,top,width,height)
         return None
 
+    def _empty_targets(self):
+        """Expose a narrow return strip where an emptied grid/pane collapsed."""
+        for anchor,node in self._roots.items():
+            if node is not None or anchor in self._default_hidden:continue
+            home=self._anchors[anchor]['home'];container=home.container
+            if not container.winfo_viewable():continue
+            left,top=container.winfo_rootx(),container.winfo_rooty()
+            width,height=container.winfo_width(),container.winfo_height();edge=self._px(24)
+            if home.manager=='grid':
+                column,row=(int(home.options.get(axis,0)) for axis in ('column','row'))
+                x,y,w,h=container.grid_bbox(column,row)
+                if w<edge:
+                    x=max(0,min(width-edge,x));w=min(edge,width)
+                if h<edge:
+                    y=max(0,min(height-edge,y));h=min(edge,height)
+                yield anchor,'home',(left+x,top+y,w,h)
+            elif home.manager=='panedwindow':
+                horizontal=str(container.cget('orient'))=='horizontal'
+                if horizontal:
+                    yield anchor,'home',(left+(0 if home.index==0 else max(0,width-edge)),top,min(edge,width),height)
+                else:
+                    yield anchor,'home',(left,top+(0 if home.index==0 else max(0,height-edge)),width,min(edge,height))
+
+    def _dock_home(self,keys,anchor):
+        self._capture_ratios()
+        for key in keys:self._remove(key)
+        self._roots[anchor]=self._group(keys)
+        self._render();self.focus(keys[0]);self._changed()
+
     def _press(self,event,key,*,whole_group=False):
         if self._closed:return
+        self._cancel_drag()
         self._drag={'key':key,'x':event.x_root,'y':event.y_root,'widget':event.widget,'started':False,'whole_group':whole_group}
 
     def _motion(self,event):
@@ -808,22 +879,32 @@ class DockManager:
             drag['started']=True
             try:drag['widget'].grab_set()
             except tk.TclError:pass
+            from dock_feedback import DragPreview
+            panel=self.panels[drag['key']]
+            size=(max(self._px(panel.minsize[0]),panel.widget.winfo_width()),
+                  max(self._px(panel.minsize[1]),panel.widget.winfo_height()))
+            self._drag_preview=DragPreview(self.workspace,self._px,panel.title,size,drag['whole_group'])
         target=self._drag_target(event.x_root,event.y_root,drag['key'])
-        if target and target[0]==drag['key']:
-            _,group=self._find(drag['key'])
-            if group is None or len(group['tabs'])==1:target=None
         self._show_hint(target)
+        self._drag_preview.move(event.x_root,event.y_root,target is None)
         return 'break'
 
     def _drag_target(self,x,y,key):
-        target=self.drop_target(x,y)
-        if target and self._drag and self._drag.get('whole_group') and target[0] in self.group_members(key):return None
+        for target in self._empty_targets():
+            left,top,width,height=target[2]
+            if left<=x<left+width and top<=y<top+height:return target
+        whole=self._drag and self._drag.get('whole_group')
+        exclude=self.group_members(key) if whole else (key,)
+        target=self.drop_target(x,y,exclude=exclude)
+        if target and whole and target[0] in self.group_members(key):return key,'center',target[2]
         if target and target[0]==key:
             neighbor=next((item for item in self.group_members(key) if item!=key),None)
             if neighbor:target=(neighbor,target[1],target[2])
+            else:target=(key,'center',target[2])
         return target
 
     def _show_hint(self,target):
+        if target and self._drag and target[:2]==(self._drag['key'],'center'):target=None
         if target is None:
             if self._overlay:self._overlay.withdraw()
             return
@@ -841,8 +922,9 @@ class DockManager:
             except tk.TclError:pass
             label=tk.Label(overlay,bg=ACCENT,fg='white',font=('Microsoft YaHei UI',12,'bold'))
             label.pack(expand=True);overlay._dock_label=label;self._overlay=overlay
-        self._overlay._dock_label.configure(text={'center':'合并为标签','left':'停靠到左侧','right':'停靠到右侧','top':'停靠到上方','bottom':'停靠到下方'}[side])
-        self._overlay.geometry(f'{max(1,width)}x{max(1,height)}{x:+d}{y:+d}')
+        label='' if side.startswith('tab:') else {'home':'放回工作区','center':'合并为标签','left':'停靠到左侧','right':'停靠到右侧','top':'停靠到上方','bottom':'停靠到下方'}[side]
+        self._overlay._dock_label.configure(text=label)
+        self._overlay.geometry(f'{max(1,width)}x{max(1,height)}+{x}+{y}')
         self._overlay.deiconify()
 
     def _release(self,event):
@@ -851,26 +933,40 @@ class DockManager:
         started=drag['started'];key=drag['key'];target=self._drag_target(event.x_root,event.y_root,key) if started else None
         self._cancel_drag()
         if not started:return
-        if target and target[0]!=key:
-            (self.dock_group if drag.get('whole_group') else self.dock)(key,target[0],target[1])
+        if target and target[1]=='home':
+            self._dock_home(self.group_members(key) if drag.get('whole_group') else (key,),target[0])
+        elif target and target[0]!=key:
+            keys=self.group_members(key) if drag.get('whole_group') else (key,)
+            side=target[1];index=int(side[4:]) if side.startswith('tab:') else None
+            self._dock_members(keys,target[0],'center' if index is not None else side,index=index)
         elif not target:
+            if drag.get('native'):
+                self._changed();return 'break'
             panel=self.panels[key];w=max(self._px(panel.minsize[0]),panel.widget.winfo_width())
             h=max(self._px(panel.minsize[1]),panel.widget.winfo_height())
-            (self.float_group if drag.get('whole_group') else self.float_panel)(key,f'{w}x{h}+{max(0,event.x_root-self._px(30))}+{max(0,event.y_root-self._px(12))}')
+            geometry=f'{w}x{h}+{event.x_root-self._px(30)}+{event.y_root-self._px(12)}'
+            (self.float_group if drag.get('whole_group') else self.float_panel)(key,geometry)
         return 'break'
 
     def _cancel_drag(self,event=None):
+        if event is not None:self.fullscreen.exit()
         if self._drag:
             try:self._drag['widget'].grab_release()
             except tk.TclError:pass
         self._drag=None
         if self._overlay:
             self._overlay.destroy();self._overlay=None
+        if self._drag_preview:
+            self._drag_preview.destroy();self._drag_preview=None
         return 'break'
+
+    def _escape_drag(self,event=None):
+        if self._drag is not None:return self._cancel_drag()
 
     def _workspace_map(self,event):
         if event.widget is not self.workspace or self._closed:return
         visible=event.type==tk.EventType.Map
+        if not visible:self._cancel_drag()
         for host in self._float_hosts.values():
             try:host.window.deiconify() if visible else host.window.withdraw()
             except tk.TclError:pass
@@ -881,6 +977,9 @@ class DockManager:
     def close(self):
         if self._closed:return
         self._cancel_drag();self._close_float_hosts();self._closed=True
+        if self._native_sync_after is not None:
+            self.workspace.after_cancel(self._native_sync_after);self._native_sync_after=None
+        if self._native_drag is not None:self._native_drag.close()
         for panel in self.panels.values():
             try:self._detach(panel.widget);self._remove_grip(panel)
             except tk.TclError:pass

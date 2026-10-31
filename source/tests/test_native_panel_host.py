@@ -114,6 +114,30 @@ class NativePanelHostTests(unittest.TestCase):
         self.check_picture('source')
         self.assertEqual(self.errors, [])
 
+    def test_native_error_code_survives_tcl_dispatch_and_keeps_original_parent(self):
+        host = self.attach('source'); self.select('source')
+        parent = host._native.parent(host._wrapper)
+        with self.assertRaises(OSError) as raised:
+            host._native.set_parent(host._wrapper, 1)  # Invalid parent HWND.
+        self.assertEqual(raised.exception.winerror, 1400)
+        self.assertEqual(host._native.parent(host._wrapper), parent)
+        self.assertTrue(host.attached)
+        self.check_picture('source')
+
+    def test_worker_thread_cannot_dispatch_native_window_operations(self):
+        import threading
+        host = self.attach('source'); self.select('source')
+        errors = []
+        def mutate():
+            try: host._native.set_parent(host._wrapper, 0)
+            except RuntimeError as error: errors.append(str(error))
+        worker = threading.Thread(target=mutate)
+        worker.start(); worker.join(timeout=2)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(host._native.parent(host._wrapper), self.pages['source'].winfo_id())
+        self.check_picture('source')
+
     def test_tk_detach_failure_preserves_content_outside_shell_until_retry(self):
         host = self.attach('source'); self.select('source')
         with patch.object(host,'_forget_window_manager',side_effect=tk.TclError('injected wm forget failure')):
