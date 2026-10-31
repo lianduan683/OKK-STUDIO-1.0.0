@@ -26,6 +26,7 @@ from effects_catalog import (GROUPS, catalog_categories, category_sort_key, over
 from cache_paths import cache_dir
 from effects_drag import EffectDragMixin
 from effects_tiles import EffectTiles
+from effect_preview import PREVIEW_KINDS
 
 PANEL, INPUT, INK, MUTED, ACCENT = '#292b2e', '#18191b', '#dedfe3', '#969ba3', '#58a6d6'
 FONT = ('Microsoft YaHei UI', 9)
@@ -186,6 +187,7 @@ class EffectsBrowser(EffectDragMixin, tk.Frame):
         self._navigating = False
         self._previewing = False
         self._preview_selection = None
+        self._effect_preview_window = None
         self._poll_id = None
         self._items = ()
         self._catalog = library_presets()
@@ -293,7 +295,7 @@ class EffectsBrowser(EffectDragMixin, tk.Frame):
         self.actions=tk.Frame(self,bg=PANEL);self.actions.grid(row=5,column=0,sticky='ew',padx=px(8),pady=(px(4),px(5)))
         self.actions.columnconfigure(0,weight=1)
         self.actions.columnconfigure(1,weight=1)
-        self.preview_button=ttk.Button(self.actions,text='试看颜色',command=self.preview,style='Compact.TButton')
+        self.preview_button=ttk.Button(self.actions,text='预览效果',command=self.preview_effect,style='Compact.TButton')
         self.preview_button.grid(row=0,column=0,sticky='ew',padx=px(2))
         self.apply_button=ttk.Button(self.actions,text='应用到所选片段',command=self.apply,style='Compact.TButton')
         self.apply_button.grid(row=0,column=1,sticky='ew',padx=px(2))
@@ -305,6 +307,9 @@ class EffectsBrowser(EffectDragMixin, tk.Frame):
         self.secondary_button.grid(row=0,column=0,sticky='ew',padx=px(2))
         self.applied_preview_button=ttk.Button(self.secondary_actions,text='预览已应用效果',command=self.preview_applied,style='Compact.TButton')
         self.applied_preview_button.grid(row=0,column=1,sticky='ew',padx=px(2))
+        self.live_preview_button=ttk.Button(self.secondary_actions,text='所选片段试看颜色',
+            command=self.preview,style='Compact.TButton')
+        self.live_preview_button.grid(row=2,column=0,columnspan=2,sticky='ew',padx=px(2),pady=(px(3),0))
         tk.Label(self,textvariable=self.feedback,bg=PANEL,fg=MUTED,font=('Microsoft YaHei UI',8),
                  anchor='w',width=1).grid(row=6,column=0,sticky='ew',padx=px(10),pady=px(3))
         self.detail_outer.grid_remove()
@@ -479,7 +484,9 @@ class EffectsBrowser(EffectDragMixin, tk.Frame):
         self.category_text.set(f'{item.category}\n{item.name}' if item else '')
         self.detail_text.set(item.description if item else '没有匹配的效果，请更换搜索词或分类。')
         self.swatch.configure(bg=item.swatch if item else PANEL)
-        self.preview_button.configure(state='normal' if item and item.kind=='grade' else 'disabled')
+        self.preview_button.configure(state='normal' if item and item.kind in PREVIEW_KINDS else 'disabled')
+        if item and item.kind=='grade':self.live_preview_button.grid()
+        else:self.live_preview_button.grid_remove()
         self.scale.configure(state='normal' if item and item.kind in ('grade','overlay') else 'disabled')
         self.scale.configure(from_=1 if item and item.kind=='overlay' else 0)
         if item and item.kind=='overlay' and self.strength.get()<1:self.strength.set(1)
@@ -615,10 +622,33 @@ class EffectsBrowser(EffectDragMixin, tk.Frame):
             return True
         except ValueError as error:self.feedback.set(str(error));return False
 
+    def preview_effect(self):
+        item = self.selected_preset()
+        if not item or item.kind not in PREVIEW_KINDS:
+            return False
+        try:
+            duration = float(self.duration.get()) if item.kind in ('transition', 'mask') else .5
+            strength = self.strength.get()/100.
+            if not math.isfinite(duration) or not .05 <= duration <= 5:
+                raise ValueError('转场时长请输入 0.05–5 秒。')
+            from effect_preview_ui import EffectPreviewWindow
+            window = self._effect_preview_window
+            if window is None or not window.winfo_exists():
+                window = self._effect_preview_window = EffectPreviewWindow(self)
+            window.load(item, strength, duration)
+            self.feedback.set('已打开示例预览；点击应用才会写入工程。')
+            return True
+        except (ValueError, OSError) as error:
+            self.feedback.set(str(error))
+            return False
+
     def stop_preview(self,quiet=False):
+        window = self._effect_preview_window
+        if window is not None:
+            window.close()
         if self._previewing:self.ws.clear_grade_preview()
         self._previewing=False;self._preview_selection=None
-        if not quiet:self.feedback.set('已停止试看，恢复已保存的画面。')
+        if not quiet:self.feedback.set('已停止预览。')
 
     def _unmap(self,event):
         if event.widget is self:

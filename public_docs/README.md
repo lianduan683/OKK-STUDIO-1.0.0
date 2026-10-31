@@ -1,12 +1,12 @@
-# OKK STUDIO 1.0.12
+# OKK STUDIO 1.0.13
 
-Windows 多机位视频剪辑应用。本版支持旧工程自动升级和升级前备份，记忆时间线视图，并修复时间定位与特效库拉伸。
+Windows 多机位视频剪辑应用。本版支持特效独立预览和多机位自定义名称显示，并保留旧工程自动升级及视图记忆。
 
 本版提供曝光检测和 MCP 本机连接桥；外部 MCP 服务使用源码包及单独的 Python 环境，接入说明见 [MCP.md](MCP.md) 和 [EXPOSURE.md](EXPOSURE.md)。
 
 ## 下载
 
-**[下载 OKK-STUDIO-1.0.12-Setup.exe](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.12/OKK-STUDIO-1.0.12-Setup.exe)** · [发行页](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/tag/v1.0.12)
+**[下载 OKK-STUDIO-1.0.13-Setup.exe](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.13/OKK-STUDIO-1.0.13-Setup.exe)** · [发行页](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/tag/v1.0.13)
 
 主程序已内置安装器。安装时下载并校验 v1.0.0 的四份固定资源 ZIP（约 5.75 GB），完整安装约 6.5 GB，建议预留至少 15 GB。已有离线资源可通过 `/PAYLOADDIR` 复用。安装与升级见 [INSTALLATION.md](INSTALLATION.md)。
 
@@ -60,6 +60,6 @@ Windows 10/11 64 位。缓存沿用可写的非 C 盘、非系统盘固定磁盘
 
 ## 源码与构建
 
-[下载 1.0.12 应用源码](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.12/OKK-STUDIO-1.0.12-source.zip)。源码包包含应用模块、回归测试、小型 UI 资源和构建文件；不包含用户工程、媒体、工作缓存或大型第三方二进制。构建步骤见 [BUILDING.md](BUILDING.md)。
+[下载 1.0.13 应用源码](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.13/OKK-STUDIO-1.0.13-source.zip)。源码包包含应用模块、回归测试、小型 UI 资源和构建文件；不包含用户工程、媒体、工作缓存或大型第三方二进制。构建步骤见 [BUILDING.md](BUILDING.md)。
 
 应用许可证见 [LICENSE](LICENSE)，第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

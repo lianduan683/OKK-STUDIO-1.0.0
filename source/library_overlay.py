@@ -172,11 +172,15 @@ def _command(ffmpeg, input_path, origin, record, output, media, encoder, lead_fr
         overlay += f',format={rgb}[effect]'
         blend = f'[rgbbase][effect]blend=all_mode=screen:all_opacity={record.opacity:.9f}:shortest=1'
     graph = base + ';' + overlay + ';' + blend + f',format={pixel}[v]'
+    decoder = ['-threads', '2'] if encoder == 'libx264' else []
     command = [str(ffmpeg), '-hide_banner', '-loglevel', 'error', '-y', '-filter_complex_threads', '1',
-               '-ss', f'{record.source_start-origin:.9f}', '-i', str(input_path),
-               '-stream_loop', '-1', '-i', record.asset_path, '-filter_complex', graph,
+               *decoder, '-ss', f'{record.source_start-origin:.9f}', '-i', str(input_path),
+               *decoder, '-stream_loop', '-1', '-i', record.asset_path, '-filter_complex', graph,
                '-map', '[v]', '-an', '-frames:v', str(count), '-fps_mode', 'passthrough']
-    if encoder == 'hevc_nvenc':
+    if encoder == 'libx264':
+        command += ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-threads', '2',
+                    '-pix_fmt', pixel, '-g', '30', '-bf', '0']
+    elif encoder == 'hevc_nvenc':
         command += ['-c:v', encoder, '-preset', 'p2', '-tune', 'lossless', '-rc', 'constqp', '-qp', '0',
                     '-pix_fmt', pixel, '-g', '30', '-bf', '0']
     else:

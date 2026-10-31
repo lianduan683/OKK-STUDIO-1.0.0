@@ -292,7 +292,9 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         visible=getattr(self,'_visible_camera_ids',())
         if camera in visible and (self.camera_columns > 3 or self.camera_rows > 3):
             index = visible.index(camera)+1
-            return f'{index}:{camera}' if index <= 9 and index != camera else str(camera)
+            number = f'{index}:{camera}' if index <= 9 and index != camera else str(camera)
+            name = self.project.camera_names.get(camera)
+            return number + ' · ' + name if name else number
         if camera in visible and len(visible)>4:
             model=self._label_camera(camera).split(' · ',1)[-1]
             if model=='未知相机':model='未知'
@@ -1568,7 +1570,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
             button = tk.Button(footer, text=self._camera_button_label(camera), bg=PANEL, fg=INK,
                                activebackground='#3a4047', activeforeground=INK,
                                relief='flat', borderwidth=0, highlightthickness=0,
-                               font=('Microsoft YaHei UI', 9), pady=3,
+                               font=('Microsoft YaHei UI', 9), pady=3, width=1, anchor='w', padx=self._px(6),
                                command=lambda c=camera: self._monitor_camera_click(c))
             badge = tk.Label(footer, text='', bg=PANEL, fg=GREEN,
                              font=('Microsoft YaHei UI', 8), padx=self._px(5), cursor='hand2')

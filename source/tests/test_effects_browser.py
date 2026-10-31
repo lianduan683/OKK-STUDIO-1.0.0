@@ -125,7 +125,7 @@ class EffectsBrowserUITests(unittest.TestCase):
         ws=self.workspace;ws.selected_program_range=(2,6);ws.player=Mock()
         before=copy.deepcopy(ws.project)
         browser=self.browser();browser.list.selection_set('warm');browser._selection_changed()
-        self.assertTrue(browser.preview())
+        self.assertTrue(browser.live_preview_button.invoke())
         ws._flush_grade_preview()
         calls=ws.player.submit.call_args_list
         self.assertTrue(any(call.args==('grade_preview',) and call.kwargs.get('target')==('selection',2,6) for call in calls))

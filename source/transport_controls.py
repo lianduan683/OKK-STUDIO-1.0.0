@@ -55,6 +55,8 @@ class TransportControlsMixin:
                                    tk.Spinbox, ttk.Spinbox, tk.Scale, ttk.Scale))
 
     def _tag_transport_widgets(self, widget):
+        if vars(widget).get('_transport_scope_excluded'):
+            return
         if not self._transport_input_widget(widget):
             tag = vars(self).get('_transport_tag')
             if tag and tag not in widget.bindtags():
