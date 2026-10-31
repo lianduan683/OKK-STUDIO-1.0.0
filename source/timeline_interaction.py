@@ -46,6 +46,8 @@ class TimelineInteractionMixin:
         self._timeline_program_bounds = (0, 0)
         self._timeline_boundary_times = []
         self._program_boundary_drag = None
+        self._timeline_wheel_mode = None
+        self._timeline_wheel_remainder = 0
 
     def _bind_timeline_interaction(self):
         self.media_tree.bind('<ButtonPress-1>', self._media_drag_press, add='+')
@@ -54,10 +56,12 @@ class TimelineInteractionMixin:
         self.media_tree.bind('<Escape>', self._media_drag_cancel, add='+')
         self.timeline.bind('<ButtonPress-2>', self._timeline_pan_press)
         self.timeline.bind('<B2-Motion>', self._timeline_pan_motion)
-        self.timeline.bind('<MouseWheel>', self._timeline_vertical_wheel)
-        # Replace the original widget binding: Ctrl+wheel must not also scroll
-        # vertically, and its zoom anchor follows the pointer.
+        self.timeline.bind('<MouseWheel>', self.pan_timeline)
+        self.timeline.bind('<Alt-MouseWheel>', self._timeline_playhead_wheel)
         self.timeline.bind('<Control-MouseWheel>', self._timeline_zoom_wheel)
+        # Ctrl takes priority when both modifiers are held. Each binding
+        # consumes its event so one wheel tick performs exactly one action.
+        self.timeline.bind('<Control-Alt-MouseWheel>', self._timeline_zoom_wheel)
         self.timeline_vscroll.configure(command=self._timeline_vertical_scroll)
         self.timeline.configure(xscrollcommand=self._timeline_xview_changed,
                                 yscrollcommand=self._timeline_yview_changed)
@@ -78,13 +82,34 @@ class TimelineInteractionMixin:
         self._queue_timeline_redraw()
         return 'break'
 
-    def _timeline_vertical_wheel(self, event):
-        if getattr(self, '_timeline_divider_drag', None) is not None: return 'break'
-        if not event.delta:
+    def _timeline_navigation_locked(self):
+        return (self._timeline_drag_geometry is not None
+                or any(getattr(self, name, None) for name in
+                       ('timeline_drag', 'subtitle_drag', '_program_boundary_drag',
+                        '_video_stack_drag', '_selection_gesture', '_timeline_scrubbing',
+                        '_timeline_divider_drag')))
+
+    def _timeline_wheel_steps(self, event, mode):
+        # Windows wheel deltas are multiples of 120; precision devices can
+        # split a notch across several events. Do not discard those events
+        # or promote each small delta into a full frame/zoom step.
+        if self._timeline_wheel_mode != mode:
+            self._timeline_wheel_mode = mode
+            self._timeline_wheel_remainder = 0
+        delta = self._timeline_wheel_remainder + event.delta
+        steps = math.trunc(delta / 120)
+        self._timeline_wheel_remainder = delta - steps * 120
+        return steps
+
+    def _timeline_playhead_wheel(self, event):
+        if self._timeline_navigation_locked() or not self._available() or self.project.duration <= 0:
             return 'break'
-        self.timeline.yview_scroll(-3 if event.delta > 0 else 3, 'units')
-        self.draw_playhead()
-        self._queue_timeline_redraw()
+        steps = self._timeline_wheel_steps(event, 'playhead')
+        if steps:
+            self._stop_transport_hold()
+            frame = math.floor(self.current * self.project.fps + .5)
+            frame = max(0, min(self._last_transport_frame(), frame - steps))
+            self.seek(frame / self.project.fps)
         return 'break'
 
     def _timeline_vertical_scroll(self, *args):
@@ -120,8 +145,10 @@ class TimelineInteractionMixin:
         self.draw_playhead()
 
     def _timeline_zoom_wheel(self, event):
-        if event.delta:
-            self.change_zoom(2 if event.delta > 0 else .5, anchor_x=event.x)
+        if self._timeline_navigation_locked(): return 'break'
+        steps = self._timeline_wheel_steps(event, 'zoom')
+        if steps:
+            self.change_zoom(2. ** max(-14, min(14, steps)))
         return 'break'
 
     def _timeline_boundary_at(self, event):

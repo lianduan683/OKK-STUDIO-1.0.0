@@ -1,4 +1,4 @@
-# 构建 OKK STUDIO 1.0.13
+# 构建 OKK STUDIO 1.0.14
 
 本次构建环境为 Windows x64、Python 3.12.10、PyInstaller 6.22.3、NumPy 2.5.4、tkinterdnd2 0.7.0、OpenTimelineIO 0.18.1、AAF adapter 2.0.0、pyaaf2 1.7.1、Inno Setup 7.1.1 x64。Python 依赖固定在 `source/requirements-build.txt`。
 
@@ -28,4 +28,4 @@ python .\build_release.py --source-root .\source --iscc 'C:\Program Files\Inno S
 
 ## 新增转场素材
 
-重建安装器前，从 1.0.11 Release 下载 `OKK-STUDIO-1.0.11-transitions.zip` 并放在 `build_release.py` 同级目录。脚本会按 `transition_addon.json` 校验该压缩包，随后将新增遮罩与更新后的清单内置于 Setup；安装时先安装四份 v1.0.0 资源，再覆盖新版清单。源码包不包含此资源 ZIP，核心包单独组装时也需要该 ZIP。
+重建安装器前，从 1.0.14 Release 下载 `OKK-STUDIO-1.0.14-transitions.zip` 并放在 `build_release.py` 同级目录。脚本会按 `transition_addon.json` 校验该压缩包，随后将新增遮罩与更新后的清单内置于 Setup；安装时先安装四份 v1.0.0 资源，再覆盖新版清单。源码包不包含此资源 ZIP，核心包单独组装时也需要该 ZIP。

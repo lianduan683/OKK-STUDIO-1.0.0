@@ -1,29 +1,31 @@
 {
-  "version": "1.0.13",
-  "build_id": "20261031-201650-096f1cc5",
+  "version": "1.0.14",
+  "build_id": "20261031-212606-cb88ffff",
   "focused_regression": {
-    "run": 87,
-    "passed": 87,
+    "run": 88,
+    "passed": 88,
     "modules": [
+      "timeline_wheel",
+      "timeline_viewport",
+      "keyboard_profiles",
+      "timeline_drag_merge",
       "effect_preview",
-      "camera_rename",
-      "camera_grid_layout",
       "effects_browser",
       "effect_catalog_layout",
       "effects_drag",
-      "transport_controls",
-      "library_overlay",
       "library_masks"
     ]
   },
+  "isolated_offline_install": "passed",
+  "transition_catalog_count": 137,
+  "prior_unlisted_masks_preserved": 218,
   "frozen_headless_export": "passed",
-  "version_metadata": "1.0.13",
+  "version_metadata": "1.0.14",
   "archive_crc_checks": "passed",
   "source_allowlist_and_known_private_path_and_key_pattern_scan": "passed",
   "trusted_code_signature": false,
   "not_tested": [
     "full test suite",
-    "fresh installation",
     "production in-place upgrade",
     "online resource download during installation",
     "all physical display and hardware combinations"

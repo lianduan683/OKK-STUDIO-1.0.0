@@ -669,7 +669,6 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         self.timeline.bind('<ButtonRelease-1>', self.timeline_release)
         self.timeline.bind('<Button-3>', self.timeline_context)
         self.timeline.configure(takefocus=True)
-        self.timeline.bind('<Control-MouseWheel>', lambda e: self.change_zoom(2 if e.delta > 0 else 0.5))
         self.timeline.bind('<Shift-MouseWheel>', self.pan_timeline)
         self.scroll = ttk.Scrollbar(timeline_section, orient='horizontal', command=self._scroll_timeline)
         self.scroll.grid(row=3, column=0, sticky='ew')
@@ -2407,16 +2406,18 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         self.draw_playhead()
         self._queue_timeline_redraw()
 
-    def change_zoom(self, factor, anchor_x=None):
-        if (self._timeline_drag_geometry is not None
-                or any(getattr(self, name, None) for name in
-                       ('timeline_drag', 'subtitle_drag', '_program_boundary_drag',
-                        '_video_stack_drag', '_selection_gesture', '_timeline_scrubbing', '_timeline_divider_drag'))):
+    def change_zoom(self, factor):
+        if self._timeline_navigation_locked():
             return
         canvas = self.timeline
-        pointer = canvas.winfo_width()*.3 if anchor_x is None else float(anchor_x)
         origin, old_scale = self._timeline_origin(), self._timeline_scale()
-        anchor_time = origin+(canvas.canvasx(pointer)-self._timeline_left)/old_scale
+        anchor_time = self.current
+        anchor_x = self._timeline_left+(anchor_time-origin)*old_scale-canvas.canvasx(0)
+        left, right = self._timeline_left, canvas.winfo_width()-self._px(16)
+        # Keep the visible playhead fixed on screen. If the user has panned
+        # away from it, bring it to the middle of the editing area on zoom.
+        if not left <= anchor_x <= right:
+            anchor_x = (left+right)/2
         changed = min(10000, max(1, self.zoom*factor))
         if changed == self.zoom:
             return
@@ -2426,7 +2427,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
                     (self._timeline_view_duration()-origin)*scale+self._px(16))
         bounds = tuple(float(value) for value in canvas.cget('scrollregion').split())
         canvas.configure(scrollregion=(0, 0, width, bounds[3] if len(bounds) == 4 else canvas.winfo_height()))
-        target_left = self._timeline_left+(anchor_time-origin)*scale-pointer
+        target_left = self._timeline_left+(anchor_time-origin)*scale-anchor_x
         canvas.xview_moveto(max(0., target_left/max(1., width)))
         self._pin_timeline_headers()
         self.draw_playhead()
@@ -2439,10 +2440,10 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         self.zoom = 1; self.timeline.xview_moveto(0); self.draw_timeline()
 
     def pan_timeline(self, event):
-        self.timeline.xview_scroll(-3 if event.delta > 0 else 3, 'units')
-        self._pin_timeline_headers()
-        self.draw_playhead()
-        self._queue_timeline_redraw()
+        if self._timeline_navigation_locked(): return 'break'
+        steps = self._timeline_wheel_steps(event, 'pan')
+        if steps:
+            self._scroll_timeline('scroll', -3 * steps, 'units')
         return 'break'
 
     def _pin_timeline_headers(self):
@@ -3178,7 +3179,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
             f'   拖动选区两端可修改范围；该页同样支持 {self._split_shortcut_label()} 和逐帧。点“返回剪辑”恢复时间线。\n'
             f'8. Ctrl+Z 撤销、{self._keyboard_shortcut_label("redo")} 重做。保存工程后，点“导出…”设置并导出。\n\n'
             '“布局 → 键位选择”可选择当前、DaVinci Resolve 或 Premiere Pro；子菜单中的“键位表”可查看本软件支持的映射。\n'
-            '媒体库素材可直接拖入时间线；中键可上下左右拖动画布，Shift+滚轮横移，Ctrl+滚轮缩放。\n'
+            '媒体库素材可直接拖入时间线；中键可上下左右拖动画布，滚轮横移，Alt+滚轮逐帧移动播放头，Ctrl+滚轮围绕播放头缩放。\n'
             '时间线右键可插入空视频轨道或在此时间插入素材；上方轨道叠在画面顶层。\n'
             '素材支持上下换轨；Ctrl+左键多选，右键合并会按先后首尾接齐，保留第一段起点。\n'
             '合并文件保存在软件目录 merged_media，原片保留；Ctrl+Z 可撤销时间线替换。\n'

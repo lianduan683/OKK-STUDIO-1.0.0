@@ -109,7 +109,7 @@ class EffectCatalogLayoutTests(unittest.TestCase):
         self.panel.category.set('遮罩转场');self.panel.query.set('');self.root.update()
         self.assertEqual(self.panel.subcategory.get(),'全部类型')
         self.assertTrue(all(item.kind=='mask' for item in self.panel._items))
-        self.panel.subcategory.set('漏光')
+        self.panel.subcategory.set('PR 四向组合')
         self.assertEqual(len(self.panel._items),30)
         self.panel.query.set('不存在的素材名')
         self.assertFalse(self.panel.list.get_children())

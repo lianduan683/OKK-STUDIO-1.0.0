@@ -122,19 +122,19 @@ class TimelineViewportTests(unittest.TestCase):
             self.assertLessEqual(draw.call_count, 2)
             self.assertIsNone(ws._timeline_redraw_after)
 
-    def test_ctrl_wheel_keeps_time_under_pointer_and_does_not_vertical_scroll(self):
+    def test_ctrl_wheel_keeps_playhead_fixed_and_does_not_vertical_scroll(self):
         self.dense()
         ws = self.ws
         ws.timeline.xview_moveto(.3)
         self.flush()
-        pointer = 210
-        def time_at_pointer():
-            return ws._timeline_origin()+(ws.timeline.canvasx(pointer)-ws._timeline_left)/ws._timeline_scale()
-        original = time_at_pointer()
+        ws.current = ws._timeline_origin()+(ws.timeline.canvasx(420)-ws._timeline_left)/ws._timeline_scale()
+        def playhead_x():
+            return ws._timeline_x(ws.current)-ws.timeline.canvasx(0)
+        original = playhead_x()
         vertical = ws.timeline.yview()
-        ws.timeline.event_generate('<Control-MouseWheel>', x=pointer, y=45, delta=120)
+        ws.timeline.event_generate('<Control-MouseWheel>', x=210, y=45, delta=120)
         self.assertEqual(ws.zoom, 100)
-        self.assertLess(abs(time_at_pointer()-original)*ws._timeline_scale(), 1.1)
+        self.assertAlmostEqual(playhead_x(), original, delta=1.1)
         self.assertEqual(ws.timeline.yview(), vertical)
 
     def test_zoom_is_frozen_during_an_edit_gesture(self):
@@ -142,12 +142,12 @@ class TimelineViewportTests(unittest.TestCase):
         ws = self.ws
         ws._selection_gesture = {'active': True}
         original = ws.zoom
-        ws.change_zoom(2, anchor_x=100)
+        ws.change_zoom(2)
         ws.fit_timeline()
         self.assertEqual(ws.zoom, original)
         ws._selection_gesture = None
         ws._capture_timeline_geometry()
-        ws.change_zoom(.5, anchor_x=100)
+        ws.change_zoom(.5)
         self.assertEqual(ws.zoom, original)
         ws._timeline_drag_geometry = None
 
