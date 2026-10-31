@@ -1151,18 +1151,22 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
         return True
 
     def _switch_selected_camera(self, camera):
+        selected = self.selected_program_range
         try:
             candidate = copy.deepcopy(self.project)
-            set_camera_on_range(candidate, *self.selected_program_range, camera)
+            set_camera_on_range(candidate, *selected, camera)
             candidate.video_stack_enabled = False
             candidate.validate()
         except Exception as exc:
             messagebox.showerror('切换片段机位', str(exc), parent=self); return
         self._remember(); self.project = candidate
+        self._set_timeline_selection({('program', selected)}, redraw=False)
         self._finish_preview_epoch(seek=False)
         self._set_stack_preview_mode(False)
         self._refresh()
-        self._set_program_label(self.project.camera_at(self.current))
+        current_camera = self.project.camera_at(self.current)
+        self._set_program_label(current_camera)
+        self._highlight(current_camera)
         self.status.set(f'所选片段已切换到机位 {camera}。')
 
     def add_transition_at_selected_end(self, kind='fade', duration=.5):
@@ -1484,19 +1488,18 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
             frame.grid(row=i // cols, column=i % cols, sticky='nsew', padx=1, pady=1)
             surface = tk.Frame(frame, bg='#0e0f10', width=1, height=1)
             surface.pack(fill='both', expand=True)
-            surface.bind('<Button-1>', lambda event, c=camera: self.switch(c))
-            surface.bind('<Button-1>', self._focus_preview, add='+')
+            surface.bind('<Button-1>', lambda event, c=camera: self._monitor_camera_click(c))
             footer = tk.Frame(frame, bg=PANEL)
             footer.pack(fill='x')
             button = tk.Button(footer, text=self._camera_button_label(camera), bg=PANEL, fg=INK,
                                activebackground='#3a4047', activeforeground=INK,
                                relief='flat', borderwidth=0, highlightthickness=0,
                                font=('Microsoft YaHei UI', 9), pady=3,
-                               command=lambda c=camera: self.switch(c))
+                               command=lambda c=camera: self._monitor_camera_click(c))
             badge = tk.Label(footer, text='', bg=PANEL, fg=GREEN,
                              font=('Microsoft YaHei UI', 8), padx=self._px(5), cursor='hand2')
             badge.pack(side='right')
-            badge.bind('<Button-1>', lambda event, c=camera: self.switch(c))
+            badge.bind('<Button-1>', lambda event, c=camera: self._monitor_camera_click(c))
             self.camera_proxy_badges[camera] = badge
             button.pack(side='left', fill='x', expand=True)
             self.camera_frames[camera] = frame
@@ -1801,7 +1804,13 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
             self._remember(); del self.project.cuts[int(selection[0])]
             self.selected_cut = None; self._refresh()
 
-    def switch(self, camera):
+    def _monitor_camera_click(self, camera):
+        # Monitor clicks are edits even after Replay has disabled recording.
+        # switch() resolves a selected programme range before inserting a cut.
+        self.switch(camera, record=True)
+        self._focus_preview()
+
+    def switch(self, camera, *, record=None):
         if not self._available() or camera not in self.project.cameras: return
         if self.project.video_stack_enabled and self._color_mode:
             self._displayed_camera = camera
@@ -1814,7 +1823,7 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
             self._switch_selected_camera(camera)
             return
         was_stack = self.project.video_stack_enabled
-        recording = self.record_var.get()
+        recording = self.record_var.get() if record is None else record
         if recording or was_stack:
             self._remember()
         if was_stack:
@@ -1829,7 +1838,7 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
         if not recording and self.player:
             self.player.submit('audition', camera=camera)
         self._displayed_camera = camera
-        self.program_var.set('成片监看 · '+self._label_camera(camera) + ('' if self.record_var.get() else '（试听）'))
+        self.program_var.set('成片监看 · '+self._label_camera(camera) + ('' if recording else '（试听）'))
         self._highlight(camera)
         self.status.set(f'已切换到机位 {camera}' + ('，已在播放头记录切点。' if recording else '（试听，未记录切点）。'))
 
@@ -2583,6 +2592,35 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
         if self._color_mode and vars(self).get('color_workspace'):
             self.color_workspace.update_playhead()
 
+    def _follow_timeline_playhead(self):
+        # Follow transport movement, not ordinary redraws: users can still
+        # scroll elsewhere while paused without the viewport snapping back.
+        if any(vars(self).get(name) for name in (
+                'timeline_drag', 'subtitle_drag', '_program_boundary_drag',
+                '_video_stack_drag', '_selection_gesture', '_timeline_divider_drag')):
+            return
+        canvas = self.timeline
+        width = canvas.winfo_width()
+        margin = self._px(24)
+        usable = width-self._timeline_left-2*margin
+        if usable <= 0: return
+        x = self._timeline_x(self.current)
+        left = canvas.canvasx(0)
+        screen_x = x-left
+        if self._timeline_left+margin <= screen_x <= width-margin:
+            return
+        region = tuple(float(value) for value in canvas.cget('scrollregion').split())
+        if len(region) != 4 or region[2]-region[0] <= width: return
+        # Page forward with room for the next shots; reverse navigation uses
+        # the same rule from the other side of the visible editing area.
+        fraction = .25 if screen_x > width-margin else .75
+        target = x-(self._timeline_left+margin+usable*fraction)
+        target = max(region[0], min(region[2]-width, target))
+        if abs(target-left) < 1: return
+        canvas.xview_moveto((target-region[0])/(region[2]-region[0]))
+        self._pin_timeline_headers()
+        self._queue_timeline_redraw()
+
     def timeline_press(self, event):
         if not self._available(): return
         if self._timeline_ruler_contains(event):
@@ -2804,7 +2842,10 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
         except queue.Empty: pass
         if latest_state is not None:
             payload = latest_state
+            previous_time = self.current
             self.current = float(payload['time']); self.playing = bool(payload['playing'])
+            if self.playing or self.current != previous_time:
+                self._follow_timeline_playhead()
             camera = payload.get('camera')
             if self.project.video_stack_enabled and self._displayed_camera in self.project.cameras:
                 camera = self._displayed_camera

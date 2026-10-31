@@ -1,14 +1,14 @@
 {
-  "version": "1.0.7",
+  "version": "1.0.8",
   "core_distribution": "embedded-in-setup",
   "core": {
-    "name": "OKK-STUDIO-1.0.7-core.zip",
-    "size": 29501497,
-    "sha256": "8de1e62bbf5b496964b92fee6b13706b51f8392b4f127dbba5367b7206d879c7",
+    "name": "OKK-STUDIO-1.0.8-core.zip",
+    "size": 29501621,
+    "sha256": "105f256c9bbd55a2b482dca98f76353efe402ccd521251dad1a29a4137b62ebf",
     "file_count": 1311,
-    "uncompressed_size": 69398599,
+    "uncompressed_size": 69400194,
     "embedded_in_setup": true,
-    "url": "https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.7/OKK-STUDIO-1.0.7-core.zip"
+    "url": "https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.8/OKK-STUDIO-1.0.8-core.zip"
   },
   "resource_version": "1.0.0",
   "resources": [

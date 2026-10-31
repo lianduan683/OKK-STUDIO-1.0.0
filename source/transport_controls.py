@@ -96,6 +96,8 @@ class TransportControlsMixin:
             if self._preview_epoch is not None and self.project.video_stack_enabled:
                 options['preview_epoch'] = self._preview_epoch
             self.player.submit('scrub', time=self.current, request_id=self._transport_request_id, pause=bool(pause), **options)
+        follow = getattr(self, '_follow_timeline_playhead', None)
+        if follow is not None: follow()
         self._show_time(); self.draw_playhead()
         return self.current
 
