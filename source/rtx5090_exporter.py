@@ -95,7 +95,7 @@ from editor_core import build_proxy_encode_command, proxy_format_labels, resolve
 
 
 APP_NAME = "RTX 视频渲染工坊"
-APP_VERSION = "1.0.8"
+APP_VERSION = "1.0.9"
 BG = "#18191b"
 SURFACE = "#202124"
 PANEL = "#242629"
@@ -242,6 +242,7 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
         self.preset_var = tk.StringVar(value="极速 P2")
         self.quality_var = tk.IntVar(value=20)
         self.resolution_var = tk.StringVar(value="保持原分辨率")
+        self.transcode_resolution_var = tk.StringVar(value="保持原分辨率")
         self.depth_var = tk.StringVar(value="自动")
         self.audio_var = tk.StringVar(value="AAC 320 kbps")
         self.decode_var = tk.StringVar(value="NVIDIA CUDA（推荐）")
@@ -305,7 +306,7 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
         )
         self.editor_join_timeline_zoom_slider_var = tk.DoubleVar(value=0.0)
         self.editor_join_timeline_zoom_text_var = tk.StringVar(value="适配全长")
-        self.editor_join_shared_settings_var = tk.StringVar(value="沿用“导出与 GPU”页设置")
+        self.editor_join_shared_settings_var = tk.StringVar(value="沿用“转码与导出 → 视频转码”设置")
         self.editor_split_mode_var = tk.StringVar(value="FLAC 无损（推荐）")
         self.editor_split_dir_var = tk.StringVar()
         self.editor_proxy_format_var = tk.StringVar(value=proxy_format_labels()[0])
@@ -398,24 +399,34 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
         notebook = ttk.Notebook(main, style="Workspace.TNotebook")
         notebook.pack(fill="both", expand=True)
         self.page_notebook = notebook
-        basic = ttk.Frame(notebook, style="Panel.TFrame", padding=10)
         editor = ttk.Frame(notebook, style="Panel.TFrame", padding=8)
         multicam = ttk.Frame(notebook, style="Panel.TFrame", padding=0)
         color = ttk.Frame(notebook, style="Panel.TFrame", padding=0)
         delivery = ttk.Frame(notebook, style="Panel.TFrame", padding=0)
-        log_tab = ttk.Frame(notebook, style="Panel.TFrame", padding=10)
-        self.page_frames = {"basic": basic, "editor": editor, "multicam": multicam,
-                            "color": color, "delivery": delivery, "log": log_tab}
+        self.page_frames = {"editor": editor, "multicam": multicam,
+                            "color": color, "delivery": delivery}
         for name, frame in self.page_frames.items():
             notebook.add(frame, text=name)
+        self.export_notebook = ttk.Notebook(delivery)
+        self.export_notebook.pack(fill="both", expand=True)
+        basic = ttk.Frame(self.export_notebook, style="Panel.TFrame", padding=10)
+        project_export = ttk.Frame(self.export_notebook, style="Panel.TFrame")
+        self.export_sections = {"basic": basic, "delivery": project_export}
+        self.export_notebook.add(basic, text="视频转码")
+        self.export_notebook.add(project_export, text="工程导出")
+        self.export_notebook.select(project_export)
         self._build_export_tab(basic)
         self._build_editor(editor)
         # Keep one editor and one set of native video surfaces across all three
         # pages. A common parent allows packing into each notebook page.
         self.multicam_workspace = MulticamWorkspace(notebook, self)
+        # The existing delivery preference serializer retains this independent
+        # standalone choice without replacing the project's export resolution.
+        self.multicam_workspace.delivery_transcode_resolution_var = self.transcode_resolution_var
         self.multicam_workspace.pack(in_=multicam, fill="both", expand=True)
-        self._build_log(log_tab)
+        self._log("应用启动。正在检测硬件与 FFmpeg…")
         notebook.bind("<<NotebookTabChanged>>", self._on_page_changed)
+        self.export_notebook.bind("<<NotebookTabChanged>>", self._on_page_changed)
         self._select_page("multicam")
         if "--multicam-project" in sys.argv:
             project_index = sys.argv.index("--multicam-project") + 1
@@ -424,31 +435,44 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
 
 
     def _select_page(self, name: str) -> None:
+        # Existing delivery shortcuts open project export; the former basic
+        # route still opens transcoding inside the combined workspace.
+        if name in self.export_sections:
+            self.export_notebook.select(self.export_sections[name])
+            name = "delivery"
+        elif name == "log":
+            self._show_settings("log")
+            return
         self.page_notebook.select(self.page_frames[name])
         self._on_page_changed()
+
+    def _export_section(self) -> str:
+        selected = self.export_notebook.select()
+        return next(name for name, frame in self.export_sections.items() if str(frame) == selected)
 
     def _on_page_changed(self, _event=None) -> None:
         selected = self.page_notebook.select()
         self.active_page = next((name for name, frame in self.page_frames.items() if str(frame) == selected), "multicam")
-        labels = {"basic": "转码与 GPU", "editor": "剪辑工具", "multicam": "多机位剪辑",
-                  "color": "调色", "delivery": "导出", "log": "任务日志"}
+        labels = {"editor": "剪辑工具", "multicam": "多机位剪辑",
+                  "color": "调色", "delivery": "转码与导出"}
         self.page_title_var.set(labels[self.active_page])
         for name, button in self.page_buttons.items():
             button.configure(bg="#30363d" if name == self.active_page else SURFACE,
                              fg=TEXT if name == self.active_page else MUTED,
                              highlightbackground=PURPLE if name == self.active_page else SURFACE)
-        if self.active_page in {"multicam", "color", "delivery"}:
+        transcoding = self.active_page == "delivery" and self._export_section() == "basic"
+        if self.active_page in {"multicam", "color", "delivery"} and not transcoding:
             ws = self.multicam_workspace
-            target = self.page_frames[self.active_page]
+            target = (self.export_sections["delivery"] if self.active_page == "delivery"
+                      else self.page_frames[self.active_page])
             if str(ws.pack_info().get('in', '')) != str(target):
                 ws.pack_forget()
                 ws.pack(in_=target, fill="both", expand=True)
             ws.finishing_workspace.show(self.active_page if self.active_page != 'multicam' else 'edit')
         else:
             self.multicam_workspace.pause()
-        text = ("渲染所有" if self.active_page == "delivery" else "交付 / 导出"
-                if self.active_page in {"multicam", "color"} else "开始转码"
-                if self.active_page == "basic" else "导出设置")
+        text = ("开始转码" if transcoding else "渲染所有" if self.active_page == "delivery"
+                else "交付 / 导出" if self.active_page in {"multicam", "color"} else "导出设置")
         self.export_button.configure(text=text)
 
 
@@ -458,11 +482,17 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
         if self.active_page in {"multicam", "color"}:
             self.multicam_workspace.show_delivery()
         elif self.active_page == "delivery":
-            self.multicam_workspace.finishing_workspace.start_queue()
-        elif self.active_page == "basic":
-            self._start_export()
+            if self._export_section() == "basic":
+                self._start_export()
+            else:
+                self.multicam_workspace.finishing_workspace.start_queue()
         else:
             self._select_page("basic")
+
+    def _show_settings(self, section=None) -> None:
+        if section is None and (self.working or self.multicam_workspace.busy):
+            section = "log"
+        self.multicam_workspace.show_project_settings(section=section)
 
 
     def _show_hardware_info(self) -> None:
@@ -485,7 +515,7 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
         """One compact page for output quality and RTX acceleration."""
         header = tk.Frame(parent, bg=PANEL)
         header.pack(fill="x", pady=(2, 12))
-        tk.Label(header, text="导出与 GPU", bg=PANEL, fg=TEXT, font=(UI_FONT, 16, "bold")).pack(side="left")
+        tk.Label(header, text="视频转码与 GPU", bg=PANEL, fg=TEXT, font=(UI_FONT, 16, "bold")).pack(side="left")
         self.advanced_title_label = tk.Label(
             header, text="显卡自动适配加速", bg=PANEL, fg=GREEN, font=(UI_FONT, 10, "bold"),
         )
@@ -518,7 +548,7 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
             ["最快 P1", "极速 P2", "均衡 P4", "高质量 P6", "最高质量 P7"], 0, 1,
         )
         combo_field(
-            "输出分辨率", self.resolution_var,
+            "输出分辨率", self.transcode_resolution_var,
             ["保持原分辨率", "1080p", "1440p", "4K", "8K"], 0, 2,
         )
         combo_field("输出位深", self.depth_var, ["自动", "8-bit", "10-bit"], 0, 3)
@@ -1823,7 +1853,7 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
             values=["逐帧精准（沿用编码设置）", "无损极速（按关键帧）"],
         ).pack(fill="x")
         tk.Label(
-            panel, text="精准模式沿用“导出与 GPU”页的编码、预设、位深和 CQ；填写下方码率后改为目标码率输出。",
+            panel, text="精准模式沿用“转码与导出 → 视频转码”的编码、预设、位深和 CQ；填写下方码率后改为目标码率输出。",
             bg=PANEL_ALT, fg=MUTED, font=(UI_FONT, 9), wraplength=410, justify="left",
         ).pack(anchor="w", pady=(7, 10))
         tk.Label(
@@ -1972,7 +2002,7 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
             font=(UI_FONT, 8), anchor="w", justify="left", wraplength=405,
         ).pack(fill="x")
         tk.Label(
-            shared, text="编码、预设、位深、CQ、NVDEC、NVENC 分帧和并行数统一在“导出与 GPU”页设置。",
+            shared, text="编码、预设、位深、CQ、NVDEC、NVENC 分帧和并行数统一在“转码与导出 → 视频转码”中设置。",
             bg="#21152c", fg=MUTED, font=(UI_FONT, 8), anchor="w", justify="left", wraplength=405,
         ).pack(fill="x", pady=(3, 0))
 
@@ -2001,7 +2031,7 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
         ).grid(row=1, column=2, sticky="ew", padx=(8, 0), pady=(4, 0))
 
         for variable in (
-            self.codec_var, self.preset_var, self.resolution_var, self.depth_var,
+            self.codec_var, self.preset_var, self.transcode_resolution_var, self.depth_var,
             self.quality_var, self.decode_var, self.split_var, self.parallel_var,
         ):
             variable.trace_add("write", lambda *_args: self._update_join_shared_settings_summary())
@@ -2224,7 +2254,7 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
     def _use_export_source_for_subtitles(self) -> None:
         path = self.input_var.get().strip()
         if not path or not Path(path).is_file():
-            messagebox.showerror(APP_NAME, "“导出与 GPU”页还没有选择有效素材。")
+            messagebox.showerror(APP_NAME, "“转码与导出 → 视频转码”中还没有选择有效素材。")
             return
         self._set_subtitle_source(path)
 
@@ -2368,7 +2398,7 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
     def _use_export_source(self) -> None:
         path = self.input_var.get().strip()
         if not path or not Path(path).is_file():
-            messagebox.showerror(APP_NAME, "“导出与 GPU”页还没有选择有效视频。")
+            messagebox.showerror(APP_NAME, "“转码与导出 → 视频转码”中还没有选择有效视频。")
             return
         self._load_editor_video(path)
 
@@ -2705,7 +2735,7 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
             return
         self.editor_join_shared_settings_var.set(
             f"统一设置：{self.codec_var.get()} · {self.preset_var.get()} · "
-            f"{self.resolution_var.get()} · {self.depth_var.get()} · CQ {self.quality_var.get()} · "
+            f"{vars(self).get('transcode_resolution_var', self.resolution_var).get()} · {self.depth_var.get()} · CQ {self.quality_var.get()} · "
             f"{self.decode_var.get()} · 并行 {self.parallel_var.get()} 路"
         )
 
@@ -3379,7 +3409,7 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
             return
         encode_settings = None
         if not lossless:
-            encode_settings = self._settings()
+            encode_settings = self._transcode_settings()
             encode_settings.codec = join_video_codec
             if encode_settings.codec not in available_codecs(self.caps):
                 messagebox.showerror(
@@ -4023,15 +4053,19 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
         self.page_buttons = {}
         holder = tk.Frame(nav, bg=SURFACE)
         holder.pack()
-        for name, label in (("basic", "转码与 GPU"), ("editor", "剪辑工具"),
+        for name, label in (("editor", "剪辑工具"),
                             ("multicam", "多机位剪辑"), ("color", "调色"),
-                            ("delivery", "导出"), ("log", "任务日志")):
+                            ("delivery", "转码与导出")):
             button = tk.Button(holder, text=label, command=lambda key=name: self._select_page(key),
                                bg=SURFACE, fg=MUTED, activebackground=PANEL_ALT, activeforeground=TEXT,
                                font=(UI_FONT, 9), width=12, padx=8, pady=6, bd=0,
                                highlightthickness=1, highlightbackground=SURFACE, relief="flat")
             button.pack(side="left", padx=2)
             self.page_buttons[name] = button
+        self.settings_button = tk.Button(nav, text="⚙ 设置", command=self._show_settings,
+                                         bg=SURFACE, fg=MUTED, activebackground=PANEL_ALT,
+                                         activeforeground=TEXT, relief="flat", font=(UI_FONT, 9))
+        self.settings_button.place(relx=0, rely=0.5, anchor="w", x=12)
         menu = tk.Menu(self, tearoff=False, bg=PANEL_ALT, fg=TEXT, activebackground="#414852", activeforeground=TEXT)
         menu.add_command(label="硬件与任务状态", command=self._show_hardware_info)
         menu.add_command(label="10秒性能测试", command=self._benchmark)
@@ -4091,7 +4125,7 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
         self.basic_gpu_subtitle.grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 8))
         self.codec_combo = self._combo(parent, "编码格式", self.codec_var, list(CODEC_LABELS.values()), 2, 0, "thumb_02_cat.png")
         self._combo(parent, "速度 / 画质预设", self.preset_var, ["最快 P1", "极速 P2", "均衡 P4", "高质量 P6", "最高质量 P7"], 2, 1, "thumb_03_blonde.png")
-        self._combo(parent, "输出分辨率", self.resolution_var, ["保持原分辨率", "1080p", "1440p", "4K", "8K"], 3, 0, "thumb_05_feathers.png")
+        self._combo(parent, "输出分辨率", self.transcode_resolution_var, ["保持原分辨率", "1080p", "1440p", "4K", "8K"], 3, 0, "thumb_05_feathers.png")
         self._combo(parent, "输出位深", self.depth_var, ["自动", "8-bit", "10-bit"], 3, 1, "thumb_07_ice.png")
         self._combo(parent, "音频", self.audio_var, ["AAC 320 kbps", "AAC 192 kbps", "复制原音频", "无音频"], 4, 0, "thumb_08_hanfu.png")
         qframe = tk.Frame(parent, bg=PANEL_ALT, highlightthickness=1, highlightbackground=BORDER, padx=16, pady=14)
@@ -4184,14 +4218,17 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
         self.log.configure(yscrollcommand=scroll.set)
         self.log.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
-        self._log("应用启动。正在检测硬件与 FFmpeg…")
+        self.log.insert("end", "".join(vars(self).get("_log_entries", [])))
+        self.log.see("end")
 
     def _log(self, message: str) -> None:
-        if not hasattr(self, "log"):
-            return
         timestamp = time.strftime("%H:%M:%S")
-        self.log.insert("end", f"[{timestamp}] {message.rstrip()}\n")
-        self.log.see("end")
+        entry = f"[{timestamp}] {message.rstrip()}\n"
+        vars(self).setdefault("_log_entries", []).append(entry)
+        log = vars(self).get("log")
+        if log is not None and log.winfo_exists():
+            log.insert("end", entry)
+            log.see("end")
 
     def _detect_async(self) -> None:
         def worker() -> None:
@@ -4389,6 +4426,18 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
         if path:
             self.output_var.set(path)
 
+    def _transcode_settings(self) -> ExportSettings:
+        """Standalone exports use only resolutions offered by their controls."""
+        encode_settings = self._settings()
+        variable = vars(self).get("transcode_resolution_var", self.resolution_var)
+        try:
+            encode_settings.resolution = {
+                "保持原分辨率": "original", "1080p": "1080p", "1440p": "1440p", "4K": "4k", "8K": "8k",
+            }[variable.get()]
+        except KeyError as error:
+            raise ValueError("请选择有效的视频转码输出分辨率。") from error
+        return encode_settings
+
     def _settings(self) -> ExportSettings:
         codec = codec_from_label(self.codec_var.get())
         preset = self.preset_var.get().split()[-1].lower()
@@ -4443,7 +4492,7 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
             messagebox.showerror(APP_NAME, "未找到 FFmpeg/ffprobe。请把 ffmpeg.exe 和 ffprobe.exe 放入软件的 bin 文件夹。")
             return None
         try:
-            settings = self._settings()
+            settings = self._transcode_settings()
         except ValueError as error:
             messagebox.showerror(APP_NAME, str(error))
             return None

@@ -65,10 +65,10 @@ class ResolveShellTkTests(unittest.TestCase):
 
     def test_bottom_navigation_selects_real_pages_and_pauses_multicam(self):
         app = self.app
-        self.assertEqual(set(app.page_frames), {"basic", "editor", "multicam", "log"})
+        self.assertEqual(set(app.page_frames), {"editor", "multicam", "color", "delivery"})
         self.assertEqual(set(app.page_buttons), set(app.page_frames))
         with mock.patch.object(app.multicam_workspace, "pause") as pause:
-            for name in ("multicam", "editor", "basic", "log", "multicam"):
+            for name in ("multicam", "editor", "delivery", "color", "multicam"):
                 with self.subTest(page=name):
                     app.page_buttons[name].invoke()
                     self._settle()

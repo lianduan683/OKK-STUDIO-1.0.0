@@ -252,7 +252,7 @@ class CreativeProjectTests(unittest.TestCase):
 
     def test_unknown_project_or_track_fields_and_invalid_versions_are_rejected(self):
         base = self.payload()
-        for field, value in (("version", True), ("version", "2"), ("version", 18),
+        for field, value in (("version", True), ("version", "2"), ("version", 19),
                              ("clips", {}), ("cuts", "not a list"),
                              ("unexpected_executable", "run-me.py")):
             with self.subTest(field=field, value=value), self.assertRaises(ValueError):

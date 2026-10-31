@@ -22,10 +22,13 @@ from gyroflow_core import default_settings, validate_settings
 from image_stabilization_panel import image_defaults, MODEL_NAMES, QUALITY_NAMES
 from stabilization_panel import ZOOM_NAMES, open_stabilization_dialog
 from program_edits import split_at, program_spans
+from clip_transform import ClipTransform, validate_transform
+from project_settings import DEFAULT_SETTINGS
 
 PANEL, INPUT, INK, MUTED, ACCENT = '#292b2e', '#18191b', '#dedfe3', '#969ba3', '#58a6d6'
 FONT = ('Microsoft YaHei UI', 9)
 GRADE_FIELDS = {'exposure': '曝光（档）', 'contrast': '对比度', 'saturation': '饱和度', 'temperature': '色温'}
+FRAMING_MODES = {'适应画幅 · 完整画面': 'fit', '填满画幅 · 等比裁切': 'fill'}
 
 
 class ClipInspector(tk.Frame):
@@ -40,6 +43,11 @@ class ClipInspector(tk.Frame):
         self.camera_var = tk.StringVar(self)
         self.camera_choices = {}
         self.grade_vars = {name: tk.StringVar(self) for name in GRADE_FIELDS}
+        self.framing_mode = tk.StringVar(self, value=next(iter(FRAMING_MODES)))
+        self.framing_zoom = tk.StringVar(self, value='100')
+        self.framing_x = tk.StringVar(self, value='0')
+        self.framing_y = tk.StringVar(self, value='0')
+        self.framing_text = tk.StringVar(self)
         self.image_smoothing = tk.StringVar(self, value='0.5')
         self.image_shakiness = tk.StringVar(self, value='5')
         self.image_quality = tk.StringVar(self, value=next(iter(QUALITY_NAMES)))
@@ -67,11 +75,11 @@ class ClipInspector(tk.Frame):
         self._label(heading, self.target_text, color=INK, bold=True).pack(fill='x')
         navigation = tk.Frame(self, bg=PANEL)
         navigation.pack(fill='x', padx=self.px(8), pady=(0, self.px(7)))
-        for i, (key, title) in enumerate((('camera', '机位'), ('color', '调色'), ('image', '画面防抖'),
+        for i, (key, title) in enumerate((('camera', '机位'), ('framing', '裁切缩放'), ('color', '调色'), ('image', '画面防抖'),
                                          ('gyro', 'Gyroflow'), ('transition', '转场'), ('overlay', '叠加特效'))):
-            navigation.columnconfigure(i % 3, weight=1, uniform='module')
+            navigation.columnconfigure(i % 4, weight=1, uniform='module')
             ttk.Button(navigation, text=title, command=lambda name=key: self.scroll_to(name),
-                       style='Inspector.TButton').grid(row=i // 3, column=i % 3, sticky='ew',
+                       style='Inspector.TButton').grid(row=i // 4, column=i % 4, sticky='ew',
                                                      padx=self.px(2), pady=self.px(2))
         outer = tk.Frame(self, bg=PANEL)
         outer.pack(fill='both', expand=True)
@@ -86,6 +94,7 @@ class ClipInspector(tk.Frame):
         self.canvas.bind('<Configure>', lambda event: self.canvas.itemconfigure(window, width=max(1, event.width)))
         self.body.bind('<Configure>', lambda event: self.canvas.configure(scrollregion=self.canvas.bbox('all')))
         self._build_camera()
+        self._build_framing()
         self._build_color()
         self._build_image()
         self._build_gyro()
@@ -153,6 +162,22 @@ class ClipInspector(tk.Frame):
         self._actions(section, [('应用调色', self.apply_color), ('重置片段', self.reset_color)])
         self._actions(section, [('完整调色参数', lambda: self.ws.show_inspector('color')),
                                 ('精细调色工作台', lambda: self.ws.show_creative('color'))])
+
+    def _build_framing(self):
+        section = self._section('framing', '裁切与缩放',
+            '自动检测黑边或手动拖动 16:9 裁切框，选择保留的画面。')
+        self._actions(section, [('自动裁切 16:9', self.auto_framing), ('手动裁切 / 调整框', self.manual_framing)])
+        self._actions(section, [('一键 16:9 裁切', self.fill_16_9)])
+        self._label(section, self.framing_text).pack(fill='x', padx=self.px(10), pady=self.px(4))
+        self._row(section, '画面适配', self.framing_mode, list(FRAMING_MODES)).configure(width=18)
+        for title, variable in (('缩放 %（100–400）', self.framing_zoom),
+                                ('水平取景 %（−100–100）', self.framing_x),
+                                ('垂直取景 %（−100–100）', self.framing_y)):
+            field = self._row(section, title, variable)
+            field.bind('<Return>', lambda event: self.apply_framing())
+        self._label(section, '取景 0 为居中；负值靠左／上，正值靠右／下。原片已含黑边时可增加缩放。').pack(
+            fill='x', padx=self.px(10), pady=self.px(4))
+        self._actions(section, [('应用构图', self.apply_framing), ('重置构图', self.reset_framing)])
 
     def _build_image(self):
         section = self._section('image', '画面防抖', '无需陀螺仪，基于画面运动分析。适用于普通相机素材。')
@@ -254,6 +279,34 @@ class ClipInspector(tk.Frame):
 
     def reset_color(self):
         if self._ready(): self.ws.apply_selected_grade(ColorGrade())
+
+    def apply_framing(self):
+        if not self._ready(): return
+        try:
+            transform = ClipTransform(mode=FRAMING_MODES[self.framing_mode.get()],
+                zoom=self._number(self.framing_zoom, '缩放')/100,
+                x=self._number(self.framing_x, '水平取景')/100,
+                y=self._number(self.framing_y, '垂直取景')/100)
+            validate_transform(transform)
+            return self.ws.apply_selected_transform(transform)
+        except (ValueError, KeyError) as error: self._report(error)
+
+    def fill_16_9(self):
+        if self._ready():
+            return self.ws.apply_selected_transform(ClipTransform(mode='fill'), aspect_16_9=True)
+
+    def auto_framing(self):
+        if self._ready():
+            from crop_editor import open_crop_editor
+            return open_crop_editor(self.ws, automatic=True)
+
+    def manual_framing(self):
+        if self._ready():
+            from crop_editor import open_crop_editor
+            return open_crop_editor(self.ws)
+
+    def reset_framing(self):
+        if self._ready(): return self.ws.apply_selected_transform(ClipTransform())
 
     def start_image(self, automatic=False):
         if not self._ready(): return
@@ -358,7 +411,7 @@ class ClipInspector(tk.Frame):
         for button in self.action_widgets:
             button.configure(state='normal' if selected else 'disabled')
         if selected is None:
-            self.target_text.set('请选择节目轨中的片段\n机位、调色、防抖和转场将在这里显示。')
+            self.target_text.set('请选择节目轨中的片段\n机位、裁切、调色、防抖和转场将在这里显示。')
             self._target = None
             return
         start, end = selected
@@ -378,6 +431,14 @@ class ClipInspector(tk.Frame):
         token = (id(self.ws.project), selected)
         if not force and token == self._target: return
         self._target = token
+        transform = self.ws.get_selected_transform()
+        self.framing_mode.set(next(name for name, value in FRAMING_MODES.items() if value == transform.mode))
+        self.framing_zoom.set(f'{transform.zoom*100:g}')
+        self.framing_x.set(f'{transform.x*100:g}'); self.framing_y.set(f'{transform.y*100:g}')
+        settings = self.ws.project.project_settings or DEFAULT_SETTINGS
+        width, height = settings['width'], settings['height']
+        divisor = math.gcd(width, height)
+        self.framing_text.set(f'时间线画幅 {width//divisor}:{height//divisor} · {width} × {height}')
         grade = self.ws.get_selected_grade()
         for key, variable in self.grade_vars.items(): variable.set(f'{getattr(grade, key):g}')
         image = record.settings if record and record.settings.engine == 'image' else image_defaults()

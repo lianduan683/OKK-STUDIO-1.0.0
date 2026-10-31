@@ -12,6 +12,7 @@ import math
 
 from video_stack import prune_stack
 from program_edits import ClipGrade, grade_at, program_spans
+from clip_transform import ClipTransformRange, transform_at, transform_is_identity
 from timeline_link import preserve_source_audio, delete_source_audio, move_source_audio
 
 
@@ -53,6 +54,13 @@ def _trim_project_edges(project):
             item.start, item.end = first / fps, stop / fps
             grades.append(item)
     project.clip_grades = grades
+    transforms = []
+    for item in project.clip_transforms:
+        first, stop = max(0, _frame(item.start, fps)), min(last, _frame(item.end, fps))
+        if first < stop:
+            item.start, item.end = first / fps, stop / fps
+            transforms.append(item)
+    project.clip_transforms = transforms
     boundaries = {_frame(cut.time, fps) for cut in project.cuts}
     boundaries.update(_frame(value, fps) for value in project.edit_points)
     project.transitions = [item for item in project.transitions
@@ -210,7 +218,7 @@ def remove_program_boundaries(project, positions):
     """Merge shots across selected internal cuts; the left shot continues.
 
     This removes an edit decision, never programme time.  Each connected group
-    of merged shots inherits its leftmost camera and local grade.  Unselected
+    of merged shots inherits its leftmost camera, local grade and framing. Unselected
     boundaries retain their original camera/grade, including an explicit
     restore cut when the next retained boundary was originally grade-only.
     Transitions attached to removed cuts are removed.  Audio, source clips,
@@ -240,17 +248,21 @@ def remove_program_boundaries(project, positions):
         if groups and _frame(span.start, fps) in removed:
             groups[-1][1] = span.end
         else:
-            groups.append([span.start, span.end, span.camera, deepcopy(grade_at(project, span.start))])
+            groups.append([span.start, span.end, span.camera, deepcopy(grade_at(project, span.start)),
+                           transform_at(project, span.start)])
     cuts = []
     previous_camera = None
-    for start, end, camera, grade in groups:
+    for start, end, camera, grade, transform in groups:
         if camera != previous_camera:
             cuts.append(Cut(start, camera))
             previous_camera = camera
     candidate.cuts = cuts
-    candidate.edit_points = [start for start, _end, _camera, _grade in groups[1:]]
-    candidate.clip_grades = [ClipGrade(start, end, grade) for start, end, _camera, grade in groups
+    candidate.edit_points = [start for start, _end, _camera, _grade, _transform in groups[1:]]
+    candidate.clip_grades = [ClipGrade(start, end, grade) for start, end, _camera, grade, _transform in groups
                              if grade is not None]
+    candidate.clip_transforms = [ClipTransformRange(start, end, transform)
+                                for start, end, _camera, _grade, transform in groups
+                                if not transform_is_identity(transform)]
     candidate.transitions = [item for item in candidate.transitions
                              if _frame(item.time, fps) not in removed]
     _publish(project, candidate)

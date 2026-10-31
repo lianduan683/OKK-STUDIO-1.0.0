@@ -274,14 +274,17 @@ class GpuLivePlayerMixin:
         clip = self._project.clip_at(camera, position)
         return LiveSide(camera, clip.id if clip is not None else '', path, tuple(key), position-native_time, position)
 
-    def _gpu_ensure_side(self, slot, side, position, *, force=False, grades=None):
+    def _gpu_ensure_side(self, slot, side, position, *, force=False, grades=None, transform_time=None):
         if self._gpu_navigation_pending(): return False
         if slot.failed_key == side.asset_key: return False
         try:
             new = slot.key != side.asset_key
             controller = slot.controller
             controller.start()
-            if new or force or not slot.active:
+            framing = getattr(self, '_sync_program_transform', None)
+            framing_changed = (framing(slot, side.grade_anchor if transform_time is None else transform_time,
+                                       key=side.asset_key) if callable(framing) else False)
+            if new or force or not slot.active or framing_changed:
                 self._gpu_pause(slot, True, force=True)
                 self._set_picture_speed(slot, 1.)
                 controller.command(['set_property', 'mute', True])
@@ -290,7 +293,7 @@ class GpuLivePlayerMixin:
                 target = max(0., side.native_time(position))
                 # A normal cut may already have a decoded staging frame.
                 # Preserve that frame while still verifying render readiness.
-                ready = self._prepare_picture_frame(slot, target, force=force, newly_loaded=new)
+                ready = self._prepare_picture_frame(slot, target, force=force or framing_changed, newly_loaded=new)
                 if self._gpu_navigation_pending(): return False
                 slot.key, slot.failed_key, slot.active = side.asset_key, None, True
                 latest = self._clock() if self._playing and not force else self._position
@@ -411,7 +414,8 @@ class GpuLivePlayerMixin:
         in_window = plan.contains(position)
         grades_a = side_grades(self._project, plan.outgoing, self._grade_draft) if in_window else self._program_grade_chain(plan.outgoing.camera, position)
         ready_a = self._gpu_ensure_side(a, plan.outgoing, position,
-                                      force=force and a is not single_synced, grades=grades_a)
+                                      force=force and a is not single_synced, grades=grades_a,
+                                      transform_time=plan.outgoing.grade_anchor if in_window else position)
         if not ready_a or self._gpu_navigation_pending(): return
         ready_b = self._gpu_ensure_side(b, plan.incoming, position, force=force)
         if not ready_b or self._gpu_navigation_pending(): return

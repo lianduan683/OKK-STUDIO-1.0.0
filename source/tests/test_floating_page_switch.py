@@ -58,16 +58,22 @@ def page_switch_worker(scenario):
                       *ws.comparison_views, *ws.camera_surfaces.values()]
             handles = tuple(frame.winfo_id() for frame in frames)
             for cycle in range(3):
-                for page in ('color', 'delivery', 'multicam'):
+                for page in ('color', 'delivery', 'basic', 'multicam'):
                     print('PAGE', scenario, cycle, page, flush=True)
-                    case.app.page_buttons[page].invoke()
+                    if page == 'basic':
+                        case.app.export_notebook.select(case.app.export_sections['basic'])
+                    else:
+                        case.app.page_buttons[page].invoke()
                     case._settle()
                     case.assertIs(ws.project, project)
                     case.assertEqual(ws.project, content)
                     case.assertEqual(tuple(frame.winfo_id() for frame in frames), handles)
-                    case.assertEqual(case.app.active_page, page)
+                    case.assertEqual(case.app.active_page, 'delivery' if page == 'basic' else page)
                     if page == 'multicam':
                         case.assertEqual(layout_without_ids(manager.serialize()), before)
+                    elif page == 'basic':
+                        case.assertTrue(case.app.codec_combo.winfo_viewable())
+                        case.assertFalse(ws.delivery_export_button.winfo_viewable())
                     else:
                         case.assertTrue(ws.program_surface.winfo_viewable())
                         if page == 'color':

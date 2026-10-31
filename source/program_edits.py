@@ -62,6 +62,8 @@ def _range(project, start: float, end: float) -> tuple[int, int, float]:
 
 
 def validate_program_edits(project) -> None:
+    from clip_transform import validate_clip_transforms
+
     fps, last = _clock(project)
     points = getattr(project, "edit_points", [])
     grades = getattr(project, "clip_grades", [])
@@ -90,6 +92,7 @@ def validate_program_edits(project) -> None:
         if first < previous:
             raise ValueError("片段调色范围不能重叠")
         previous = stop
+    validate_clip_transforms(project)
 
 
 def program_spans(project) -> list[ProgramSpan]:
@@ -101,6 +104,8 @@ def program_spans(project) -> list[ProgramSpan]:
     edges.update(_frame(cut.time, fps) for cut in project.cuts)
     edges.update(_frame(value, fps) for value in getattr(project, "edit_points", []))
     for item in getattr(project, "clip_grades", []):
+        edges.update((_frame(item.start, fps), _frame(item.end, fps)))
+    for item in getattr(project, "clip_transforms", []):
         edges.update((_frame(item.start, fps), _frame(item.end, fps)))
     ordered = sorted(value for value in edges if 0 <= value <= last)
     cuts = sorted(project.cuts, key=lambda item: item.time)

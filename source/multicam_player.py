@@ -25,6 +25,8 @@ from subtitle_core import subtitle_track_to_dict, write_ass
 from creative_core import ColorGrade, validate_grade
 from program_edits import grade_at
 from realtime_grade import RealtimeGrade, validate_preview_target
+from realtime_transform import RealtimeTransform, preview_dimensions
+from clip_transform import ClipTransform, transform_at
 from transition_preview import transition_signature
 from gpu_live_player import GpuLivePlayerMixin
 from proxy_media import PreviewProxyResolver
@@ -301,6 +303,7 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
         self._transition_signature = None
         self._grade_draft = None
         self._grade_engine = RealtimeGrade()
+        self._transform_engine = RealtimeTransform()
         self._subtitle_cache: tempfile.TemporaryDirectory | None = None
         self._subtitle_key: str | None = None
         self._subtitle_ass_path = ""
@@ -430,6 +433,7 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
                 self._grade_engine.close()
             except Exception as error:
                 errors.append(f'调色缓存：{error}')
+            self._transform_engine.close()
         except Exception as error:
             errors.append(f'清理流程：{error}')
         finally:
@@ -1318,6 +1322,7 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
                             if self._audio_duration < 0:
                                 self._audio_duration = None
                     else:
+                        self._sync_program_transform(slot, position, key=key)
                         self._load_picture(controller, path)
                     if self._closing.is_set():
                         return
@@ -1335,6 +1340,7 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
                             self._blank(slot)
                             continue
                         spec, source_time = fresh, fresh[2]
+                    self._sync_program_transform(slot, position, key=key)
                     self._sync_program_subtitles(spec, newly_loaded)
                 correct = freeze or newly_loaded
                 if not correct and self._playing:
@@ -1662,6 +1668,7 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
         key, path, source_time = spec
         current = self._program
         if current.key == key and current.controller is not None:
+            self._sync_program_transform(current, position)
             self._sync_program_subtitles(spec, False)
             if force:
                 self._seek_picture(current, source_time)
@@ -1690,6 +1697,7 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
                 self._set_picture_speed(staging, 1.)
                 controller.command(["set_property", "pause", True])
             controller.command(["set_property", "mute", True])
+            self._sync_program_transform(staging, position, key=key)
             if newly_loaded:
                 self._load_picture(controller, path)
                 staging.key, staging.failed_key = key, None
@@ -1703,6 +1711,7 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
             if fresh is None or fresh[0] != key:
                 return  # The requested shot already ended; do not flash it.
             spec, source_time = fresh, fresh[2]
+            self._sync_program_transform(staging, position, key=key)
             self._sync_program_subtitles(spec, newly_loaded, staging, position)
             for notice in self._grade_engine.apply(controller,
                     self._program_grade_chain(self._camera_at(position), position),
@@ -1784,6 +1793,7 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
             can_preroll = (self._playing and not self._gpu_live_enabled and
                            not self._is_baked_key(key) and source_time >= edge-position)
             if staging.key == key and staging.prewarm_target == target:
+                self._sync_program_transform(staging, edge, key=key)
                 if staging.prewarm_running:
                     if self._playing:
                         self._correct_picture_drift(staging, max(0., source_time+position-edge))
@@ -1801,6 +1811,7 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
                 else:
                     controller.command(['set_property', 'pause', True])
                 controller.command(['set_property', 'mute', True])
+                self._sync_program_transform(staging, edge, key=key)
                 newly_loaded = staging.key != key
                 if newly_loaded:
                     self._load_picture(controller, path)
@@ -1840,6 +1851,23 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
                 else:
                     self._error('后台准备下一画面失败，切换时将保留当前画面', exc)
             return
+
+    def _sync_program_transform(self, slot, position, *, key=None):
+        """Frame raw programme sources; grid/comparison and baked frames own theirs."""
+        if slot.controller is None or getattr(self, '_stack_enabled', False):
+            return False
+        project = self._project
+        engine = getattr(self, '_transform_engine', None)
+        if engine is None:
+            if not _get(project, 'clip_transforms', []):
+                return False
+            self._transform_engine = engine = RealtimeTransform()
+        key = slot.key if key is None else key
+        baked = self._is_baked_key(key)
+        transform = (transform_at(project, position)
+                     if not baked and _get(project, 'clip_transforms', []) else ClipTransform())
+        width, height = preview_dimensions(project)
+        return engine.apply(slot.controller, transform, width, height, bypass=baked)
 
     def _program_grade_chain(self, camera, position):
         saved = _get(self._project, "camera_grades", {})

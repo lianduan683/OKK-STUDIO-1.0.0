@@ -31,6 +31,8 @@ from multicam_frame_clock import canonical_frame_rate
 from creative_core import ColorGrade, Transition, validate_grade, validate_transitions
 from creative_render import plan_creative_segments
 from program_edits import program_spans, split_at, set_camera_on_range, set_grade_on_range, grade_at
+from clip_transform import ClipTransform, transform_at, set_transform_on_range, validate_transform
+from project_settings import DEFAULT_SETTINGS
 from color_workspace import ColorWorkspace
 from finishing_workspace import FinishingWorkspace
 from effect_workspace import EffectsWorkspaceMixin
@@ -920,6 +922,37 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
         position = selected[0] if selected else self.current
         return copy.deepcopy(grade_at(self.project, position) or ColorGrade())
 
+    def get_selected_transform(self):
+        selected = self.selected_program_range
+        return copy.deepcopy(transform_at(self.project, selected[0] if selected else self.current))
+
+    def apply_selected_transform(self, transform, *, aspect_16_9=False):
+        if not self._available(): return False
+        if self.selected_program_range is None:
+            self.status.set('请先选中节目轨中的片段。'); return False
+        try:
+            validate_transform(transform)
+            candidate = copy.deepcopy(self.project)
+            if aspect_16_9:
+                settings = dict(candidate.project_settings or DEFAULT_SETTINGS)
+                # Exact 16:9 with even dimensions; retain the current width
+                # as closely as possible for HD, UHD and custom timelines.
+                unit = max(1, min(512, round(settings['width']/32)))
+                settings.update(width=unit*32, height=unit*18)
+                candidate.project_settings = settings
+            set_transform_on_range(candidate, *self.selected_program_range, transform)
+            candidate.validate()
+        except (ValueError, TypeError) as error:
+            messagebox.showerror('裁切与缩放', str(error), parent=self); return False
+        if aspect_16_9 and hasattr(self.app, 'resolution_var'):
+            self.app.resolution_var.set('时间线分辨率')
+        if candidate == self.project: return True
+        self._remember(); self.project = candidate
+        self._refresh()
+        self._update_program_canvas()
+        self.status.set('所选片段裁切与缩放已应用 · 成片监看与导出使用相同构图。')
+        return True
+
     def get_active_grade(self):
         if self.grade_target == 'selection':
             return self.get_selected_grade()
@@ -1347,6 +1380,13 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
                 item.start, item.end = first/fps, stop/fps
                 trimmed_grades.append(item)
         self.project.clip_grades = trimmed_grades
+        trimmed_transforms = []
+        for item in self.project.clip_transforms:
+            first, stop = max(0, frame(item.start)), min(last, frame(item.end))
+            if stop > first:
+                item.start, item.end = first/fps, stop/fps
+                trimmed_transforms.append(item)
+        self.project.clip_transforms = trimmed_transforms
         boundary_times = [cut.time for cut in self.project.cuts] + self.project.edit_points
         cut_frames = {frame(value) for value in boundary_times if frame(value) > 0}
         self.project.transitions = [item for item in self.project.transitions
@@ -3078,6 +3118,8 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
         return self._confirm_discard()
 
     def close(self):
+        crop_editor = vars(self).get('_crop_editor')
+        if crop_editor is not None: crop_editor.close()
         service = vars(self).get("_exposure_service")
         if service is not None: service.close()
         self._finish_selection_gesture(cancel=True)

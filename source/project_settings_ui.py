@@ -12,12 +12,15 @@ FONT = 'Microsoft YaHei UI'
 
 
 class ProjectSettingsMixin:
-    def show_project_settings(self):
-        if not self._available(): return False
+    def show_project_settings(self, section=None):
+        # Task logs remain available while rendering; staged settings cannot
+        # be applied until the current task finishes.
+        if section != 'log' and not self._available(): return False
         previous = vars(self).get('_project_settings_window')
         if previous is not None and previous.winfo_exists():
+            if section is not None: self._project_settings_select(section)
             previous.lift(); previous.focus_set(); return True
-        self.pause()
+        if not self.busy and not self.app.working: self.pause()
         project = self.project
         settings = project.project_settings or DEFAULT_SETTINGS
         window = self._project_settings_window = tk.Toplevel(self)
@@ -95,13 +98,21 @@ class ProjectSettingsMixin:
             build = getattr(self.app, builder, None)
             if callable(build):
                 preference_validators[key] = build(page(key, title, subtitle), window, values)
+        build_log = getattr(self.app, '_build_log', None)
+        if callable(build_log):
+            log_page = page('log', '任务日志', '硬件检测、转码与导出任务的运行记录')
+            log_content = tk.Frame(log_page, bg=BG)
+            log_content.pack(fill='both', expand=True)
+            build_log(log_content)
 
         def select(key):
+            if key not in pages: key = 'video'
             pages[key].tkraise()
             for name, button in navigation.items():
                 button.configure(bg='#34434f' if name == key else INPUT, fg=INK if name == key else MUTED)
         sections = [('video', '主设置'), ('audio', '音频'), ('prerender', '预渲染')]
         sections.extend((key, title) for key, title in (('autosave', '自动保存'), ('keyboard', '快捷键')) if key in pages)
+        if 'log' in pages: sections.append(('log', '任务日志'))
         for index, (key, title) in enumerate(sections):
             button = navigation[key] = tk.Button(sidebar, text=title, command=lambda key=key: select(key),
                 relief='flat', bd=0, anchor='w', padx=24, pady=14, bg=INPUT, fg=MUTED, font=(FONT, 10),
@@ -114,7 +125,7 @@ class ProjectSettingsMixin:
                 values['width'].set(str(size[0])); values['height'].set(str(size[1]))
             for entry in (width_entry, height_entry): entry.configure(state='normal' if size is None else 'readonly')
         combo.bind('<<ComboboxSelected>>', resolution_changed)
-        resolution_changed(); select('video')
+        resolution_changed(); select(section if section in pages else 'video')
         footer = tk.Frame(window, bg=PANEL, padx=18, pady=14)
         footer.grid(row=2, column=0, columnspan=2, sticky='ew')
         hint = tk.StringVar(window, value='工程格式随工程保存；自动保存、快捷键和预渲染偏好在本机记住。')
@@ -124,6 +135,8 @@ class ProjectSettingsMixin:
         buttons.pack(fill='x')
 
         def apply():
+            if not self._available():
+                hint.set('当前任务仍在运行；可以取消或等待完成后保存设置。'); return
             if self.project is not project:
                 hint.set('工程已切换，请重新打开设置。'); return
             try:

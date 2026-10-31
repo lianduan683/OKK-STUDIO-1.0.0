@@ -32,11 +32,11 @@ class ClipInspectorTests(unittest.TestCase):
         self.dialog_patch.stop()
         fixture.TimelineDropTests.tearDown(self)
 
-    def test_selecting_programme_exposes_six_modules_without_hiding_monitors_or_timeline(self):
+    def test_selecting_programme_exposes_seven_modules_without_hiding_monitors_or_timeline(self):
         ws = self.workspace
         self.assertTrue(ws._inspector_visible)
         self.assertEqual(ws.inspector_tabs.select(), str(ws.program_inspector_tab))
-        self.assertEqual(set(self.panel.sections), {'camera', 'color', 'image', 'gyro', 'transition', 'overlay'})
+        self.assertEqual(set(self.panel.sections), {'camera', 'framing', 'color', 'image', 'gyro', 'transition', 'overlay'})
         self.assertIn(str(ws.monitors), ws.body.panes())
         self.assertTrue(ws.program_surface.winfo_ismapped())
         self.assertTrue(ws.timeline.winfo_ismapped())

@@ -12,6 +12,7 @@ import math
 from pathlib import Path
 
 from creative_core import grade_filter
+from clip_transform import transform_at, transform_is_identity, framing_filter
 from gyroflow_core import cache_matches
 from library_overlay import overlay_cache_matches
 from program_edits import grade_at
@@ -87,7 +88,7 @@ def plan_stack_segments(project):
     for clips in by_camera.values():
         for clip in clips:
             edges.update((_frame(clip.start, fps), _frame(clip.end, fps)))
-    for items in (project.clip_grades, project.stabilizations, project.library_overlays):
+    for items in (project.clip_grades, getattr(project, 'clip_transforms', []), project.stabilizations, project.library_overlays):
         for item in items:
             edges.update((_frame(item.start, fps), _frame(item.end, fps)))
     boundaries = sorted(value for value in edges if first <= value <= last)
@@ -146,10 +147,13 @@ def build_stack_command(segment, project, base, width, height, pixel_format,
             if decoder:
                 command += ['-c:v', decoder]
         command += ['-i', layer.path]
+        transform = transform_at(project, segment.start)
+        framing = (f'scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,'
+                   f'pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black@0,setsar=1'
+                   if transform_is_identity(transform) else
+                   framing_filter(transform, width, height, pad_color='black@0'))
         normalize = (f'[{index}:v:0]setpts=PTS-STARTPTS,fps=fps={rate_text}:start_time=0,'
-                     f'format={alpha_format},scale={width}:{height}:'
-                     'force_original_aspect_ratio=decrease:force_divisible_by=2,'
-                     f'pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black@0,setsar=1,'
+                     f'format={alpha_format},{framing},'
                      f'tpad=stop_mode=clone:stop_duration={segment.duration+prefix/project.fps+1:.9f},'
                      f'trim=start_frame={prefix}:end_frame={prefix+segment.frames},'
                      f'settb=AVTB,setpts=N/({rate_text}*TB),format={alpha_format}')

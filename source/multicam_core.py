@@ -41,6 +41,8 @@ from cache_publish import publish_completed
 from hardware_encoders import HARDWARE_ENCODERS, encoder_vendor, is_hardware_codec
 from proxy_cache import find_proxy
 from program_edits import grade_at
+from clip_transform import (ClipTransformRange, clip_transforms_to_dict, clip_transforms_from_dict,
+                            framing_filter, transform_at, transform_is_identity)
 from gpu_export import (GpuExportUnsupported, find_gpu_export_ffmpeg,
                         build_gpu_video_plan, build_gpu_transition_command)
 from export_parallel import choose_export_workers
@@ -159,6 +161,7 @@ class MulticamProject:
     monitor_layout: dict = field(default_factory=dict, compare=False)
     master_audio_clips: list[MasterAudioClip] = field(default_factory=list)
     timeline_multicam_collapsed: bool = False
+    clip_transforms: list[ClipTransformRange] = field(default_factory=list)
 
     def set_camera_name(self, camera: int, name: str) -> None:
         if _camera(camera) not in self.timeline_cameras:
@@ -428,6 +431,8 @@ class MulticamProject:
         protected_edges = {_frame(value, self.fps) for value in self.edit_points}
         for item in self.clip_grades:
             protected_edges.update((_frame(item.start, self.fps), _frame(item.end, self.fps)))
+        for item in self.clip_transforms:
+            protected_edges.update((_frame(item.start, self.fps), _frame(item.end, self.fps)))
         for item in self.stabilizations:
             protected_edges.update((_frame(item.start, self.fps), _frame(item.end, self.fps)))
         for item in self.library_overlays:
@@ -528,6 +533,11 @@ class MulticamProject:
                      *(clip for clip in payload['audio_overrides'].values() if clip is not None)]
         if any(not clip['enabled'] for clip in instances):
             payload['version'] = 17
+        if self.clip_transforms:
+            payload['version'] = 18
+            payload['clip_transforms'] = clip_transforms_to_dict(self)
+        else:
+            payload.pop('clip_transforms')
         for clip in instances:
             if clip['enabled']: clip.pop('enabled')
         if not self.master_audio_clips: payload.pop('master_audio_clips')
@@ -612,11 +622,11 @@ class MulticamProject:
         base = Path(base_directory).resolve()
         try:
             if (not isinstance(payload, dict) or payload.get("format") != "okk-multicam"
-                    or type(payload.get("version")) is not int or payload.get("version") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17}):
+                    or type(payload.get("version")) is not int or payload.get("version") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18}):
                 raise ValueError("不是受支持的多机位工程")
             allowed = {"format", "version", "clips", "cuts", "master_audio", "master_duration", "fps",
                        "range_start", "range_end", "global_grade", "camera_grades", "transitions", "subtitles",
-                       "edit_points", "clip_grades", "stabilizations", "library_overlays", "alignment_reference_camera", "color_reference_camera",
+                       "edit_points", "clip_grades", "clip_transforms", "stabilizations", "library_overlays", "alignment_reference_camera", "color_reference_camera",
                        "video_stack_enabled", "video_stack_order", "video_stack_hidden", "timeline_empty_tracks", "camera_names",
                        "audio_track_enabled", "timeline_markers", "timeline_snap_enabled", "timeline_link_enabled", "audio_overrides", "timeline_removed_tracks", "project_settings", "monitor_layout", "master_audio_clips", "timeline_multicam_collapsed"}
             if set(payload) - allowed:
@@ -703,6 +713,7 @@ class MulticamProject:
                           range_end=payload.get("range_end"), global_grade=grade,
                           camera_grades=camera_grades, transitions=transitions, subtitles=subtitles,
                           edit_points=edit_points, clip_grades=clip_grades, stabilizations=stabilizations,
+                          clip_transforms=clip_transforms_from_dict(payload.get('clip_transforms', [])),
                           library_overlays=overlays,
                           alignment_reference_camera=payload.get('alignment_reference_camera'),
                           color_reference_camera=payload.get('color_reference_camera'),
@@ -861,7 +872,10 @@ def render_multicam(
         raise ValueError("请先添加相机素材")
     if not stacked:
         segments = plan_creative_segments(project, segments)
-        segments = coalesce_render_segments(project, segments)
+        # The older coalescer compares only grades, not framing. Keep all
+        # protected transform boundaries until it also understands framing.
+        if not project.clip_transforms:
+            segments = coalesce_render_segments(project, segments)
     for grade in [project.global_grade, *project.camera_grades.values(),
                   *(item.grade for item in project.clip_grades)]:
         validate_grade(grade)
@@ -1124,8 +1138,7 @@ def render_multicam(
                     if prefix_frames else f"trim=end_frame={segment.frames}")
             filters = cuda_filter or (
                 f"setpts=PTS-STARTPTS,fps=fps={rate_text}:start_time=0,"
-                f"scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,"
-                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,"
+                + framing_filter(transform_at(project, segment.start), width, height) + ',' +
                 f"format={pixel_format},tpad=stop_mode=clone:stop_duration={segment.duration + prefix_frames / project.fps + 1:.9f},"
                 f"{trim},settb=AVTB,setpts=N/({rate_text}*TB)"
             )
@@ -1161,7 +1174,16 @@ def render_multicam(
                 phase = f'合成 {len(segment.layers)} 层画面（任务 {index + 1}/{len(segments)}） · {backend} 编码'
             fallback_command = command
             gpu_commands = []
-            if gpu_effect_ffmpeg and segment.path and (isinstance(segment, TransitionSegment) or cuda_filter is None):
+            if isinstance(segment, TransitionSegment):
+                cut_frame = _frame(segment.full_start, project.fps) + segment.full_frames // 2
+                transformed = any(not transform_is_identity(transform_at(project, frame / project.fps))
+                                  for frame in (cut_frame - 1, cut_frame))
+            else:
+                transformed = not transform_is_identity(transform_at(project, segment.start))
+            # GPU grading plans predate framing and would silently discard
+            # it. The software graph still retains hardware decode/encode.
+            if (gpu_effect_ffmpeg and segment.path and not transformed
+                    and (isinstance(segment, TransitionSegment) or cuda_filter is None)):
                 blocked=disabled_gpu_reason(segment.path)
                 if blocked:phase+=' · CPU 特效（已跳过失败的 GPU 路径）'
                 # Vulkan HEVC decoding failed with VK_ERROR_DEVICE_LOST on

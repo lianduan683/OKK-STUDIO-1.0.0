@@ -45,7 +45,7 @@ def picture_signature(project, resolution=(1280, 720)):
     """Exclude sound, view state and export ranges; include external asset changes."""
     data = asdict(project)
     keep = ('clips', 'cuts', 'fps', 'global_grade', 'camera_grades', 'transitions',
-            'subtitles', 'clip_grades', 'stabilizations', 'library_overlays',
+            'subtitles', 'clip_grades', 'clip_transforms', 'stabilizations', 'library_overlays',
             'video_stack_enabled', 'video_stack_order', 'video_stack_hidden', 'project_settings',
             'edit_points', 'master_duration')
     data = {key: data[key] for key in keep if key in data}
@@ -85,6 +85,8 @@ def plan_blocks(project, seconds=4.):
 
 def needs_render(project, block, media):
     first, last = block.start, block.end
+    if any(item.start < last and item.end > first for item in getattr(project, 'clip_transforms', [])):
+        return '裁切与缩放'
     if any(t.time-t.duration/2 < last and t.time+t.duration/2 > first for t in project.transitions):
         return '转场合成'
     active = [clip for clip in project.clips if clip.start < last and clip.end > first]

@@ -15,6 +15,7 @@ from pathlib import Path
 from creative_core import grade_filter, grade_is_identity, transition_filter, validate_transitions
 from subtitle_core import subtitle_filter
 from program_edits import grade_at
+from clip_transform import framing_filter, transform_at, transform_is_identity
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,6 +171,10 @@ def plan_creative_segments(project, segments) -> list:
 
 
 def has_pixel_effects(project, camera: int, time: float | None = None) -> bool:
+    transforms = ([transform_at(project, time)] if time is not None else
+                  [item.transform for item in getattr(project, "clip_transforms", [])])
+    if any(not transform_is_identity(transform) for transform in transforms):
+        return True
     if not grade_is_identity(project.global_grade):
         return True
     if camera in project.camera_grades and not grade_is_identity(project.camera_grades[camera]):
@@ -224,10 +229,10 @@ def build_transition_command(job: TransitionSegment, project, base, settings, wi
         command += ['-loop', '1', '-framerate', rate_text, '-i', job.mask_path]
     trim = (f"trim=start_frame={prefix_frames}:end_frame={prefix_frames + job.full_frames}" if prefix_frames
             else f"trim=end_frame={job.full_frames}")
-    normalize = (
+    timing = (
         f"setpts=PTS-STARTPTS,fps=fps={rate_text}:start_time=0,"
-        f"scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,"
-        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,"
+    )
+    normalize_tail = (
         f"format={working_format},tpad=stop_mode=clone:stop_duration={full_duration + prefix_seconds + 1:.9f},"
         f"{trim},settb=AVTB,setpts=N/({rate_text}*TB)"
     )
@@ -239,7 +244,9 @@ def build_transition_command(job: TransitionSegment, project, base, settings, wi
         cut_frame = _frame(job.full_start, project.fps) + job.full_frames // 2
         grade_time = (cut_frame - 1 if index == 0 else cut_frame) / project.fps
         grade = normal_effect_filter(project, camera, job.full_start, grade_time=grade_time)
-        chain = normalize + ("," + grade if grade else "") + f",format={working_format}"
+        framing = framing_filter(transform_at(project, grade_time), width, height)
+        chain = timing + framing + ',' + normalize_tail
+        chain += ("," + grade if grade else "") + f",format={working_format}"
         graph.append(f"[{index}:v:0]{chain}[camera{index}]")
     if job.mask_path:
         peak = 1023 if '10' in working_format else 255
