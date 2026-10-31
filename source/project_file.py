@@ -743,7 +743,16 @@ def build_project_payload(app, *, project_path: str = "", app_version: str = "")
     }
 
 
-def state_digest(state: dict) -> str:
+def state_digest(state: dict, *, include_view=False) -> str:
+    if not include_view:
+        okk = state.get('okk_multicam')
+        if isinstance(okk, dict) and isinstance(okk.get('project'), dict):
+            state = dict(state)
+            okk = state['okk_multicam'] = dict(okk)
+            project = okk['project'] = dict(okk['project'])
+            project.pop('timeline_view', None)
+            # View metadata can promote the file version without changing edits.
+            project.pop('version', None)
     payload = json.dumps(state, sort_keys=True, ensure_ascii=False, default=str)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -769,11 +778,15 @@ def write_project_file(path: str | os.PathLike[str], payload: dict) -> None:
 def read_project_file(path: str | os.PathLike[str]) -> dict:
     target = Path(path)
     try:
-        data = json.loads(target.read_text(encoding="utf-8"))
+        data = json.loads(target.read_text(encoding="utf-8-sig"))
     except FileNotFoundError:
         raise ProjectFileError("工程文件不存在。") from None
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ProjectFileError(f"工程文件无法读取:{exc}") from None
+    return validate_project_payload(data)
+
+
+def validate_project_payload(data: dict) -> dict:
     if not isinstance(data, dict) or data.get("format") != PROJECT_FORMAT:
         raise ProjectFileError("这不是有效的 RTX 工程文件。")
     schema = data.get("schema", 0)

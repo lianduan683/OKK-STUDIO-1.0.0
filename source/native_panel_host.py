@@ -80,6 +80,7 @@ class NativePanelHost:
         self._leaf_hwnd = int(widget.winfo_id())
         self._wrapper = 0
         self._original_style = self._original_exstyle = None
+        self._original_override = None
         self._owns_window = False
         self._attached = False
         self._visible = False
@@ -116,12 +117,17 @@ class NativePanelHost:
             self.widget.tk.call('wm', 'manage', self.widget)
         self._owns_window = True
         try:
+            # Decide the borderless wrapper before capturing its HWND. Tk can
+            # otherwise recreate a decorated wrapper after native embedding.
+            self._original_override = self.widget.tk.call('wm', 'overrideredirect', self.widget)
+            self.widget.tk.call('wm', 'overrideredirect', self.widget, True)
             self.widget.update_idletasks()
             self._wrapper = self._native.parent(self._leaf_hwnd)
             if not self._wrapper or self._wrapper == int(self.container.winfo_id()):
                 raise RuntimeError('未找到面板的独立窗口包装层。')
             self._original_style = self._native.style(self._wrapper)
             self._original_exstyle = self._native.style(self._wrapper, True)
+            self.widget.tk.call('wm', 'withdraw', self.widget)
             self._native.show(self._wrapper, False)
             self._native.set_style(self._wrapper, (self._original_style & ~0x80CF0000) | 0x42000000)
             self._native.set_style(self._wrapper, (self._original_exstyle & ~0x00040000) | 0x08000000, True)
@@ -165,10 +171,16 @@ class NativePanelHost:
             raise RuntimeError('浮动容器已失效；请保留面板并重新停靠。')
         size = self._desired_size()
         if size != self._applied_size or self._frame_changed:
+            # Keep Tk's desired geometry consistent with the native child.
+            # A later WM geometry pass must not restore its former dock size.
+            self.widget.tk.call('wm', 'geometry', self.widget, f'{size[0]}x{size[1]}+0+0')
             self._native.position(self._wrapper, *size, frame_changed=self._frame_changed)
             self._applied_size = size
             self._frame_changed = False
         if self._visible != self._applied_visible:
+            self.widget.tk.call('wm', 'withdraw', self.widget)
+            if self._visible:
+                self.widget.tk.call('wm', 'deiconify', self.widget)
             self._native.show(self._wrapper, self._visible)
             self._applied_visible = self._visible
 
@@ -180,6 +192,7 @@ class NativePanelHost:
     def hide(self):
         self._visible = False
         if self._applied_visible and self._wrapper and self._native.exists(self._wrapper):
+            self.widget.tk.call('wm', 'withdraw', self.widget)
             self._native.show(self._wrapper, False)
             self._applied_visible = False
 
@@ -201,6 +214,7 @@ class NativePanelHost:
         self._cancel_geometry()
         self._assert_leaf()
         if self._wrapper and self._native.exists(self._wrapper):
+            self.widget.tk.call('wm', 'withdraw', self.widget)
             self._native.show(self._wrapper, False)
             self._applied_visible = False
             # Remove the native child before any group shell can be destroyed.
@@ -209,11 +223,14 @@ class NativePanelHost:
             if self._original_style is not None:
                 self._native.set_style(self._wrapper, self._original_style)
                 self._native.set_style(self._wrapper, self._original_exstyle, True)
+        if self._original_override is not None:
+            self.widget.tk.call('wm', 'overrideredirect', self.widget, self._original_override)
         self._forget_window_manager()
         self._assert_leaf()
         self._attached = False
         self._owns_window = False
         self._wrapper = 0
+        self._original_override = None
         self._visible = False
         self._applied_size = None
         self._frame_changed = False

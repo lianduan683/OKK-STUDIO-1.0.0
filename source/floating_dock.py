@@ -11,6 +11,7 @@ class FloatingDockGroup:
         self.manager=manager;self.group=group;self.members={};self.pages={};self._after=None;self._closing=False;self._syncing=False
         self._visible_key=None;self._visible_size=None
         self.window=tk.Toplevel(manager.workspace);self.window.withdraw()
+        manager._bind_resize_window(self.window)
         self.window.title('面板组 · OKK STUDIO');self.window.configure(bg='#292b2e')
         self.header=tk.Frame(self.window,bg='#292b2e',cursor='fleur')
         self.header.pack(fill='x')
@@ -25,6 +26,7 @@ class FloatingDockGroup:
         self.notebook.bind('<B1-Motion>',manager._motion,add='+')
         self.notebook.bind('<ButtonRelease-1>',manager._release,add='+')
         self.window.bind('<Configure>',self._configure,add='+')
+        self.window.bind('<Map>',self._configure,add='+')
         self.window.bind('<Escape>',manager._escape_drag,add='+')
         manager._bind_header(self.header,lambda:self.group['tabs'][0],whole_group=True)
         self.window.geometry(group['geometry'])
@@ -45,7 +47,7 @@ class FloatingDockGroup:
 
     def _layout(self):
         self._after=None
-        if self._closing or self._syncing:return
+        if self._closing or self._syncing or not self.window.winfo_viewable():return
         selected=self.group['selected'];host=self.members.get(selected);page=self.pages.get(selected)
         if host is None or page is None or not host.attached:return
         size=(max(1,page.winfo_width()),max(1,page.winfo_height()))

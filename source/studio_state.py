@@ -24,6 +24,8 @@ def collect_okk(app):
     project.range_start, project.range_end, project.fps = workspace._read_range()
     if hasattr(workspace, '_capture_monitor_layout'):
         project.monitor_layout = workspace._capture_monitor_layout()
+    if hasattr(workspace, '_capture_timeline_view'):
+        project.timeline_view = workspace._capture_timeline_view()
     variables = {}
     for name, value in vars(workspace).items():
         if _is_saved_setting(name) and hasattr(value, 'get'):
@@ -76,6 +78,7 @@ def restore_okk(app, value, legacy=None):
     workspace.stop_monitors()
     workspace.project = project
     workspace.project_path = ''
+    workspace._project_upgrade_blocked_path = None
     workspace.dirty = False
     workspace.selected_program_range = None
     workspace.camera_page = project.monitor_layout.get('page', workspace.camera_page)
@@ -104,6 +107,8 @@ def restore_okk(app, value, legacy=None):
     workspace._refresh()
     if hasattr(workspace, '_restore_monitor_layout'):
         workspace._restore_monitor_layout()
+    if hasattr(workspace, '_restore_timeline_view'):
+        workspace._restore_timeline_view()
     warnings.extend(f'多机位素材离线：{clip.path}' for clip in project.clips if not Path(clip.path).is_file())
     return warnings
 

@@ -1,40 +1,37 @@
 {
-  "version": "1.0.11",
-  "build_id": "20261031-185657-475d793d",
+  "version": "1.0.12",
+  "build_id": "20261031-193714-d6bdff36",
   "focused_regression": {
-    "run": 33,
-    "passed": 33,
+    "run": 112,
+    "passed": 112,
     "modules": [
-      "effects_browser",
-      "effect_catalog_layout",
-      "effects_drag",
-      "library_overlay"
+      "project_upgrade",
+      "timeline_view_state",
+      "multicam",
+      "timeline_viewport",
+      "project_open_compat",
+      "autosave_settings",
+      "studio_session",
+      "timeline_timecode",
+      "timeline_audio_session",
+      "clip_transform",
+      "effects_live_resize"
     ]
   },
-  "isolated_offline_install": "passed",
-  "transition_catalog_count": 355,
-  "new_transition_png_count": 137,
   "frozen_headless_export": "passed",
-  "packaged_module_presence": [
-    "effects_tiles",
-    "effects_browser",
-    "effects_drag",
-    "effects_library",
-    "PIL",
-    "PIL.PngImagePlugin"
-  ],
-  "version_metadata": "1.0.11",
+  "version_metadata": "1.0.12",
   "archive_crc_checks": "passed",
   "source_allowlist_and_known_private_path_and_key_pattern_scan": "passed",
-  "historical_tests_not_rerun": [
-    "1.0.8: two preview seek fixture errors",
-    "1.0.7: one offscreen pointer hit failure"
-  ],
   "trusted_code_signature": false,
   "not_tested": [
     "full test suite",
+    "fresh installation",
     "production in-place upgrade",
     "online resource download during installation",
     "all physical display and hardware combinations"
+  ],
+  "historical_tests_not_rerun": [
+    "two preview seek fixture errors",
+    "one offscreen pointer hit failure"
   ]
 }

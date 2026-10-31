@@ -49,11 +49,12 @@ class AutosaveLifecycleTests(unittest.TestCase):
         self.app._project_update_title = Mock()
         self.app._log = Mock()
         self.payload = {'state': {'revision': 2}, 'project_path': ''}
-        self.app._project_current_digest = lambda: state_digest(self.payload['state'])
+        self.app._project_current_digest = lambda **options: state_digest(self.payload['state'], **options)
         self.app.multicam_workspace = SimpleNamespace(
             project=MulticamProject(), project_path='', busy=False, dirty=True,
             project_label=Mock(), _read_range=lambda: (0, None, 30),
-            _capture_monitor_layout=lambda: dict(rows=2, columns=4, page=0))
+            _capture_monitor_layout=lambda: dict(rows=2, columns=4, page=0),
+            _capture_timeline_view=lambda: dict(position=0., zoom=8., x_fraction=.25, y_fraction=0.))
         self.patches = [patch('studio_project.app_directory', return_value=self.folder),
                         patch('studio_project.build_project_payload', return_value=self.payload),
                         patch('autosave_settings.preferences_path', return_value=self.folder/'settings.json')]
@@ -102,6 +103,7 @@ class AutosaveLifecycleTests(unittest.TestCase):
         saved = MulticamProject.load(ws.project_path)
         self.assertEqual(saved.monitor_layout, dict(rows=2, columns=4, page=0))
         self.assertEqual(saved.fps, 30)
+        self.assertEqual(saved.timeline_view['zoom'], 8.)
         self.assertFalse(ws.dirty)
 
     def test_busy_and_edit_gestures_defer_without_saving_half_edit(self):

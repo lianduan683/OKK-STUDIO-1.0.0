@@ -1,12 +1,12 @@
-# OKK STUDIO 1.0.11
+# OKK STUDIO 1.0.12
 
-Windows 多机位视频剪辑应用。本版提供逐轨音频、真实波形、时间标记、同步结果明细、机位列表折叠及三套键位，修复旧完整工程打开与保存。
+Windows 多机位视频剪辑应用。本版支持旧工程自动升级和升级前备份，记忆时间线视图，并修复时间定位与特效库拉伸。
 
 本版提供曝光检测和 MCP 本机连接桥；外部 MCP 服务使用源码包及单独的 Python 环境，接入说明见 [MCP.md](MCP.md) 和 [EXPOSURE.md](EXPOSURE.md)。
 
 ## 下载
 
-**[下载 OKK-STUDIO-1.0.11-Setup.exe](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.11/OKK-STUDIO-1.0.11-Setup.exe)** · [发行页](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/tag/v1.0.11)
+**[下载 OKK-STUDIO-1.0.12-Setup.exe](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.12/OKK-STUDIO-1.0.12-Setup.exe)** · [发行页](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/tag/v1.0.12)
 
 主程序已内置安装器。安装时下载并校验 v1.0.0 的四份固定资源 ZIP（约 5.75 GB），完整安装约 6.5 GB，建议预留至少 15 GB。已有离线资源可通过 `/PAYLOADDIR` 复用。安装与升级见 [INSTALLATION.md](INSTALLATION.md)。
 
@@ -56,10 +56,10 @@ Windows 多机位视频剪辑应用。本版提供逐轨音频、真实波形、
 
 Windows 10/11 64 位。缓存沿用可写的非 C 盘、非系统盘固定磁盘策略，优先 D:。仅有 C 盘的电脑目前无法按该策略正常启动。硬件编解码能力以启动检测和实际驱动为准。
 
-本版尚未做受信任代码签名，Windows 智能应用控制可能拦截。新音轨状态和标记使用工程格式 11；独立音频编辑或非默认吸附/链接设置使用格式 12；删除轨道状态使用格式 13；工程设置和监看布局使用格式 14；时间线导入视图使用格式 16；禁用素材使用格式 17；片段裁切与缩放使用格式 18，需要新版打开；升级后建议另存副本。
+本版尚未做受信任代码签名，Windows 智能应用控制可能拦截。新音轨状态和标记使用工程格式 11；独立音频编辑或非默认吸附/链接设置使用格式 12；删除轨道状态使用格式 13；工程设置和监看布局使用格式 14；时间线导入视图使用格式 16；禁用素材使用格式 17；片段裁切与缩放使用格式 18，时间线视图使用格式 19。打开旧工程时会尝试自动升级原文件，并在旁边保留升级前的 .pre-upgrade.bak 备份；升级后请使用本版或兼容后续版本打开。
 
 ## 源码与构建
 
-[下载 1.0.11 应用源码](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.11/OKK-STUDIO-1.0.11-source.zip)。源码包包含应用模块、回归测试、小型 UI 资源和构建文件；不包含用户工程、媒体、工作缓存或大型第三方二进制。构建步骤见 [BUILDING.md](BUILDING.md)。
+[下载 1.0.12 应用源码](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.12/OKK-STUDIO-1.0.12-source.zip)。源码包包含应用模块、回归测试、小型 UI 资源和构建文件；不包含用户工程、媒体、工作缓存或大型第三方二进制。构建步骤见 [BUILDING.md](BUILDING.md)。
 
 应用许可证见 [LICENSE](LICENSE)，第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

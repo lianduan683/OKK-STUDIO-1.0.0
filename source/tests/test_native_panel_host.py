@@ -214,5 +214,16 @@ class NativePanelHostTests(unittest.TestCase):
             self.assertEqual(sum(bool(call.kwargs['frame_changed']) for call in position.call_args_list), 1)
         self.assertEqual(self.errors, [])
 
+    def test_detach_restores_the_original_window_chrome_preference(self):
+        host = self.attach('source'); self.select('source')
+        leaf = self.leaves['source']
+        self.assertTrue(int(leaf.tk.call('wm', 'overrideredirect', leaf)))
+        host.detach()
+        leaf.tk.call('wm', 'manage', leaf)
+        self.assertFalse(int(leaf.tk.call('wm', 'overrideredirect', leaf)))
+        leaf.tk.call('wm', 'forget', leaf)
+        self.assertEqual(leaf.winfo_id(), self.ids['source'][0])
+        self.assertEqual(self.errors, [])
+
 
 if __name__ == '__main__': unittest.main()

@@ -72,6 +72,7 @@ class DockManager:
         self._drag=None;self._overlay=None;self._drag_preview=None;self._closed=False;self._after=None
         self._native_drag=None;self._native_sync_after=None
         self._binding_ids=[]
+        self._resize_after=None;self._resizing=False;self._resize_panes={};self._resize_windows={}
         self.fullscreen=DockFullscreen(self)
         self._bind(workspace.winfo_toplevel(),'<Escape>',self._escape_drag)
         for event in ('<Map>','<Unmap>'):
@@ -80,6 +81,10 @@ class DockManager:
         style=ttk.Style(workspace)
         style.configure('Dock.TNotebook',background=PANEL,borderwidth=0)
         style.configure('Dock.TNotebook.Tab',padding=(self._px(10),self._px(5)))
+        self._bind_resize_window(workspace.winfo_toplevel())
+        for widget in _walk(workspace):
+            if isinstance(widget,(tk.PanedWindow,ttk.Panedwindow)):
+                self._bind_resize_pane(widget)
 
     def _px(self,value):return max(1,round(value*self.scale))
 
@@ -149,6 +154,36 @@ class DockManager:
     def _bind(self,widget,event,callback):
         identity=widget.bind(event,callback,add='+')
         self._binding_ids.append((widget,event,identity))
+
+    def _bind_resize_window(self,window):
+        if str(window) in self._resize_windows:return
+        self._resize_windows[str(window)]=window
+        self._bind(window,'<Configure>',lambda event:
+            self._queue_live_resize() if event.widget is window else None)
+
+    def _bind_resize_pane(self,pane):
+        if str(pane) in self._resize_panes:return
+        self._resize_panes[str(pane)]=pane
+        self._bind(pane,'<B1-Motion>',self._queue_live_resize)
+        self._bind(pane,'<ButtonRelease-1>',self._flush_live_resize)
+
+    def _queue_live_resize(self,_event=None):
+        # Tk maintains these common-parent panels at idle. A continuous stream
+        # of sash/window events can otherwise leave their HWNDs at old bounds.
+        # Coalesce requests without postponing the next frame on every motion.
+        if not self._closed and not self._resizing and self._resize_after is None:
+            self._resize_after=self.workspace.after(16,self._flush_live_resize)
+
+    def _flush_live_resize(self,_event=None):
+        if self._resize_after is not None:
+            self.workspace.after_cancel(self._resize_after);self._resize_after=None
+        if self._closed or self._resizing:return
+        self._resizing=True
+        try:
+            # Flush geometry and painting, without dispatching input or player
+            # callbacks recursively as update() would.
+            self.workspace.update_idletasks()
+        finally:self._resizing=False
 
     def _bind_alt(self,widget,key):
         # Applies to a floating panel as a toplevel, including blank content.
@@ -368,6 +403,8 @@ class DockManager:
         self._containers=[];self._groups={};self._sashes=[]
         self._bound={key:value for key,value in self._bound.items() if value.winfo_exists()}
         self._binding_ids=[entry for entry in self._binding_ids if entry[0].winfo_exists()]
+        self._resize_panes={key:value for key,value in self._resize_panes.items() if value.winfo_exists()}
+        self._resize_windows={key:value for key,value in self._resize_windows.items() if value.winfo_exists()}
 
     def _minimum(self,node):
         if node['type']=='group':
@@ -399,6 +436,7 @@ class DockManager:
             return frame
         pane=tk.PanedWindow(self.workspace,orient=node['orient'],bg=BORDER,bd=0,
                             sashwidth=self._px(5),showhandle=False,opaqueresize=True)
+        self._bind_resize_pane(pane)
         self._containers.append(pane)
         for child in node['children']:
             widget=self._build_node(child)
@@ -590,6 +628,7 @@ class DockManager:
         if widget.winfo_manager()!='wm':
             self._detach(widget);self._add_grip(panel)
             self.workspace.tk.call('wm','manage',widget)
+            self._bind_resize_window(widget)
             self.workspace.tk.call('wm','title',widget,panel.title+' · OKK STUDIO')
             self.workspace.tk.call('wm','minsize',widget,*map(self._px,panel.minsize))
             if panel.close_command is None:panel.close_command=widget.register(lambda:self._return_home(key))
@@ -977,6 +1016,8 @@ class DockManager:
     def close(self):
         if self._closed:return
         self._cancel_drag();self._close_float_hosts();self._closed=True
+        if self._resize_after is not None:
+            self.workspace.after_cancel(self._resize_after);self._resize_after=None
         if self._native_sync_after is not None:
             self.workspace.after_cancel(self._native_sync_after);self._native_sync_after=None
         if self._native_drag is not None:self._native_drag.close()

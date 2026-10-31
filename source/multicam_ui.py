@@ -69,6 +69,8 @@ from project_settings_ui import ProjectSettingsMixin
 from playback_metrics import PlaybackMetricsUIMixin
 from prerender_ui import PrerenderUIMixin
 from timeline_import_ui import TimelineImportMixin
+from timeline_view import TimelineViewMixin
+from project_upgrade import read_project_snapshot, upgraded_standalone_payload, write_project_upgrade
 
 BG = '#202124'
 PANEL = '#292b2e'
@@ -82,7 +84,7 @@ COLORS = ['#496e87', '#4b8289', '#667e9e', '#64867c', '#7c718d', '#7e8870', '#80
 VIDEO_TYPES = [('视频', '*.mp4 *.mov *.mkv *.mxf *.avi *.mts *.m2ts *.webm'), ('所有文件', '*.*')]
 
 
-class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsUIMixin, TimelineControlsMixin, CameraListUIMixin, KeyboardEditMixin, TimelineAudioUIMixin, TimelineMarkersMixin, CameraImportMixin, PreviewFocusMixin, TimelineMergeMixin, TimelineInsertMixin, TimelineSelectionMixin, StackPreviewUIMixin, VideoStackUIMixin, WorkspaceDockingMixin, TransportControlsMixin, TimelineInteractionMixin, MulticamProxyMixin, LibraryApplyMixin, AutoColorWorkspaceMixin, EffectsWorkspaceMixin, tk.Frame):
+class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsUIMixin, TimelineControlsMixin, CameraListUIMixin, KeyboardEditMixin, TimelineAudioUIMixin, TimelineMarkersMixin, CameraImportMixin, PreviewFocusMixin, TimelineMergeMixin, TimelineInsertMixin, TimelineSelectionMixin, StackPreviewUIMixin, VideoStackUIMixin, WorkspaceDockingMixin, TransportControlsMixin, TimelineInteractionMixin, MulticamProxyMixin, LibraryApplyMixin, AutoColorWorkspaceMixin, EffectsWorkspaceMixin, tk.Frame):
     def __init__(self, parent, app):
         super().__init__(parent, bg=BG)
         self.app = app
@@ -162,6 +164,7 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
         self.master_var = tk.StringVar(value='主音频：随首个机位导入')
         self.offset_var = tk.StringVar(value='00:00:00.000')
         self.seek_var = tk.StringVar(value='00:00:00.000')
+        self._seek_display_text = self.seek_var.get()
         self.start_var = tk.StringVar(value='00:00:00.000')
         self.end_var = tk.StringVar()
         self.cut_time_var = tk.StringVar()
@@ -637,7 +640,12 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
         timeline_bar.grid(row=1, column=0, sticky='ew', pady=(self._px(1), self._px(0)))
         tk.Label(timeline_bar, text='时间线', bg=PANEL, fg=INK,
                  font=('Microsoft YaHei UI', 10)).pack(side='left', padx=self._px(10))
-        self._entry(timeline_bar, self.seek_var, 13).pack(side='left', padx=(self._px(5), self._px(2)), pady=self._px(5), ipady=self._px(2))
+        self.seek_entry = self._entry(timeline_bar, self.seek_var, 13)
+        self.seek_entry.pack(side='left', padx=(self._px(5), self._px(2)), pady=self._px(5), ipady=self._px(2))
+        self.seek_entry.bind('<Return>', self.seek_text)
+        self.seek_entry.bind('<KP_Enter>', self.seek_text)
+        self.seek_entry.bind('<FocusOut>', self.seek_text)
+        self.seek_entry.bind('<Escape>', self._cancel_seek_text)
         self._button(timeline_bar, '定位', self.seek_text)
         self._button(timeline_bar, '−', lambda: self.change_zoom(0.5))
         self._button(timeline_bar, '适配', self.fit_timeline)
@@ -652,6 +660,8 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
         self.timeline = tk.Canvas(timeline_section, bg='#222427', height=self._px(200), highlightthickness=0)
         self.timeline.grid(row=2, column=0, sticky='nsew')
         self.timeline.bind('<Configure>', lambda e: self.draw_timeline())
+        self.timeline.bind('<Configure>', self._queue_timeline_view_restore, add='+')
+        self.timeline.bind('<Map>', self._queue_timeline_view_restore, add='+')
         self.timeline.bind('<ButtonPress-1>', self.timeline_press)
         self.timeline.bind('<B1-Motion>', self.timeline_motion)
         self.timeline.bind('<ButtonRelease-1>', self.timeline_release)
@@ -2063,13 +2073,38 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
     def seek(self, time):
         return self._request_transport_seek(time, pause=True)
 
-    def seek_text(self):
-        try: self.seek(parse_timecode(self.seek_var.get()))
-        except ValueError as exc: messagebox.showerror('时间码', str(exc), parent=self)
+    def _sync_seek_time(self, *, force=False):
+        # Keep an unfinished edit intact while player state keeps arriving.
+        if force or self.seek_var.get() == self._seek_display_text:
+            self._seek_display_text = format_time(self.current)
+            if self.seek_var.get() != self._seek_display_text:
+                self.seek_var.set(self._seek_display_text)
+
+    def _cancel_seek_text(self, _event=None):
+        self._sync_seek_time(force=True)
+        return 'break'
+
+    def seek_text(self, event=None):
+        focus_out = event is not None and event.type == tk.EventType.FocusOut
+        if focus_out and self.seek_var.get() == self._seek_display_text:
+            return
+        try:
+            self.seek(parse_timecode(self.seek_var.get()))
+        except ValueError as exc:
+            self._sync_seek_time(force=True)
+            if focus_out:
+                self.status.set('定位时间无效：' + str(exc))
+            else:
+                messagebox.showerror('时间码', str(exc), parent=self)
+        else:
+            self._sync_seek_time(force=True)
+        if not focus_out:
+            return 'break'
 
     def _show_time(self):
         self._refresh_proxy_badges()
         self.time_var.set(f'{format_time(self.current)} / {format_time(self.project.duration)}')
+        self._sync_seek_time()
         for camera,button in self.camera_buttons.items():
             label=self._camera_button_label(camera)
             if button.cget('text')!=label: button.configure(text=label)
@@ -2147,10 +2182,14 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
         self._mark_dirty(); self._refresh()
 
     def _confirm_discard(self):
-        if not self.dirty: return True
+        if not self.dirty:
+            self._persist_timeline_view()
+            return True
         answer = messagebox.askyesnocancel('多机位工程', '保存当前多机位工程后再继续？', parent=self)
         if answer is None: return False
-        return self.save() if answer else True
+        if answer: return self.save()
+        self._persist_timeline_view()
+        return True
 
     def new(self):
         if not self.project_path and getattr(self.app, 'project_path', None):
@@ -2158,16 +2197,19 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
         if not self._available() or not self._confirm_discard(): return
         self._reset_quick_proxy()
         self.stop_monitors(); self.project = MulticamProject(); self.project_path = ''
+        self._project_upgrade_blocked_path = None
         self.selected_program_range = None
         self.camera_page=0
         self._camera_metadata_attempted.clear()
         self.grade_target = None; self._grade_target_chosen = False
         self.sync_results.clear()
         self.dirty = False; self.undo_stack.clear(); self.redo_stack.clear(); self.current = 0
+        self._sync_seek_time(force=True)
         self._loading_fields = True
         self.start_var.set(format_time(0)); self.end_var.set(''); self.fps_var.set('30')
         self._loading_fields = False
         self.project_label.configure(text='未保存工程'); self._refresh()
+        self._restore_timeline_view()
 
     def open(self):
         if not self._available(): return
@@ -2188,16 +2230,20 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
                 messagebox.showerror('打开工程', '请在 OKK STUDIO 完整工程入口打开此文件。', parent=self)
                 return
             if not self._available() or not self._confirm_discard(): return
-            try: project = MulticamProject.load(path)
+            try:
+                source_data, original_bytes = read_project_snapshot(path)
+                project = MulticamProject.from_payload(source_data, Path(path).resolve().parent)
             except Exception as exc: messagebox.showerror('打开工程', str(exc), parent=self); return
             self._reset_quick_proxy()
             self.stop_monitors(); self.project = project; self.project_path = path; self.dirty = False
+            self._project_upgrade_blocked_path = None
             self.selected_program_range = None
             self.camera_page=project.monitor_layout.get('page', self.camera_page)
             self._camera_metadata_attempted.clear()
             self.grade_target = None; self._grade_target_chosen = False
             self.sync_results.clear()
             self.undo_stack.clear(); self.redo_stack.clear(); self.current = 0
+            self._sync_seek_time(force=True)
             self._loading_fields = True
             self.start_var.set(format_time(project.range_start))
             self.end_var.set(format_time(project.range_end) if project.range_end is not None else '')
@@ -2207,6 +2253,20 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
             self._use_project_delivery_defaults()
             self._refresh()
             self._restore_monitor_layout()
+            self._restore_timeline_view()
+            try:
+                upgraded = upgraded_standalone_payload(source_data, self, path)
+                backup = write_project_upgrade(path, original_bytes, upgraded)
+            except (OSError, ValueError, TypeError) as error:
+                self._project_upgrade_blocked_path = str(Path(path).resolve())
+                self.status.set('工程已打开，但自动升级未完成：' + str(error))
+                messagebox.showwarning('工程自动升级',
+                    '工程已打开，原文件保留。自动升级未完成：\n' + str(error), parent=self)
+            else:
+                if backup is not None:
+                    self.project.timeline_view = upgraded['timeline_view']
+                    self.project.monitor_layout = upgraded.get('monitor_layout', {})
+                    self.status.set('工程已自动升级；原文件备份：' + backup.name)
             if missing: messagebox.showwarning('素材缺失', '\n'.join(missing[:8]), parent=self)
 
     def _read_range(self):
@@ -2226,9 +2286,11 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
         try:
             self.project.range_start, self.project.range_end, self.project.fps = self._read_range()
             self.project.monitor_layout = self._capture_monitor_layout()
+            self.project.timeline_view = self._capture_timeline_view()
             self.project.save(path)
         except Exception as exc: messagebox.showerror('保存工程', str(exc), parent=self); return False
         self.project_path = path; self.dirty = False; self.project_label.configure(text=Path(path).name)
+        self._project_upgrade_blocked_path = None
         self.status.set('工程已保存（保留素材位置、同步时间与全部切点）。')
         return True
 
@@ -3140,6 +3202,7 @@ class MulticamWorkspace(TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMi
         return self._confirm_discard()
 
     def close(self):
+        self._close_timeline_view()
         crop_editor = vars(self).get('_crop_editor')
         if crop_editor is not None: crop_editor.close()
         service = vars(self).get("_exposure_service")

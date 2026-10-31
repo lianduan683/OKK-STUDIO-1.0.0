@@ -3,8 +3,9 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from project_file import (PROJECT_SUFFIX, ProjectFileError, apply_state, autosave_path, build_project_payload, collect_state, load_recent_projects, projects_dir, read_project_file, record_recent_project, state_digest, write_project_file)
+from project_upgrade import read_project_snapshot, upgraded_session_payload, write_project_upgrade
 APP_NAME = 'OKK STUDIO'
-APP_VERSION = '1.0.11'
+APP_VERSION = '1.0.12'
 def app_directory():
     import sys
     return Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
@@ -15,7 +16,7 @@ class StudioProjectMixin:
         self._project_autosave_digest = ""
         self._project_default_state = collect_state(self)
         self._project_saved_digest = self._project_current_digest() or ""
-        self._project_autosave_digest = self._project_saved_digest
+        self._project_autosave_digest = self._project_current_digest(include_view=True) or ""
         self._project_refresh_recent_menu()
         self._project_update_title()
 
@@ -36,9 +37,9 @@ class StudioProjectMixin:
             )
 
 
-    def _project_current_digest(self) -> str | None:
+    def _project_current_digest(self, *, include_view=False) -> str | None:
         try:
-            return state_digest(collect_state(self))
+            return state_digest(collect_state(self), include_view=include_view)
         except Exception:
             return None
 
@@ -63,6 +64,7 @@ class StudioProjectMixin:
 
     def _project_confirm_discard(self) -> bool:
         if not self._project_is_dirty():
+            self._project_remember_timeline_view()
             return True
         name = self.project_path.stem if self.project_path else "未命名工程"
         answer = messagebox.askyesnocancel(
@@ -72,7 +74,14 @@ class StudioProjectMixin:
             return False
         if answer:
             return self._project_save()
+        self._project_remember_timeline_view()
         return True
+
+    def _project_remember_timeline_view(self):
+        workspace = getattr(self, 'multicam_workspace', None)
+        remember = getattr(workspace, '_persist_timeline_view', None)
+        if callable(remember):
+            remember()
 
 
     def _project_switch_allowed(self, action: str) -> bool:
@@ -109,7 +118,7 @@ class StudioProjectMixin:
         if not self._project_confirm_discard():
             return
         try:
-            data = read_project_file(path)
+            data, original_bytes = read_project_snapshot(path, full=True)
         except ProjectFileError as exc:
             messagebox.showerror(APP_NAME, str(exc))
             return
@@ -120,6 +129,19 @@ class StudioProjectMixin:
             return
         self.project_path = Path(path)
         self._project_saved_gpu_settings = True
+        workspace = self.multicam_workspace
+        try:
+            upgraded = upgraded_session_payload(data, self, path, APP_VERSION)
+            backup = write_project_upgrade(path, original_bytes, upgraded, full=True)
+        except (OSError, ValueError, TypeError, ProjectFileError) as error:
+            workspace._project_upgrade_blocked_path = str(Path(path).resolve())
+            self._log('工程自动升级未完成：' + str(error))
+            messagebox.showwarning(APP_NAME, '工程已打开，原文件保留。自动升级未完成：\n' + str(error))
+        else:
+            if backup is not None:
+                workspace.project.timeline_view = upgraded['state']['okk_multicam']['project']['timeline_view']
+                workspace.project.monitor_layout = upgraded['state']['okk_multicam']['project'].get('monitor_layout', {})
+                self._log('工程已自动升级；原文件备份：' + str(backup))
         self._project_after_state_applied(warnings, log=f"工程已打开：{path}")
         record_recent_project(app_directory(), path)
         self._project_refresh_recent_menu()
@@ -157,6 +179,7 @@ class StudioProjectMixin:
             return False
         self.project_path = Path(path)
         self.multicam_workspace.dirty = False
+        self.multicam_workspace._project_upgrade_blocked_path = None
         record_recent_project(app_directory(), path)
         self._project_saved_digest = state_digest(payload["state"])
         self._project_refresh_recent_menu()
@@ -175,7 +198,7 @@ class StudioProjectMixin:
                 app_version=APP_VERSION,
             )
             write_project_file(autosave_path(app_directory()), payload)
-            if save_current:
+            if save_current and not getattr(self.multicam_workspace, '_project_upgrade_blocked_path', None):
                 workspace = self.multicam_workspace
                 if self.project_path:
                     write_project_file(self.project_path, payload)
@@ -187,6 +210,7 @@ class StudioProjectMixin:
                     project = deepcopy(workspace.project)
                     project.range_start, project.range_end, project.fps = workspace._read_range()
                     project.monitor_layout = workspace._capture_monitor_layout()
+                    project.timeline_view = workspace._capture_timeline_view()
                     project.save(workspace.project_path)
                     workspace.dirty = False
                     workspace.project_label.configure(text=Path(workspace.project_path).name)
@@ -197,7 +221,7 @@ class StudioProjectMixin:
                 messagebox.showwarning(APP_NAME, f"自动保存失败：{exc}")
             return False
         self._autosave_error = ""
-        self._project_autosave_digest = state_digest(payload["state"])
+        self._project_autosave_digest = state_digest(payload["state"], include_view=True)
         return True
 
 
@@ -224,7 +248,7 @@ class StudioProjectMixin:
             self._schedule_project_autosave(1000)
             return
         try:
-            digest = self._project_current_digest()
+            digest = self._project_current_digest(include_view=True)
             if digest and digest != self._project_autosave_digest:
                 self._write_project_autosave(save_current=True)
             self._project_update_title()

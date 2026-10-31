@@ -51,6 +51,7 @@ from library_overlay import (LibraryOverlayRange, validate_library_overlay,
 from video_stack import ordered_cameras, validate_stack
 from timeline_audio import audio_sources, probe_audio_sources, build_audio_mix_args, MasterAudioClip
 from project_settings import validate_project_settings, validate_monitor_layout, timeline_dimensions
+from timeline_view import validate_timeline_view
 
 
 def _number(value, label: str, *, minimum: float | None = None) -> float:
@@ -162,6 +163,7 @@ class MulticamProject:
     master_audio_clips: list[MasterAudioClip] = field(default_factory=list)
     timeline_multicam_collapsed: bool = False
     clip_transforms: list[ClipTransformRange] = field(default_factory=list)
+    timeline_view: dict = field(default_factory=dict, compare=False)
 
     def set_camera_name(self, camera: int, name: str) -> None:
         if _camera(camera) not in self.timeline_cameras:
@@ -261,6 +263,7 @@ class MulticamProject:
             raise ValueError('多机位时间线视图设置必须是布尔值')
         validate_project_settings(self.project_settings)
         validate_monitor_layout(self.monitor_layout)
+        validate_timeline_view(self.timeline_view)
         fps = _number(self.fps, "工程帧率", minimum=0.001)
         if fps > 1000:
             raise ValueError("工程帧率不能超过 1000")
@@ -538,6 +541,10 @@ class MulticamProject:
             payload['clip_transforms'] = clip_transforms_to_dict(self)
         else:
             payload.pop('clip_transforms')
+        if self.timeline_view:
+            payload['version'] = 19
+        else:
+            payload.pop('timeline_view')
         for clip in instances:
             if clip['enabled']: clip.pop('enabled')
         if not self.master_audio_clips: payload.pop('master_audio_clips')
@@ -622,13 +629,13 @@ class MulticamProject:
         base = Path(base_directory).resolve()
         try:
             if (not isinstance(payload, dict) or payload.get("format") != "okk-multicam"
-                    or type(payload.get("version")) is not int or payload.get("version") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18}):
+                    or type(payload.get("version")) is not int or payload.get("version") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19}):
                 raise ValueError("不是受支持的多机位工程")
             allowed = {"format", "version", "clips", "cuts", "master_audio", "master_duration", "fps",
                        "range_start", "range_end", "global_grade", "camera_grades", "transitions", "subtitles",
                        "edit_points", "clip_grades", "clip_transforms", "stabilizations", "library_overlays", "alignment_reference_camera", "color_reference_camera",
                        "video_stack_enabled", "video_stack_order", "video_stack_hidden", "timeline_empty_tracks", "camera_names",
-                       "audio_track_enabled", "timeline_markers", "timeline_snap_enabled", "timeline_link_enabled", "audio_overrides", "timeline_removed_tracks", "project_settings", "monitor_layout", "master_audio_clips", "timeline_multicam_collapsed"}
+                       "audio_track_enabled", "timeline_markers", "timeline_snap_enabled", "timeline_link_enabled", "audio_overrides", "timeline_removed_tracks", "project_settings", "monitor_layout", "timeline_view", "master_audio_clips", "timeline_multicam_collapsed"}
             if set(payload) - allowed:
                 raise ValueError("工程包含未知字段")
 
@@ -730,6 +737,7 @@ class MulticamProject:
                           audio_overrides=audio_overrides,
                           project_settings=payload.get('project_settings', {}),
                           monitor_layout=payload.get('monitor_layout', {}),
+                          timeline_view=payload.get('timeline_view', {}),
                           timeline_multicam_collapsed=payload.get('timeline_multicam_collapsed', False))
             project.master_audio_clips = master_clips
             project.validate()

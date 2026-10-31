@@ -38,6 +38,7 @@ class EffectTiles(tk.Canvas):
         self._total_height = 1
         self._columns = 1
         self._draw_after = None
+        self._draw_timer = None
         self._images = OrderedDict()
         self._pending = set()
         self._failed = set()
@@ -142,9 +143,15 @@ class EffectTiles(tk.Canvas):
     def _schedule_draw(self):
         if self._draw_after is None and not self._closed.is_set():
             self._draw_after = self.after_idle(self._draw)
+            # Give drawing a deadline while live resize keeps idle work waiting.
+            self._draw_timer = self.after(16, self._draw)
 
     def _draw(self):
+        for pending in (self._draw_after, self._draw_timer):
+            if pending is not None:
+                self.after_cancel(pending)
         self._draw_after = None
+        self._draw_timer = None
         super().delete('all')
         top, bottom = self.canvasy(0) - self.px(50), self.canvasy(0) + self.winfo_height() + self.px(50)
         width = self.winfo_width()
@@ -308,7 +315,7 @@ class EffectTiles(tk.Canvas):
 
     def destroy(self):
         self._closed.set()
-        for pending in (self._draw_after, self._icon_after):
+        for pending in (self._draw_after, self._draw_timer, self._icon_after):
             if pending is not None:
                 self.after_cancel(pending)
         self._images.clear()
