@@ -209,7 +209,7 @@ class GpuLivePlayerMixin:
             seen = set()
             for clip in getattr(self._project, 'clips', ()):
                 path = (resolver(clip.path, clip.proxy_path)
-                        if self._use_proxies and clip.camera not in getattr(self, '_original_cameras', ())
+                        if self._use_proxies and not self._color_monitoring and clip.camera not in getattr(self, '_original_cameras', ())
                         and resolver is not None else clip.path)
                 if path in seen: continue
                 seen.add(path)
@@ -385,7 +385,7 @@ class GpuLivePlayerMixin:
         position = self._clock() if self._playing and not force else self._position
         rendered = self._render_preview
         cached = getattr(self, '_prerender_spec', lambda _position: None)(position)
-        overrides = (cached is not None or self._comparison_enabled or self._audition is not None or
+        overrides = (getattr(self, '_color_monitoring', False) or cached is not None or self._comparison_enabled or self._audition is not None or
                      bool(rendered and rendered[1] <= position < rendered[2]))
         if overrides and self._gpu_context: self._gpu_cancel_context()
         active = None if overrides else next((plan for plan in self._gpu_plans if plan.contains(position)), None)

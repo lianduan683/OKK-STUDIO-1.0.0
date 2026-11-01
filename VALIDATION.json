@@ -1,41 +1,30 @@
 {
-  "version": "1.0.22",
-  "build_id": "20261101-154907-46966c8c",
+  "version": "1.0.23",
+  "build_id": "20261101-171408-9f247d91",
   "focused_regression": {
-    "run": 121,
-    "passed": 121,
+    "run": 63,
+    "passed": 63,
     "skipped": 0,
     "isolated_private_desktop": true,
     "modules": [
-      "gpu_live_player",
-      "native_panel_host",
-      "workspace_docking",
-      "docking_groups",
-      "finishing_workspace",
-      "color_fullscreen",
-      "color_original_media",
+      "color_exit_selection",
+      "color_playhead_follow",
       "color_single_monitor",
-      "color_timeline_wheel",
-      "monitor_fullscreen",
-      "mpv_controller",
-      "pointer_helpers"
+      "color_original_media",
+      "transport_controls",
+      "gpu_live_player",
+      "pointer_helpers",
+      "finishing_workspace"
     ]
   },
-  "gpu_regression_fix": "test double now forwards allow_software_decode; player fallback policy unchanged",
-  "pointer_fix": "real native panel visibility timing fixed; pointer checks use isolated reachable desktop",
   "prior_feature_build_validation": {
-    "regression_suites": [
-      {
-        "run": 79,
-        "passed": 79
-      },
-      {
-        "run": 41,
-        "passed": 41
-      }
-    ],
-    "real_decode": "RTX 5070 Ti: H.264 D3D11VA and FFV1 software decode",
-    "isolated_offline_clean_install_and_upgrade": "passed; QA AppId"
+    "playhead_follow": "synthetic media validated via MPV and D3D11 GPU",
+    "return_to_editing": "four workflow tests passed"
+  },
+  "v1_0_22_validation": {
+    "private_desktop_tests": 121,
+    "isolated_offline_install": "passed",
+    "real_decode": "H.264 D3D11VA and FFV1 software"
   },
   "earlier_broader_regression": {
     "run": 185,
@@ -43,24 +32,6 @@
     "failures": 9,
     "errors": 1,
     "same_10_reproduced_on_prior_baseline": true
-  },
-  "isolated_offline_install": {
-    "passed": true,
-    "verified": [
-      "executable hash",
-      "137 transition entries",
-      "138 addon hashes",
-      "98 overlays",
-      "FFmpeg",
-      "MPV",
-      "audio runtime"
-    ],
-    "uninstall": "passed"
-  },
-  "real_decode": {
-    "h264": "D3D11VA",
-    "ffv1": "software",
-    "machine": "RTX 5070 Ti"
   },
   "frozen_audio_worker": {
     "passed": true,
@@ -70,13 +41,14 @@
     "third_party_vst3": "not tested"
   },
   "frozen_headless_export": "passed",
-  "version_metadata": "1.0.22",
+  "version_metadata": "1.0.23",
   "archive_crc_checks": "passed",
   "source_allowlist_and_known_private_path_and_key_pattern_scan": "passed",
   "trusted_code_signature": false,
   "not_tested": [
     "full test suite",
     "third-party VST3 plugins",
+    "this release fresh installation",
     "production in-place upgrade",
     "online resource download during installation",
     "all physical display and hardware combinations"

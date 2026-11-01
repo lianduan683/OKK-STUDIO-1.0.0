@@ -823,7 +823,10 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
         return next((c for c in cameras if int(_get(c, "id", -1)) == camera_id), None)
 
     def _clip(self, camera_id: int, position: float) -> tuple | None:
-        use_proxies = self._use_proxies and camera_id not in getattr(self, '_original_cameras', ())
+        # A new programme camera can arrive before Tk publishes its new grade
+        # selection. Never show a proxy frame during that handoff in colour.
+        color_picture = self._color_monitoring and camera_id == self._camera_at(position)
+        use_proxies = self._use_proxies and not color_picture and camera_id not in getattr(self, '_original_cameras', ())
         media_at = _get(self._project, 'media_at')
         if callable(media_at):
             # Resolve source time and stabilization normally, but avoid index
@@ -999,7 +1002,7 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
         return key,path,max(0.0,source_time)
 
     def _prerender_spec(self, position):
-        if self._comparison_enabled or self._audition is not None or self._grade_draft is not None: return None
+        if self._color_monitoring or self._comparison_enabled or self._audition is not None or self._grade_draft is not None: return None
         from prerender import cached_spec
         return cached_spec(getattr(self, '_prerender_items', ()), position)
 
@@ -1013,7 +1016,7 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
             path, start, end = preview
             if start <= position < end:
                 return ("render-preview", path, start, end), path, position - start
-        if self._audition is None and self._grade_draft is None and not self._gpu_live_enabled:
+        if not self._color_monitoring and self._audition is None and self._grade_draft is None and not self._gpu_live_enabled:
             for path, start, end in self._transition_previews:
                 if start <= position < end:
                     return ("transition-preview", path, start, end), path, position-start

@@ -93,6 +93,8 @@ class TransportControlsMixin:
         self.current = min(float(self.project.duration), math.floor(value*fps+.5)/fps)
         if pause: self.playing = False
         self._transport_request_id += 1
+        follow_color = getattr(self, '_follow_color_playhead', None)
+        if follow_color is not None: follow_color()
         if self.player:
             options = {}
             if self._preview_epoch is not None and self.project.video_stack_enabled:

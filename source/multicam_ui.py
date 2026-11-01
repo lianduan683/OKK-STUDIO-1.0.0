@@ -1039,14 +1039,46 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
             if self.project.video_stack_enabled:
                 self.player.submit('audition', camera=None)
                 return
-            camera = (self.project.camera_at(self.selected_program_range[0])
-                      if self.grade_target == 'selection' and self.selected_program_range else
-                      self.grade_target if isinstance(self.grade_target, int) else None)
+            # A selected range controls where grades are saved, while its
+            # viewer follows the programme cut at the moving playhead.
+            camera = self.grade_target if type(self.grade_target) is int else None
             self.player.submit('audition', camera=camera)
             if camera is not None:
                 self._highlight(camera)
                 label = '所选片段' if self.grade_target == 'selection' else '整机位'
                 self.program_var.set(f'{self._label_camera(camera)} · {label}调色实时监看')
+
+    def _follow_color_playhead(self):
+        if not self._color_mode or self.grade_target != 'selection' or self.project.video_stack_enabled:
+            return
+        panel = self.color_workspace
+        drag = panel._drag
+        if drag and drag['mode'] != 'seek':
+            return
+        fps = self.project.fps
+        frame = math.floor(self.current*fps+.5)
+        selected = self.selected_program_range
+        if selected and math.floor(selected[0]*fps+.5) <= frame < math.floor(selected[1]*fps+.5):
+            return
+        span = self._program_span_at(self.current)
+        if span is None or selected == (span.start, span.end):
+            return
+        # Follow navigation without calling select_program_range: that public
+        # selection action deliberately pauses playback and seeks its start.
+        self._cancel_grade_drafts()
+        self.selected_program_range = (span.start, span.end)
+        self.selected_cut = next((i for i, cut in enumerate(self.project.cuts)
+                                  if round(cut.time*fps) == round(span.start*fps)), None)
+        if self.selected_cut is not None and self.cut_tree.exists(str(self.selected_cut)):
+            self.cut_tree.selection_set(str(self.selected_cut))
+            self._select_cut()
+            self.cut_tree.see(str(self.selected_cut))
+        elif self.cut_tree.selection():
+            self.cut_tree.selection_remove(*self.cut_tree.selection())
+        self._set_timeline_selection({('program', self.selected_program_range)}, redraw=False)
+        self.creative_panel_refresh()
+        panel.refresh()
+        self._refresh_color_media_policy()
 
     def _grade_preview_target(self):
         if self.grade_target == 'selection':
@@ -1190,6 +1222,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         if self.player: self.player.submit('audition', camera=None)
         self._color_mode = False
         self._refresh_color_media_policy()
+        self._clear_timeline_selection()
         manager = vars(self).get('dock_manager')
         if manager is not None:
             manager.hide('grading')
@@ -3021,6 +3054,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
             payload = latest_state
             previous_time = self.current
             self.current = float(payload['time']); self.playing = bool(payload['playing'])
+            self._follow_color_playhead()
             if self.playing or self.current != previous_time:
                 self._follow_timeline_playhead()
             camera = payload.get('camera')

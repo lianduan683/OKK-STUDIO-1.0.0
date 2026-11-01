@@ -169,7 +169,10 @@ class FinishingWorkspace(tk.Frame):
     def show(self, mode):
         if mode == self.mode:
             return
+        returning_from_color = self.mode == 'color' and mode == 'edit'
         self._leave()
+        if returning_from_color:
+            self.ws._clear_timeline_selection()
         if mode not in {'color', 'audio', 'delivery'}:
             return
         ws = self.ws
