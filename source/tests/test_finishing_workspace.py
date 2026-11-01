@@ -12,6 +12,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import test_delivery_ui as fixture
+from test_pointer_helpers import pointer_hit
 from creative_core import ColorGrade, replace_curve
 from exporter_core import Capabilities, CREATE_NO_WINDOW
 from multicam_core import CameraClip, Cut, MulticamProject
@@ -64,8 +65,7 @@ class FinishingPageTests(unittest.TestCase):
                     self.app.update()
                     for control in (ws.color_workspace.wheels['lift'].canvas,
                                     ws.color_workspace.curve_editor.canvas):
-                        hit = self.app.winfo_containing(control.winfo_rootx() + control.winfo_width() // 2,
-                                                        control.winfo_rooty() + control.winfo_height() // 2)
+                        hit = pointer_hit(control, [self.app, *ws.dock_manager.iter_floating_windows()])
                         self.assertIs(hit, control)
                 elif page == 'delivery':
                     self._assert_inside(ws.delivery_export_button)

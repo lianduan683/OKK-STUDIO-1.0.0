@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import patch
 import rtx5090_exporter as app_module
 import studio_project
+from test_pointer_helpers import pointer_hit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 try:
@@ -45,19 +46,8 @@ class WorkspaceDockingTests(unittest.TestCase):
                 *(view.winfo_id() for view in ws.camera_surfaces.values())]
 
     def assert_leaf_receives_pointer(self, widget):
-        # Win32 omits fully transparent windows from hit testing. The fixture
-        # stays beyond the desktop while its opacity is briefly enabled.
         windows = [self.root, *self.manager.iter_floating_windows()]
-        opacity = [(window, window.tk.call('wm', 'attributes', window._w, '-alpha')) for window in windows]
-        for window in windows: window.tk.call('wm', 'attributes', window._w, '-alpha', 1)
-        self.root.update()
-        x = widget.winfo_rootx() + max(1, widget.winfo_width() // 2)
-        y = widget.winfo_rooty() + max(1, widget.winfo_height() // 2)
-        try:
-            hit = self.workspace.winfo_containing(x, y)
-        finally:
-            for window, value in opacity:
-                window.tk.call('wm', 'attributes', window._w, '-alpha', value)
+        hit = pointer_hit(widget, windows)
         self.assertIsNotNone(hit)
         ancestors = []
         while hit is not None:

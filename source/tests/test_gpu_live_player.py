@@ -133,7 +133,7 @@ class GpuLiveWorkerTests(unittest.TestCase):
         class Controller(base):
             def __init__(self, executable, window, *, allow_software_decode=False):
                 self.allow_software_decode = allow_software_decode
-                super().__init__(executable, window)
+                super().__init__(executable, window, allow_software_decode=allow_software_decode)
             def wait_for_frame(self, target, **kwargs): return self._position()
         self.controller_type = Controller
         self.backends = []

@@ -90,6 +90,7 @@ class NativePanelHost:
         self._applied_visible = False
         self._frame_changed = False
         self._configure_binding = None
+        self._map_binding = None
 
     @property
     def attached(self):
@@ -137,6 +138,7 @@ class NativePanelHost:
             self._frame_changed = True
             self._attached = True
             self._configure_binding = self.container.bind('<Configure>', self._configured, add='+')
+            self._map_binding = self.container.bind('<Map>', self._configured, add='+')
             self.resize()
             return self
         except Exception:
@@ -178,6 +180,10 @@ class NativePanelHost:
             self._applied_size = size
             self._frame_changed = False
         if self._visible != self._applied_visible:
+            # Tk interprets a wrapper under a hidden notebook page as withdrawn.
+            # Wait for the real parent to map before showing the embedded panel.
+            if self._visible and not self.container.winfo_viewable():
+                return
             self.widget.tk.call('wm', 'withdraw', self.widget)
             if self._visible:
                 self.widget.tk.call('wm', 'deiconify', self.widget)
@@ -205,6 +211,11 @@ class NativePanelHost:
             try: self.container.unbind('<Configure>', self._configure_binding)
             except tk.TclError: pass
             self._configure_binding = None
+
+        if self._map_binding is not None:
+            try: self.container.unbind('<Map>', self._map_binding)
+            except tk.TclError: pass
+            self._map_binding = None
 
     def _forget_window_manager(self):
         self.widget.tk.call('wm', 'forget', self.widget)

@@ -1,30 +1,41 @@
 {
-  "version": "1.0.21",
-  "build_id": "20261101-152016-76957b8f",
+  "version": "1.0.22",
+  "build_id": "20261101-154907-46966c8c",
   "focused_regression": {
-    "run": 56,
-    "passed": 56,
+    "run": 121,
+    "passed": 121,
     "skipped": 0,
+    "isolated_private_desktop": true,
     "modules": [
+      "gpu_live_player",
+      "native_panel_host",
+      "workspace_docking",
+      "docking_groups",
+      "finishing_workspace",
       "color_fullscreen",
-      "monitor_fullscreen",
-      "docking",
+      "color_original_media",
+      "color_single_monitor",
       "color_timeline_wheel",
-      "workspace_page_state",
-      "realtime_grade_ui"
+      "monitor_fullscreen",
+      "mpv_controller",
+      "pointer_helpers"
     ]
   },
-  "prior_feature_build_ui_regression": {
-    "run": 87,
-    "passed": 86,
-    "failures": 1,
-    "same_failure_reproduced_on_baseline": true,
-    "affected_area": "workspace_docking pointer hit test"
-  },
-  "v1_0_19_gpu_regression": {
-    "failures": 3,
-    "same_failures_reproduced_on_v1_0_18": true,
-    "affected_area": "GPU decoder failure fallback"
+  "gpu_regression_fix": "test double now forwards allow_software_decode; player fallback policy unchanged",
+  "pointer_fix": "real native panel visibility timing fixed; pointer checks use isolated reachable desktop",
+  "prior_feature_build_validation": {
+    "regression_suites": [
+      {
+        "run": 79,
+        "passed": 79
+      },
+      {
+        "run": 41,
+        "passed": 41
+      }
+    ],
+    "real_decode": "RTX 5070 Ti: H.264 D3D11VA and FFV1 software decode",
+    "isolated_offline_clean_install_and_upgrade": "passed; QA AppId"
   },
   "earlier_broader_regression": {
     "run": 185,
@@ -32,6 +43,24 @@
     "failures": 9,
     "errors": 1,
     "same_10_reproduced_on_prior_baseline": true
+  },
+  "isolated_offline_install": {
+    "passed": true,
+    "verified": [
+      "executable hash",
+      "137 transition entries",
+      "138 addon hashes",
+      "98 overlays",
+      "FFmpeg",
+      "MPV",
+      "audio runtime"
+    ],
+    "uninstall": "passed"
+  },
+  "real_decode": {
+    "h264": "D3D11VA",
+    "ffv1": "software",
+    "machine": "RTX 5070 Ti"
   },
   "frozen_audio_worker": {
     "passed": true,
@@ -41,14 +70,13 @@
     "third_party_vst3": "not tested"
   },
   "frozen_headless_export": "passed",
-  "version_metadata": "1.0.21",
+  "version_metadata": "1.0.22",
   "archive_crc_checks": "passed",
   "source_allowlist_and_known_private_path_and_key_pattern_scan": "passed",
   "trusted_code_signature": false,
   "not_tested": [
     "full test suite",
     "third-party VST3 plugins",
-    "fresh installation",
     "production in-place upgrade",
     "online resource download during installation",
     "all physical display and hardware combinations"

@@ -97,6 +97,18 @@ class NativePanelHostTests(unittest.TestCase):
         for key in self.leaves: self.check_picture(key)
         self.assertEqual(self.errors, [])
 
+    def test_show_requested_while_notebook_page_hidden_waits_for_parent_map(self):
+        self.tabs.select(self.pages['program']); self.root.update()
+        host = self.attach('source')
+        host.show(); self.root.update()
+        self.assertFalse(host._applied_visible)
+        self.assertFalse(self.pages['source'].winfo_viewable())
+        self.tabs.select(self.pages['source']); self.root.update()
+        self.assertTrue(host._applied_visible)
+        self.assertTrue(self.leaves['source'].winfo_viewable())
+        self.check_picture('source')
+        self.assertEqual(self.errors, [])
+
     def test_native_detach_failure_keeps_parent_and_owner_and_can_retry(self):
         host = self.attach('source'); self.select('source')
         wrapper = host._wrapper
