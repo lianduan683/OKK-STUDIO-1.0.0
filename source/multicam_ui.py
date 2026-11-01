@@ -256,6 +256,9 @@ class MulticamWorkspace(VideoPlacementMixin, TimelineSyncMixin, TimelineViewMixi
         menu.add_command(label='重命名机位…', command=lambda: self.rename_camera(camera), state=state)
         menu.add_command(label='恢复默认名称', command=lambda: self.reset_camera_name(camera),
                          state=state if camera in self.project.camera_names else 'disabled')
+        menu.add_separator()
+        menu.add_command(label='取消该机位全部代理（使用原片）',
+                         command=lambda: self.unlink_material_proxies((row,)), state=state)
         previous = getattr(self, 'camera_context_menu', None)
         if previous is not None: previous.destroy()
         self.camera_context_menu = menu
@@ -485,6 +488,8 @@ class MulticamWorkspace(VideoPlacementMixin, TimelineSyncMixin, TimelineViewMixi
         self.media_tree.bind('<<TreeviewSelect>>', self._select_clip)
         self.media_tree.bind('<Double-1>', self._jump_clip)
         self.media_tree.bind('<Button-3>', self._camera_context)
+        self.media_tree.bind('<BackSpace>', self._delete_media_selection)
+        self.media_tree.bind('<Delete>', self._delete_media_selection)
         self.media_tree.bind('<<TreeviewOpen>>', self._queue_camera_fold_update, add='+')
         self.media_tree.bind('<<TreeviewClose>>', self._queue_camera_fold_update, add='+')
         reference_row=tk.Frame(media_tab,bg=PANEL)
@@ -1703,6 +1708,16 @@ class MulticamWorkspace(VideoPlacementMixin, TimelineSyncMixin, TimelineViewMixi
         if not keys: return
         self._set_timeline_selection(keys)
         self._delete_timeline_selection()
+
+    def _delete_media_selection(self, _event=None):
+        """Delete only the focused media list's selection in one undo step."""
+        if not self._available(): return 'break'
+        identifiers = set(self.media_tree.selection())
+        keys = {('clip', clip.id) for clip in self.project.clips
+                if clip.id in identifiers or f'camera_{clip.camera}' in identifiers}
+        if not keys: return 'break'
+        self._set_timeline_selection(keys, redraw=False)
+        return self._delete_timeline_selection()
 
     def _select_clip(self, event=None):
         clip = self._selected_clip()
@@ -3118,7 +3133,7 @@ class MulticamWorkspace(VideoPlacementMixin, TimelineSyncMixin, TimelineViewMixi
                     project, identifier, source, path = payload
                     clip = next((clip for clip in self.project.clips if clip.id == identifier and clip.path == source), None)
                     if project is self.project and clip is not None:
-                        self._remember(); clip.proxy_path = path
+                        self._remember(); clip.proxy_path = path; clip.proxy_disabled = False
                         register_proxy(source, path)
                         self._configure_player()
                         self.status.set('代理检查通过，已用于预览；最终导出仍读取原片。')

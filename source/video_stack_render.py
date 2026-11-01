@@ -18,7 +18,7 @@ from library_overlay import overlay_cache_matches
 from program_edits import grade_at
 from subtitle_core import subtitle_filter
 from video_stack import pixel_format_has_alpha
-from video_placement import placement_values, placement_filter
+from video_placement import placement_values, placement_filter, placement_at
 
 
 def _frame(seconds, fps):
@@ -35,6 +35,7 @@ class StackLayer:
     has_alpha: bool = False
     programme: bool = False
     placement: tuple = (0., 0., 1.)
+    proxy_disabled: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,7 +74,7 @@ def _layer(project, clip, position):
         picture = overlay.cache_path
         origin = max(0.0, clip.source_origin + overlay.source_start)
     return StackLayer(clip.camera, picture, clip.path, source, origin, clip.has_alpha,
-                      placement=placement_values(clip))
+                      placement=placement_at(project,clip.camera,position), proxy_disabled=clip.proxy_disabled)
 
 
 def plan_stack_segments(project):

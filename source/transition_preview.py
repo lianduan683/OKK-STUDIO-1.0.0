@@ -33,7 +33,7 @@ def transition_signature(project) -> str:
                  'audio_overrides', 'timeline_snap_enabled', 'timeline_link_enabled', 'monitor_layout'):
         payload.pop(name, None)
     for clip in payload.get('clips',[]):
-        for name in ('camera_make','camera_model','camera_metadata_source','proxy_path'):
+        for name in ('camera_make','camera_model','camera_metadata_source','proxy_path','proxy_disabled'):
             clip.pop(name,None)
     paths = set()
 

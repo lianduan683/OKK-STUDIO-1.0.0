@@ -42,7 +42,7 @@ class VideoStackPlayerMixin:
             api.ShowWindow(hwnd, 4 if visible else 0)
 
     def _configure_stack_mode(self, *, invalidate=True):
-        enabled = needs_stack_at(self._project, getattr(self, '_position', 0.))
+        enabled = needs_stack_at(self._project, getattr(self, '_position', 0.),native_placement=True)
         if invalidate or enabled != self._stack_enabled:
             if self._stack_preview is not None: self._stack_preview.cancel()
             self._stack_revision += 1
@@ -65,7 +65,7 @@ class VideoStackPlayerMixin:
 
     def _stack_cache_options(self):
         items = getattr(self, '_prerender_items', ())
-        return {'cache_items': items} if items and getattr(self, '_grade_draft', None) is None else {}
+        return {'cache_items': items} if items and getattr(self, '_grade_draft', None) is None and getattr(self,'_placement_draft',None) is None else {}
 
     def _stack_source_options(self):
         cameras = getattr(self,'_original_cameras',())
@@ -88,6 +88,15 @@ class VideoStackPlayerMixin:
                 from program_edits import set_grade_on_range
                 first, last = target[1:]
                 set_grade_on_range(project, first, last, grade)
+        draft=getattr(self,'_placement_draft',None)
+        if draft and draft[0]:
+            from video_placement import set_program_placement
+            scope,value=draft
+            if scope[0]=='program':
+                for start,end in scope[1]: set_program_placement(project,start,end,value)
+            else:
+                for clip in project.clips:
+                    if clip.id in scope[1]: clip.placement=copy.deepcopy(value)
         return project
 
     def _sync_stack_preview(self):

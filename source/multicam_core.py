@@ -97,6 +97,7 @@ class CameraClip:
     source_in: float = 0.0
     enabled: bool = True
     placement: dict = field(default_factory=dict)
+    proxy_disabled: bool = False
 
     @property
     def source_origin(self) -> float:
@@ -231,7 +232,7 @@ class MulticamProject:
             return (stabilized.cache_path, max(0.0, source_time-stabilized.source_start),
                     ('stabilized', stabilized.cache_path, stabilized.signature, clip.id, clip.start))
         path = clip.path
-        if use_proxies:
+        if use_proxies and not clip.proxy_disabled:
             proxy = clip.proxy_path
             if not proxy:
                 proxy = find_proxy(clip.path) or str(Path(clip.path).parent/'ProxyMedia'/(Path(clip.path).stem+'.mp4'))
@@ -331,6 +332,8 @@ class MulticamProject:
             _camera(clip.camera)
             if type(clip.enabled) is not bool:
                 raise ValueError('素材启用状态必须是布尔值')
+            if type(clip.proxy_disabled) is not bool:
+                raise ValueError('素材代理停用状态必须是布尔值')
             if type(clip.has_alpha) is not bool:
                 raise ValueError('素材透明通道标记必须是布尔值')
             placement_values(clip)
@@ -570,6 +573,13 @@ class MulticamProject:
                 payload['version'] = 22
             else:
                 clip.pop('placement', None)
+        for clip in instances:
+            if clip.get('proxy_disabled'):
+                payload['version'] = 23
+            else:
+                clip.pop('proxy_disabled', None)
+        if any(item.transform.placement for item in self.clip_transforms):
+            payload['version'] = 24
         if not self.master_audio_clips: payload.pop('master_audio_clips')
         if not self.project_settings: payload.pop('project_settings')
         if not self.monitor_layout: payload.pop('monitor_layout')
@@ -652,7 +662,7 @@ class MulticamProject:
         base = Path(base_directory).resolve()
         try:
             if (not isinstance(payload, dict) or payload.get("format") != "okk-multicam"
-                    or type(payload.get("version")) is not int or payload.get("version") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22}):
+                    or type(payload.get("version")) is not int or payload.get("version") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24}):
                 raise ValueError("不是受支持的多机位工程")
             allowed = {"format", "version", "clips", "cuts", "master_audio", "master_duration", "fps",
                        "range_start", "range_end", "global_grade", "camera_grades", "transitions", "subtitles",

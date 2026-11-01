@@ -26,6 +26,7 @@ from clip_transform import ClipTransform, validate_transform
 from video_placement import placement_values
 from project_settings import timeline_dimensions
 from project_settings import DEFAULT_SETTINGS
+from inspector_placement_drag import InspectorPlacementDragMixin
 
 PANEL, INPUT, INK, MUTED, ACCENT = '#292b2e', '#18191b', '#dedfe3', '#969ba3', '#58a6d6'
 FONT = ('Microsoft YaHei UI', 9)
@@ -33,7 +34,7 @@ GRADE_FIELDS = {'exposure': '曝光（档）', 'contrast': '对比度', 'saturat
 FRAMING_MODES = {'适应画幅 · 完整画面': 'fit', '填满画幅 · 等比裁切': 'fill'}
 
 
-class ClipInspector(tk.Frame):
+class ClipInspector(InspectorPlacementDragMixin,tk.Frame):
     def __init__(self, parent, workspace):
         super().__init__(parent, bg=PANEL)
         self.ws = workspace
@@ -173,7 +174,7 @@ class ClipInspector(tk.Frame):
 
     def _build_placement(self):
         section = self._section('placement', '视频位置与大小',
-            '调整所选视频素材整段的位置和等比大小，透明素材可独立叠加。')
+            '调整所选时间线片段的位置与大小；节目轨上的修改只影响所选小片段。')
         self._label(section, self.placement_text).pack(fill='x', padx=self.px(10), pady=self.px(4))
         self.placement_fields = []
         for title, variable in (('水平位置 X（像素）', self.placement_x),
@@ -181,8 +182,9 @@ class ClipInspector(tk.Frame):
                                 ('缩放 %（1–400）', self.placement_scale)):
             entry = self._row(section, title, variable)
             entry.bind('<Return>', lambda _event: self.apply_placement())
+            self._bind_placement_drag(entry,variable,len(self.placement_fields))
             self.placement_fields.append(entry)
-        self._label(section, '位置 0 为居中；X 正值向右，Y 正值向下。缩放 100% 为原始适配大小。').pack(
+        self._label(section, '按住输入框左右拖动即可调值，Shift 精调，Esc 取消。位置 0 为居中，缩放 100% 为适配大小。').pack(
             fill='x', padx=self.px(10), pady=self.px(4))
         self.placement_actions = self._actions(section, [('应用位置与大小', self.apply_placement),
                                                         ('重置位置与大小', self.reset_placement)])
@@ -200,16 +202,23 @@ class ClipInspector(tk.Frame):
         except (ValueError, TypeError) as error: self._report(error)
 
     def _refresh_placement(self, force=False):
+        scope=self.ws.video_placement_scope()
+        drag=getattr(self,'_placement_drag',None)
+        if drag:
+            if drag['scope']==scope and drag['project'] is self.ws.project: return
+            self._finish_placement_drag(cancel=True,refresh=False)
         clips = self.ws.video_placement_targets()
-        token = (id(self.ws.project), tuple(clip.id for clip in clips), timeline_dimensions(self.ws.project, (1920, 1080)))
+        token = (id(self.ws.project), scope, tuple(clip.id for clip in clips), timeline_dimensions(self.ws.project, (1920, 1080)))
         enabled = bool(clips)
         for widget in [*self.placement_fields, *self.placement_actions]:
             widget.configure(state='normal' if enabled else 'disabled')
         self.placement_text.set((('已选中 '+str(len(clips))+' 个视频素材，统一应用参数。') if len(clips) > 1
             else '整段素材：'+Path(clips[0].path).name) if clips else '请在时间线上选中视频素材。')
+        if scope and scope[0]=='program':
+            self.placement_text.set('所选节目片段：'+'、'.join(f'{format_time(a)} — {format_time(b)}' for a,b in scope[1]))
         if not force and token == self._placement_token: return
         self._placement_token = token
-        x, y, scale = placement_values(clips[0]) if clips else (0., 0., 1.)
+        x, y, scale = self.ws.video_placement_value()
         width, height = timeline_dimensions(self.ws.project, (1920, 1080))
         self.placement_x.set(f'{x*width:g}')
         self.placement_y.set(f'{y*height:g}')

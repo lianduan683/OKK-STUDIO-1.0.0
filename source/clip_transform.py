@@ -7,7 +7,7 @@ This module has no dependency on the project model or any preview UI.
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Mapping
 
 from program_edits import _clock, _frame, _number, _preserve_boundaries, _range
@@ -19,6 +19,7 @@ class ClipTransform:
     zoom: float = 1.0
     x: float = 0.0
     y: float = 0.0
+    placement: dict = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -35,6 +36,8 @@ def validate_transform(transform: ClipTransform) -> None:
         value = _number(getattr(transform, name), "片段构图 " + name)
         if not low <= value <= high:
             raise ValueError(f"片段构图 {name} 必须在 {low} 到 {high} 之间")
+    from video_placement import placement_values
+    placement_values(transform.placement)
 
 
 def transform_is_identity(transform: ClipTransform) -> bool:
@@ -73,7 +76,7 @@ def transform_at(project, time: float) -> ClipTransform:
     return ClipTransform()
 
 
-def set_transform_on_range(project, start: float, end: float, transform: ClipTransform) -> None:
+def set_transform_on_range(project, start: float, end: float, transform: ClipTransform, *, preserve_placement=True) -> None:
     """Replace only the selected frames, preserving both outside fragments.
 
     Identity clears local framing. No colour or source metadata is changed.
@@ -84,6 +87,18 @@ def set_transform_on_range(project, start: float, end: float, transform: ClipTra
     first, stop, fps = _range(project, start, end)
     validate_transform(transform)
     validate_program_edits(project)
+    if preserve_placement and not transform.placement:
+        edges={first,stop}
+        for item in getattr(project,'clip_transforms',[]):
+            if item.transform.placement:
+                edges.update(f for f in (_frame(item.start,fps),_frame(item.end,fps)) if first<f<stop)
+        edges=sorted(edges)
+        if len(edges)>2 or transform_at(project,first/fps).placement:
+            for left,right in zip(edges,edges[1:]):
+                value=deepcopy(transform)
+                value.placement=deepcopy(transform_at(project,left/fps).placement)
+                set_transform_on_range(project,left/fps,right/fps,value,preserve_placement=False)
+            return
     result = []
     for item in getattr(project, "clip_transforms", []):
         left, right = _frame(item.start, fps), _frame(item.end, fps)
@@ -94,7 +109,7 @@ def set_transform_on_range(project, start: float, end: float, transform: ClipTra
             result.append(ClipTransformRange(left / fps, first / fps, deepcopy(item.transform)))
         if right > stop:
             result.append(ClipTransformRange(stop / fps, right / fps, deepcopy(item.transform)))
-    if not transform_is_identity(transform):
+    if not transform_is_identity(transform) or transform.placement:
         result.append(ClipTransformRange(first / fps, stop / fps, deepcopy(transform)))
     project.clip_transforms = sorted(result, key=lambda item: item.start)
     _preserve_boundaries(project, (first, stop), fps, _frame(project.duration, fps))
@@ -102,7 +117,10 @@ def set_transform_on_range(project, start: float, end: float, transform: ClipTra
 
 def clip_transforms_to_dict(project) -> list[dict]:
     validate_clip_transforms(project)
-    return [asdict(item) for item in getattr(project, "clip_transforms", [])]
+    result = [asdict(item) for item in getattr(project, "clip_transforms", [])]
+    for item in result:
+        if not item['transform']['placement']: item['transform'].pop('placement')
+    return result
 
 
 def clip_transforms_from_dict(value) -> list[ClipTransformRange]:
@@ -113,7 +131,7 @@ def clip_transforms_from_dict(value) -> list[ClipTransformRange]:
         if not isinstance(item, Mapping) or set(item) != {"start", "end", "transform"}:
             raise ValueError("片段构图包含未知字段或缺少范围")
         raw = item["transform"]
-        if not isinstance(raw, Mapping) or set(raw) - {"mode", "zoom", "x", "y"}:
+        if not isinstance(raw, Mapping) or set(raw) - {"mode", "zoom", "x", "y", "placement"}:
             raise ValueError("片段构图设置必须是对象且不能包含未知字段")
         transform = ClipTransform(**raw)
         validate_transform(transform)

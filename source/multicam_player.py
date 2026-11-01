@@ -307,6 +307,9 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
         self._grade_draft = None
         self._grade_engine = RealtimeGrade()
         self._transform_engine = RealtimeTransform()
+        from realtime_placement import RealtimePlacement
+        self._placement_engine = RealtimePlacement()
+        self._placement_draft = None
         self._subtitle_cache: tempfile.TemporaryDirectory | None = None
         self._subtitle_key: str | None = None
         self._subtitle_ass_path = ""
@@ -325,7 +328,7 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
                     actions = [(action, kwargs)]
                     while not self._commands.empty():
                         following = self._commands.get_nowait()
-                        if (following[0] in {"seek", "scrub", "grade_preview", "camera_windows", "configure", "refresh_presentation"}
+                        if (following[0] in {"seek", "scrub", "grade_preview", "placement_preview", "camera_windows", "configure", "refresh_presentation"}
                             and following[0] == actions[-1][0]
                                 and (following[0] != 'configure' or
                                      following[1].get('gpu_live') == actions[-1][1].get('gpu_live'))):
@@ -437,6 +440,7 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
             except Exception as error:
                 errors.append(f'调色缓存：{error}')
             self._transform_engine.close()
+            self._placement_engine.close()
         except Exception as error:
             errors.append(f'清理流程：{error}')
         finally:
@@ -602,6 +606,23 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
                 self._dispose_comparison()
             self._sync(force=self._program_standby is None)
             self._emit('status', '原片 / 防抖后同步对比' if enabled else '已关闭防抖对比')
+        elif action == 'placement_preview':
+            from video_placement import placement_values
+            value=values.get('value')
+            if value is not None: placement_values(value)
+            self._placement_draft=(values.get('scope'),value) if value is not None else None
+            if value is not None and self._is_baked_key(self._program.key):
+                self._render_preview=None
+                self._sync()
+            if self._stack_enabled:
+                self._stack_revision+=1
+                self._sync_stack_preview()
+            elif self._gpu_live_enabled:
+                self._gpu_sync_program()
+            else:
+                for slot in (self._program,self._program_standby):
+                    if slot is not None and slot.active and slot.controller:
+                        self._sync_program_placement(slot,self._position)
         elif action == "grade_preview":
             target = validate_preview_target(values.get("target", ("global",)))
             grade = values.get("grade")
@@ -774,10 +795,14 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
             source = _get(clip, 'path', '')
             if os.path.normcase(os.path.abspath(source)) != os.path.normcase(os.path.abspath(binding['source'])):
                 continue  # A deleted/replaced source won over this old job.
-            if _get(clip, 'proxy_path', '') == binding['proxy']:
+            if _get(clip, 'proxy_path', '') == binding['proxy'] and not _get(clip, 'proxy_disabled', False):
                 continue
-            if isinstance(clip, dict): clip['proxy_path'] = binding['proxy']
-            else: clip.proxy_path = binding['proxy']
+            if isinstance(clip, dict):
+                clip['proxy_path'] = binding['proxy']
+                clip['proxy_disabled'] = False
+            else:
+                clip.proxy_path = binding['proxy']
+                clip.proxy_disabled = False
             changed.append(source)
         preference_changed = enabled != self._use_proxies
         if not changed and not preference_changed:
@@ -844,7 +869,7 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
             path, source_time, key = found
             if cached_model and use_proxies and key and key[0] not in {'stabilized', 'library-overlay'}:
                 clip = self._project.clip_at(camera_id, position)
-                path = resolver(clip.path, clip.proxy_path)
+                path = (clip.path if clip.proxy_disabled else resolver(clip.path, clip.proxy_path))
                 key = (path, clip.id, clip.start)
             return key, str(path), max(0.0, float(source_time))
         method = _get(self._project, "clip_at")
@@ -866,6 +891,7 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
             source_in = _number(_get(clip, "source_in", _get(clip, "in_point", 0.0)))
             source_time = position - start + source_in
         original = str(_get(clip, "path", _get(clip, "source_path", "")))
+        use_proxies = use_proxies and not _get(clip, 'proxy_disabled', False)
         proxy = _get(clip, "proxy_path", _get(clip, "proxy", ""))
         if use_proxies and not proxy and original:
             from proxy_cache import find_proxy
@@ -1007,6 +1033,7 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
         return key,path,max(0.0,source_time)
 
     def _prerender_spec(self, position):
+        if getattr(self,'_placement_draft',None) is not None: return None
         if self._color_monitoring or self._comparison_enabled or self._audition is not None or self._grade_draft is not None: return None
         from prerender import cached_spec
         return cached_spec(getattr(self, '_prerender_items', ()), position)
@@ -1017,11 +1044,11 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
         if self._comparison_enabled:
             return self._clip(camera, position)
         preview = self._render_preview
-        if preview is not None:
+        if preview is not None and getattr(self,'_placement_draft',None) is None:
             path, start, end = preview
             if start <= position < end:
                 return ("render-preview", path, start, end), path, position - start
-        if not self._color_monitoring and self._audition is None and self._grade_draft is None and not self._gpu_live_enabled:
+        if not self._color_monitoring and self._audition is None and self._grade_draft is None and getattr(self,'_placement_draft',None) is None and not self._gpu_live_enabled:
             for path, start, end in self._transition_previews:
                 if start <= position < end:
                     return ("transition-preview", path, start, end), path, position-start
@@ -1316,6 +1343,8 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
         controller.operation_cancel_event = self._preview_cancel_event()
         try:
             controller.load(path)
+            placement_engine=getattr(self,'_placement_engine',None)
+            if placement_engine is not None: placement_engine.forget(controller)
         except Exception:
             self._check_navigation()
             raise
@@ -1923,6 +1952,7 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
         """Frame raw programme sources; grid/comparison and baked frames own theirs."""
         if slot.controller is None or getattr(self, '_stack_enabled', False):
             return False
+        self._sync_program_placement(slot,position,key=key)
         project = self._project
         engine = getattr(self, '_transform_engine', None)
         if engine is None:
@@ -1935,6 +1965,34 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
                      if not baked and _get(project, 'clip_transforms', []) else ClipTransform())
         width, height = preview_dimensions(project)
         return engine.apply(slot.controller, transform, width, height, bypass=baked)
+
+    def _sync_program_placement(self,slot,position,*,key=None,force_geometry=False):
+        if slot.controller is None: return
+        from video_placement import placement_at,placement_values,has_placement
+        from realtime_placement import RealtimePlacement
+        engine=getattr(self,'_placement_engine',None)
+        key=slot.key if key is None else key
+        if self._is_baked_key(key):
+            if engine is not None:
+                width,height=preview_dimensions(self._project)
+                engine.apply(slot.controller,(0.,0.,1.),width,height,bypass=True,key=key)
+            return
+        draft=getattr(self,'_placement_draft',None)
+        if not draft and not has_placement(self._project) and (engine is None or not engine._states): return
+        if engine is None: self._placement_engine=engine=RealtimePlacement()
+        camera=self._camera_at(position)
+        clip=self._project.clip_at(camera,position)
+        value=placement_at(self._project,camera,position)
+        if draft and draft[0]:
+            scope,raw=draft
+            selected=(any(a<=position<b for a,b in scope[1]) if scope[0]=='program' else
+                      clip is not None and clip.id in scope[1])
+            if selected: value=placement_values(raw)
+        width,height=preview_dimensions(self._project)
+        from clip_transform import transform_is_identity
+        framed=not transform_is_identity(transform_at(self._project,position)) if self._project.clip_transforms else False
+        engine.apply(slot.controller,value,width,height,bypass=self._is_baked_key(key),
+                     key=key,force_geometry=force_geometry,framed=framed)
 
     def _program_grade_chain(self, camera, position):
         saved = _get(self._project, "camera_grades", {})

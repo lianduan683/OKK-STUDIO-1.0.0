@@ -428,7 +428,7 @@ class StackPreview:
                 resolved = []
                 for layer in segment.layers:
                     original = media[layer.original_path]
-                    if layer.camera not in original_cameras and layer.path == layer.original_path and not (layer.has_alpha or original.has_alpha
+                    if not layer.proxy_disabled and layer.camera not in original_cameras and layer.path == layer.original_path and not (layer.has_alpha or original.has_alpha
                             or pixel_format_has_alpha(original.pixel_format)):
                         proxy = self._proxies(layer.original_path, candidates.get(layer.original_path, ''))
                         if proxy != layer.original_path:

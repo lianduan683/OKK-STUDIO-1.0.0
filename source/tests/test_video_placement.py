@@ -116,7 +116,7 @@ class PlacementInspectorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, '位置或大小不同'):
             plan_source_merge(w.project, {'one', 'two'})
 
-    def test_player_uses_compositor_for_placement_without_stacking_camera_angles(self):
+    def test_player_keeps_single_placement_on_native_path(self):
         from video_stack_player import VideoStackPlayerMixin
         class Player(VideoStackPlayerMixin):
             def _emit(self, *args): pass
@@ -127,7 +127,7 @@ class PlacementInspectorTests(unittest.TestCase):
         player._program = player._program_standby = player._comparison = player._comparison_standby = None
         player._grade_draft = None
         player._configure_stack_mode()
-        self.assertTrue(player._stack_enabled)
+        self.assertFalse(player._stack_enabled)
         preview = player._stack_project()
         self.assertEqual(preview.multicam_outer_order, [0])
         self.assertFalse(preview.multicam_inner_stack)

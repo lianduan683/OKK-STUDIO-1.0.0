@@ -209,7 +209,7 @@ class GpuLivePlayerMixin:
             seen = set()
             for clip in getattr(self._project, 'clips', ()):
                 path = (resolver(clip.path, clip.proxy_path)
-                        if self._use_proxies and not self._color_monitoring and clip.camera not in getattr(self, '_original_cameras', ())
+                        if self._use_proxies and not clip.proxy_disabled and not self._color_monitoring and clip.camera not in getattr(self, '_original_cameras', ())
                         and resolver is not None else clip.path)
                 if path in seen: continue
                 seen.add(path)
@@ -296,6 +296,10 @@ class GpuLivePlayerMixin:
                 # A normal cut may already have a decoded staging frame.
                 # Preserve that frame while still verifying render readiness.
                 ready = self._prepare_picture_frame(slot, target, force=force or framing_changed, newly_loaded=new)
+                placement=getattr(self,'_sync_program_placement',None)
+                if callable(placement):
+                    placement(slot,side.grade_anchor if transform_time is None else transform_time,
+                              key=side.asset_key,force_geometry=new or framing_changed)
                 if self._gpu_navigation_pending(): return False
                 slot.key, slot.failed_key, slot.active = side.asset_key, None, True
                 latest = self._clock() if self._playing and not force else self._position

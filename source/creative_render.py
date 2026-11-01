@@ -176,6 +176,8 @@ def has_pixel_effects(project, camera: int, time: float | None = None) -> bool:
         if placement_at(project, camera, time) != (0., 0., 1.): return True
     elif any(clip.camera == camera and placement_values(clip) != (0., 0., 1.) for clip in project.clips):
         return True
+    elif time is None and any(item.transform.placement for item in project.clip_transforms):
+        return True
     transforms = ([transform_at(project, time)] if time is not None else
                   [item.transform for item in getattr(project, "clip_transforms", [])])
     if any(not transform_is_identity(transform) for transform in transforms):

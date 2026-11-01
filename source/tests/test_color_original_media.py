@@ -162,7 +162,7 @@ class OriginalDecoderTests(unittest.TestCase):
         self.assertTrue(preview.requests[-1]['use_proxies'])
         self.assertEqual(preview.requests[-1]['original_cameras'], {1})
         self.player.submit('original_cameras', cameras=())
-        self._wait(lambda: not preview.requests[-1]['original_cameras'])
+        self._wait(lambda: not preview.requests[-1].get('original_cameras', ()))
 
 
 class NativeGpuOriginalTests(unittest.TestCase):

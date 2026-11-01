@@ -112,7 +112,10 @@ class KeyboardEditMixin:
             if method is not None: method()
         elif action == 'open': self.open()
         elif action == 'select_all': return self._select_all_timeline(event)
-        elif action == 'delete': return self._delete_timeline_selection(event)
+        elif action == 'delete':
+            if event.widget is vars(self).get('media_tree'):
+                return self._delete_media_selection(event)
+            return self._delete_timeline_selection(event)
         elif action == 'toggle_clip_enabled': return self._clip_enabled_key_press()
         elif action == 'split': self.split_program_at_playhead()
         elif action == 'split_timeline': self.split_timeline_at_playhead()

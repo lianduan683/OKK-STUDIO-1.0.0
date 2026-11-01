@@ -35,7 +35,7 @@ class ProxyCompatibilityTests(unittest.TestCase):
     def workspace(self, clips):
         ws = MulticamProxyMixin()
         ws.project = MulticamProject(clips, [Cut(0., clips[0].camera)])
-        ws.media_tree = SimpleNamespace(selection=lambda: ())
+        ws.media_tree = SimpleNamespace(selection=lambda: (), exists=lambda _identifier: False)
         ws._timeline_selection = set()
         ws.status = Variable()
         ws.proxy_var = Variable(False)

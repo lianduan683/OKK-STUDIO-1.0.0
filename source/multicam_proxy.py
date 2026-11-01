@@ -25,6 +25,34 @@ def _stamp(path):
 
 
 class MulticamProxyMixin(ProxySettingsMixin):
+    def unlink_material_proxies(self, identifiers=None):
+        """Opt out for this camera's references to each selected original.
+
+        Split/overlapping instances of one recording share this action so a
+        later half cannot silently bring its old proxy back into the monitor.
+        Other cameras, media files and the global proxy preference stay intact.
+        """
+        if not self._available(): return False
+        identifiers = set(self.media_tree.selection() if identifiers is None else identifiers)
+        sources = {(clip.camera, _identity(clip.path)) for clip in self.project.clips
+                   if clip.id in identifiers or f'camera_{clip.camera}' in identifiers}
+        clips = [clip for clip in self.project.clips
+                 if (clip.camera, _identity(clip.path)) in sources]
+        changed = [clip for clip in clips if not clip.proxy_disabled or clip.proxy_path]
+        if not changed:
+            self.status.set('所选素材已使用原片；可重新链接或生成代理。')
+            return False
+        self._remember()
+        # Discard already queued background bindings as well as future results.
+        self._reset_quick_proxy()
+        for clip in changed:
+            clip.proxy_path = ''
+            clip.proxy_disabled = True
+        self._refresh()
+        self._refresh_proxy_badges(force=True)
+        self.status.set(f'已取消 {len(sources)} 份素材的代理（含同机位分割片段），使用原片；Ctrl+Z 撤销。')
+        return True
+
     def _preview_use_proxies(self):
         """The editing proxy preference stays independent of colour targets."""
         return bool(self.proxy_var.get())
@@ -73,14 +101,16 @@ class MulticamProxyMixin(ProxySettingsMixin):
         self._refresh_clip_proxy_icons(resolver)
         for camera, badge in vars(self).get('camera_proxy_badges', {}).items():
             clips = by_camera.get(camera, ())
-            ready = sum(_identity(resolver(clip.path, clip.proxy_path)) != _identity(clip.path) for clip in clips)
-            missing = sum(bool(clip.proxy_path) and not Path(clip.proxy_path).is_file() for clip in clips)
+            ready = sum(not clip.proxy_disabled and _identity(resolver(clip.path, clip.proxy_path)) != _identity(clip.path) for clip in clips)
+            missing = sum(not clip.proxy_disabled and bool(clip.proxy_path) and not Path(clip.proxy_path).is_file() for clip in clips)
             if clips and ready == len(clips):
                 text, color = '已代理', '#82c9aa'
             elif ready:
                 text, color = f'部分代理 {ready}/{len(clips)}', '#dfbc73'
             elif missing:
                 text, color = '代理丢失', '#ef8d82'
+            elif clips and all(clip.proxy_disabled for clip in clips):
+                text, color = '使用原片', '#969ba3'
             else:
                 text, color = '未代理', '#969ba3'
             if badge.cget('text') != text or badge.cget('fg') != color:
@@ -383,6 +413,7 @@ class MulticamProxyMixin(ProxySettingsMixin):
             self._remember()
             for clip, path in changes:
                 clip.proxy_path = path
+                clip.proxy_disabled = False
             from proxy_cache import register_proxy
             for source, path in linked:
                 register_proxy(source, path)
@@ -424,6 +455,7 @@ class MulticamProxyMixin(ProxySettingsMixin):
                 if (clip.id in initial and _identity(clip.path) == _identity(request['source'])
                         and clip.proxy_path in (initial[clip.id], path)):
                     clip.proxy_path = path
+                    clip.proxy_disabled = False
                     bindings.append({'id': clip.id, 'source': clip.path, 'proxy': path})
             if bindings:
                 self._mark_dirty()

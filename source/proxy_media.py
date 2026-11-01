@@ -44,7 +44,9 @@ class PreviewProxyResolver:
         self._rejected[self._identity(path)] = self._stamp(path)
         self._cache.clear()
 
-    def __call__(self, source: str, explicit: str = '') -> str:
+    def __call__(self, source: str, explicit: str = '', *, disabled: bool = False) -> str:
+        if disabled:
+            return source
         key = (source, explicit)
         now = time.monotonic()
         cached = self._cache.get(key)

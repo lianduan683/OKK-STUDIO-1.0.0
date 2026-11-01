@@ -8,6 +8,8 @@ from configured_proxy import ProxyOptions, FORMATS, SIZES
 
 class ProxySettingsMixin:
     def _clip_proxy_state(self, clip, resolver):
+        if clip.proxy_disabled:
+            return 'disabled'
         resolved = resolver(clip.path, clip.proxy_path)
         if str(Path(resolved).resolve()).casefold() != str(Path(clip.path).resolve()).casefold():
             return 'ready'
@@ -18,7 +20,7 @@ class ProxySettingsMixin:
         if state not in icons:
             size = max(12, self._px(14))
             icon = tk.PhotoImage(master=self, width=size, height=size)
-            color = {'ready': '#70bf9a', 'none': '#69717b', 'missing': '#edab64'}[state]
+            color = {'ready': '#70bf9a', 'none': '#69717b', 'missing': '#edab64', 'disabled': '#69717b'}[state]
             icon.put(color, to=(1, 1, size-1, size-1))
             # A crisp P or ! drawn with Tk pixels scales with the tree font.
             glyph = ('1110', '1001', '1110', '1000', '1000') if state != 'missing' else ('010', '010', '010', '000', '010')
@@ -48,11 +50,17 @@ class ProxySettingsMixin:
         menu = tk.Menu(self, tearoff=False, bg='#292b2e', fg='#dedfe3', activebackground='#3c5263')
         from proxy_media import PreviewProxyResolver
         state = self._clip_proxy_state(clip, PreviewProxyResolver())
-        menu.add_command(label={'ready': '● 已代理', 'none': '○ 未代理', 'missing': '⚠ 代理丢失'}[state], state='disabled')
+        menu.add_command(label={'ready': '● 已代理', 'none': '○ 未代理', 'missing': '⚠ 代理丢失',
+                                'disabled': '○ 已取消代理 · 使用原片'}[state], state='disabled')
         menu.add_command(label='转代理…', command=lambda: self.show_proxy_settings(identifiers),
                          state='disabled' if self._quick_proxy_running or self.busy or self.app.working else 'normal')
         menu.add_command(label='链接已有代理…', command=self.link_existing_proxy,
                          state='disabled' if self._proxy_link_running or self.busy or self.app.working else 'normal')
+        menu.add_command(label='取消代理（使用原片）', command=lambda: self.unlink_material_proxies(identifiers),
+                         state='disabled' if self.busy or self.app.working else 'normal')
+        menu.add_separator()
+        menu.add_command(label='删除所选素材', accelerator='Backspace', command=self._delete_media_selection,
+                         state='disabled' if self.busy or self.app.working else 'normal')
         previous = getattr(self, 'camera_context_menu', None)
         if previous is not None: previous.destroy()
         self.camera_context_menu = menu

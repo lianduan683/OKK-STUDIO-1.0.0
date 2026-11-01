@@ -266,7 +266,7 @@ def remove_program_boundaries(project, positions):
                              if grade is not None]
     candidate.clip_transforms = [ClipTransformRange(start, end, transform)
                                 for start, end, _camera, _grade, transform in groups
-                                if not transform_is_identity(transform)]
+                                if not transform_is_identity(transform) or transform.placement]
     candidate.transitions = [item for item in candidate.transitions
                              if _frame(item.time, fps) not in removed]
     _publish(project, candidate)
