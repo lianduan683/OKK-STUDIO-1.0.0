@@ -175,7 +175,7 @@ class StackPreview:
                     and self._decoded_time is not None
                     and position-self._decoded_time > threshold)
 
-    def request(self, project, position, playing, request_id, *, ass_path=None, use_proxies=True, preview_epoch=None, cache_items=()):
+    def request(self, project, position, playing, request_id, *, ass_path=None, use_proxies=True, preview_epoch=None, cache_items=(), original_cameras=()):
         with self._condition:
             if self._closed: raise RuntimeError('图层预览已经关闭。')
             if preview_epoch is None or preview_epoch != self._epoch:
@@ -190,7 +190,7 @@ class StackPreview:
             self._decoded_time = None
             self._last_catchup = time.monotonic()
             self._pending = (self._generation, project, float(position), bool(playing), int(request_id),
-                             ass_path, bool(use_proxies), preview_epoch, tuple(cache_items))
+                             ass_path, bool(use_proxies), preview_epoch, tuple(cache_items), frozenset(original_cameras))
             self._condition.notify()
 
     def cancel(self):
@@ -350,6 +350,7 @@ class StackPreview:
 
     def _render(self, job, cancel):
         generation, project, position, playing, request_id, ass_path, use_proxies, preview_epoch, *extra = job
+        original_cameras = extra[1] if len(extra) > 1 else ()
         project = replace(project, fps=float(canonical_frame_rate(project.fps)), range_start=0., range_end=None)
         segments = preview_segments(project, position, single_frame=not playing)
         if extra and extra[0]: segments = cached_stack_segments(segments, extra[0], project.fps)
@@ -399,7 +400,7 @@ class StackPreview:
                 resolved = []
                 for layer in segment.layers:
                     original = media[layer.original_path]
-                    if layer.path == layer.original_path and not (layer.has_alpha or original.has_alpha
+                    if layer.camera not in original_cameras and layer.path == layer.original_path and not (layer.has_alpha or original.has_alpha
                             or pixel_format_has_alpha(original.pixel_format)):
                         proxy = self._proxies(layer.original_path, candidates.get(layer.original_path, ''))
                         if proxy != layer.original_path:

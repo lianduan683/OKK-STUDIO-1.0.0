@@ -152,6 +152,18 @@ class RealFrameAnalysisTests(unittest.TestCase):
         repeat=sample_analyze(project,0,1,str(self.ffmpeg),str(self.ffprobe))
         self.assertEqual(first.histogram,repeat.histogram)
 
+    def test_attached_proxy_does_not_change_analysis_of_original_pixels(self):
+        original = self.video('original', (55, 55, 55))
+        proxy = self.video('proxy', (190, 190, 190))
+        clip = CameraClip('a', 1, original, 0, 2)
+        project = MulticamProject(clips=[clip], cuts=[Cut(0, 1)], fps=10.)
+        expected = sample_analyze(project, 0, 1, str(self.ffmpeg), str(self.ffprobe))
+        clip.proxy_path = proxy
+        actual = sample_analyze(project, 0, 1, str(self.ffmpeg), str(self.ffprobe))
+        self.assertEqual(actual.histogram, expected.histogram)
+        self.assertEqual(build_auto_grade(actual), build_auto_grade(expected))
+        self.assertEqual(clip.proxy_path, proxy)
+
     def test_one_frame_and_black_gaps_are_bounded_and_cancellation_is_immediate(self):
         path=self.video('normal',(115,115,115))
         project=MulticamProject(clips=[CameraClip('a',1,path,0,1)],master_duration=3,fps=10)

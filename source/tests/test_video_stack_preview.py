@@ -71,6 +71,33 @@ class StackPreviewTests(unittest.TestCase):
         self.assertIn('fps=fps=60', command[command.index('-filter_complex')+1])
         self.assertEqual(len(self.render(command)), round(segment.duration*30)*stride)
 
+    def test_camera_policy_switches_actual_pixels_between_original_and_proxy(self):
+        original = self.fixture.folder / 'opaque-original.mp4'
+        proxy = self.fixture.folder / 'opaque-proxy.mp4'
+        for path, color in ((original, 'blue'), (proxy, 'red')):
+            self.fixture.command([self.ffmpeg, '-v', 'error', '-y', '-f', 'lavfi', '-i',
+                f'color={color}:s=128x72:r=10:d=2', '-c:v', 'libx264', '-threads', '1', str(path)])
+        project = MulticamProject([CameraClip('a', 1, str(original), 0, 2,
+            proxy_path=str(proxy))], fps=10, video_stack_enabled=True, video_stack_order=[1])
+        events = queue.Queue()
+        controller = StackPreview(self.ffmpeg, self.ffprobe,
+            lambda *item: events.put(item), width=128, height=72)
+        self.controllers.append(controller)
+        for request, cameras, channel in ((1, (1,), 2), (2, (2,), 0), (3, (1,), 2)):
+            controller.request(project, .5, False, request, use_proxies=True, original_cameras=cameras)
+            deadline = time.monotonic() + 10
+            frame = None
+            while time.monotonic() < deadline:
+                candidate = controller.take_frame()
+                if candidate is not None and candidate['request_id'] == request:
+                    frame = candidate
+                    break
+                time.sleep(.005)
+            self.assertIsNotNone(frame, list(events.queue))
+            pixel = frame['rgba'][4*(36*128+64):4*(36*128+64)+3]
+            self.assertGreater(pixel[channel], 240)
+            self.assertLess(pixel[2-channel], 10)
+
     def test_latest_seek_cancels_old_process_and_mailbox_is_one_frame(self):
         events = queue.Queue(); controller = StackPreview(self.ffmpeg, self.ffprobe,
             lambda kind,value: events.put((kind,value)), width=128, height=72)

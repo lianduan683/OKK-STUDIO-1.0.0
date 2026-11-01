@@ -34,6 +34,8 @@ class AutoColorWorkspaceMixin(CameraMatchWorkspaceMixin):
         if camera is not None and (type(camera) is not int or camera not in self.project.cameras):return False
         if camera!=self.project.color_reference_camera:
             self.project.color_reference_camera=camera;self._mark_dirty()
+            refresh_media = getattr(self, '_refresh_color_media_policy', None)
+            if callable(refresh_media):refresh_media()
         workspace=vars(self).get('color_workspace')
         panel=vars(workspace).get('auto_panel') if workspace is not None else None
         if panel is not None:panel.refresh_reference_choices()

@@ -25,6 +25,37 @@ def _stamp(path):
 
 
 class MulticamProxyMixin(ProxySettingsMixin):
+    def _preview_use_proxies(self):
+        """The editing proxy preference stays independent of colour targets."""
+        return bool(self.proxy_var.get())
+
+    def _color_original_cameras(self):
+        if not vars(self).get('_color_mode', False):
+            return ()
+        target = self.grade_target
+        if target == 'selection' and self.selected_program_range:
+            from program_edits import program_spans
+            first, last = self.selected_program_range
+            cameras = {span.camera for span in program_spans(self.project)
+                       if span.start < last - 1e-8 and span.end > first + 1e-8}
+        elif type(target) is int:
+            cameras = {target}
+        else:
+            cameras = set(self.project.cameras)
+        if self.project.color_reference_camera is not None:
+            cameras.add(self.project.color_reference_camera)
+        return tuple(sorted(cameras & set(self.project.cameras)))
+
+    def _refresh_color_media_policy(self):
+        color = bool(vars(self).get('_color_mode', False))
+        if self.player and color != vars(self).get('_published_color_monitoring', False):
+            self.player.submit('color_monitoring', enabled=color)
+            self._published_color_monitoring = color
+        cameras = self._color_original_cameras()
+        if self.player and cameras != vars(self).get('_published_original_cameras'):
+            self.player.submit('original_cameras', cameras=cameras)
+            self._published_original_cameras = cameras
+
     def _refresh_proxy_badges(self, *, force=False):
         """Show attachment state independently of the proxy-preview switch."""
         now = time.monotonic()
@@ -129,7 +160,8 @@ class MulticamProxyMixin(ProxySettingsMixin):
         cancel = threading.Event()
         self._quick_proxy_cancel = cancel
         self._set_quick_proxy_running(True)
-        self.proxy_var.set(True)
+        if not vars(self).get('_color_mode', False):
+            self.proxy_var.set(True)
         self._configure_player()
         self.quick_proxy_status.set(f'0/{len(requests)}')
         self.status.set(f'后台逐个准备 {len(requests)} 份 {self._quick_proxy_description} 代理，完成后自动接入；可以继续剪辑。')
@@ -284,9 +316,10 @@ class MulticamProxyMixin(ProxySettingsMixin):
         cancel = self._proxy_link_cancel = threading.Event()
         self._proxy_link_running = True
         # Respect an explicit later switch-off while validation runs.
-        self.proxy_var.set(True)
+        if not vars(self).get('_color_mode', False):
+            self.proxy_var.set(True)
         if self.player:
-            self.player.submit('proxy_update', bindings=[], use_proxies=True)
+            self.player.submit('proxy_update', bindings=[], use_proxies=self._preview_use_proxies())
         self.status.set('后台检查已有代理的视频与完整时长，可以继续剪辑…')
         jobs = self.jobs
 
@@ -356,7 +389,7 @@ class MulticamProxyMixin(ProxySettingsMixin):
             self._mark_dirty()
             self._refresh_proxy_badges(force=True)
             if self.player:
-                self.player.submit('proxy_update', bindings=bindings, use_proxies=self.proxy_var.get())
+                self.player.submit('proxy_update', bindings=bindings, use_proxies=self._preview_use_proxies())
         for source, error in issues:
             self.app._log(f'链接代理：{source}\n{error}')
         detail = ''
@@ -396,7 +429,7 @@ class MulticamProxyMixin(ProxySettingsMixin):
                 self._mark_dirty()
                 self._refresh_proxy_badges(force=True)
                 if self.player:
-                    self.player.submit('proxy_update', bindings=bindings, use_proxies=self.proxy_var.get())
+                    self.player.submit('proxy_update', bindings=bindings, use_proxies=self._preview_use_proxies())
         elif kind == 'quick_proxy_error':
             _, source, error = payload
             self.app._log(f'代理失败：{source}\n{error}')

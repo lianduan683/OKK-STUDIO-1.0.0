@@ -269,6 +269,8 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
         self._project = None
         self._proxy_resolver = PreviewProxyResolver()
         self._use_proxies = True
+        self._original_cameras = frozenset()
+        self._color_monitoring = False
         self._playing = False
         self._position = 0.0
         self._anchor = time.monotonic()
@@ -506,6 +508,8 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
             self._render_preview = None
             self._prepare_subtitles()
             self._use_proxies = bool(values.get("use_proxies", True))
+            self._original_cameras = self._validate_original_cameras(values.get('original_cameras', ()))
+            self._set_color_monitoring(values.get('color_monitoring', False))
             self._position = min(position, self._duration())
             self._anchor = time.monotonic()
             if 'gpu_live' in values:
@@ -692,6 +696,22 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
             self._anchor = time.monotonic()
             self._playing = False
             self._pause_all(preserve_prewarm=True)
+        elif action == 'color_monitoring':
+            self._set_color_monitoring(values.get('enabled', False))
+            if self._project is not None:
+                self._sync()
+        elif action == 'original_cameras':
+            cameras = self._validate_original_cameras(values.get('cameras', ()))
+            if cameras != self._original_cameras:
+                self._position = self._clock()
+                self._anchor = time.monotonic()
+                self._original_cameras = cameras
+                if self._project is not None:
+                    if not self._stack_enabled:
+                        self._configure_gpu_live(self._gpu_live_requested)
+                    else:
+                        self._stack_revision += 1
+                    self._sync(proxy_handoff=True)
         elif action == "audition":
             camera = values.get("camera")
             self._audition = None if camera is None else int(camera)
@@ -700,6 +720,26 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
             self._sync(force=self._program_standby is None)
         elif action not in {"close", "play"}:
             raise ValueError(f"未知预览操作：{action}")
+
+    def _set_color_monitoring(self, enabled):
+        if type(enabled) is not bool:
+            raise ValueError('调色单画面监看开关必须是布尔值')
+        self._color_monitoring = enabled
+        if enabled:
+            # Retain grid HWNDs and decoder owners for returning to editing,
+            # but unload their files: hidden cameras must not keep decoding.
+            for slot in (*self._slots.values(), *self._retired_camera_slots.values()):
+                if slot.controller is not None:
+                    self._blank(slot, force=True)
+            if self._program_standby is not None and self._awaiting_program_swap is None:
+                self._park_hidden_picture(self._program_standby)
+
+    @staticmethod
+    def _validate_original_cameras(cameras):
+        if (not isinstance(cameras, (list, tuple, set, frozenset)) or len(cameras) > 100000
+                or any(type(camera) is not int or camera < 1 for camera in cameras)):
+            raise ValueError('原片预览机位列表无效')
+        return frozenset(cameras)
 
     def _update_proxy_bindings(self, values):
         bindings = values.get('bindings')
@@ -783,6 +823,7 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
         return next((c for c in cameras if int(_get(c, "id", -1)) == camera_id), None)
 
     def _clip(self, camera_id: int, position: float) -> tuple | None:
+        use_proxies = self._use_proxies and camera_id not in getattr(self, '_original_cameras', ())
         media_at = _get(self._project, 'media_at')
         if callable(media_at):
             # Resolve source time and stabilization normally, but avoid index
@@ -790,10 +831,10 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
             from multicam_core import MulticamProject
             resolver = getattr(self, '_proxy_resolver', None)
             cached_model = isinstance(self._project, MulticamProject) and resolver is not None
-            found = media_at(camera_id, position, use_proxies=self._use_proxies and not cached_model)
+            found = media_at(camera_id, position, use_proxies=use_proxies and not cached_model)
             if found is None: return None
             path, source_time, key = found
-            if cached_model and self._use_proxies and key and key[0] not in {'stabilized', 'library-overlay'}:
+            if cached_model and use_proxies and key and key[0] not in {'stabilized', 'library-overlay'}:
                 clip = self._project.clip_at(camera_id, position)
                 path = resolver(clip.path, clip.proxy_path)
                 key = (path, clip.id, clip.start)
@@ -818,15 +859,15 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
             source_time = position - start + source_in
         original = str(_get(clip, "path", _get(clip, "source_path", "")))
         proxy = _get(clip, "proxy_path", _get(clip, "proxy", ""))
-        if self._use_proxies and not proxy and original:
+        if use_proxies and not proxy and original:
             from proxy_cache import find_proxy
             proxy=find_proxy(original)
-        if self._use_proxies and not proxy and original:
+        if use_proxies and not proxy and original:
             source = Path(original)
             discovered = source.parent / "ProxyMedia" / (source.stem + ".mp4")
             if discovered.is_file():
                 proxy = str(discovered)
-        path = str(proxy) if self._use_proxies and proxy and Path(str(proxy)).is_file() else original
+        path = str(proxy) if use_proxies and proxy and Path(str(proxy)).is_file() else original
         if not path:
             return None
         key = (path, _get(clip, "id", None), _get(clip, "start", _get(clip, "timeline_start", None)))
@@ -1423,7 +1464,7 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
         self._sync_grades()
 
     def _sync_thumbnails(self, *, force=False, drift=False) -> None:
-        if self._project is None:
+        if self._project is None or self._color_monitoring:
             return
         if getattr(self, '_active_camera_mapping_serial', 0) < getattr(self, '_camera_mapping_serial', 0):
             return  # A newer grid/page arrived while the previous decoder was closing.
@@ -1783,6 +1824,8 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
         much of that window loading.  Readiness still uses the normal swap
         handshake; this only warms the hidden decoder while sound continues.
         """
+        if self._color_monitoring:
+            return
         self._check_navigation()
         staging = self._program_standby
         if staging is None or self._awaiting_program_swap is not None:

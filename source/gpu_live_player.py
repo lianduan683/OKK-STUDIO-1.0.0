@@ -51,7 +51,7 @@ class LiveTransitionPlan:
         return max(0., min(1., (_frame(time, self.fps)-self.start_frame)/(self.end_frame-self.start_frame)))
 
 
-def compile_live_transitions(project, *, use_proxies=True):
+def compile_live_transitions(project, *, use_proxies=True, original_cameras=()):
     """Resolve the same rounded frame windows and shot handles as export."""
     validate_transitions(project.transitions, project)
     fps = float(project.fps)
@@ -72,7 +72,7 @@ def compile_live_transitions(project, *, use_proxies=True):
         def side(anchor):
             camera = project.camera_at(anchor)
             clip = _continuous_clip(project, camera, first, last)
-            found = project.media_at(camera, anchor, use_proxies=use_proxies)
+            found = project.media_at(camera, anchor, use_proxies=use_proxies and camera not in original_cameras)
             if found is None: raise ValueError('GPU 转场机位在所选范围没有视频画面。')
             path, native, key = found
             epoch = anchor-float(native)
@@ -209,7 +209,8 @@ class GpuLivePlayerMixin:
             seen = set()
             for clip in getattr(self._project, 'clips', ()):
                 path = (resolver(clip.path, clip.proxy_path)
-                        if self._use_proxies and resolver is not None else clip.path)
+                        if self._use_proxies and clip.camera not in getattr(self, '_original_cameras', ())
+                        and resolver is not None else clip.path)
                 if path in seen: continue
                 seen.add(path)
                 software_codec = software_preview_codec(self.executable, path)
@@ -233,7 +234,8 @@ class GpuLivePlayerMixin:
                         and not self._gpu_session.capabilities.get('lut')):
                     missing = (*missing, 'LUT 调色预览')
                 if missing: raise RuntimeError('原生 GPU 预览尚不支持：'+ '、'.join(missing)+'；使用原效果预览路径。')
-                plans = compile_live_transitions(self._project, use_proxies=self._use_proxies)
+                plans = compile_live_transitions(self._project, use_proxies=self._use_proxies,
+                                                original_cameras=self._original_cameras)
                 if not self._gpu_live_enabled:
                     for slot in (self._program, self._program_standby):
                         if slot is not None and slot.controller is not None: self._dispose(slot.controller)

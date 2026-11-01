@@ -1034,6 +1034,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         return True
 
     def _audition_grade_target(self):
+        self._refresh_color_media_policy()
         if self.player:
             if self.project.video_stack_enabled:
                 self.player.submit('audition', camera=None)
@@ -1145,6 +1146,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
             self._timeline_saved_sash = (self.workspace_split.sashpos(0)
                 if len(self.workspace_split.panes()) > 1 else None)
             self._color_mode = True
+            self._refresh_color_media_policy()
             manager = vars(self).get('dock_manager')
             if manager is not None:
                 manager.show('grading')
@@ -1172,7 +1174,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         if not self.player and self.project.clips and self.app.mpv_path:
             self.start_monitors()
         self._audition_grade_target()
-        self.status.set('调色页 · 默认只调所选Cut片段 · 自动识别机位 · 拖动色轮实时显示 · '+self._split_shortcut_label()+'切开 · ←/→逐帧')
+        self.status.set('调色页 · 单画面监看 · 调色及标准机位使用原片 · 拖动色轮实时显示 · '+self._split_shortcut_label()+'切开 · ←/→逐帧')
 
 
     def exit_color_workspace(self):
@@ -1187,6 +1189,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         self._cancel_grade_drafts()
         if self.player: self.player.submit('audition', camera=None)
         self._color_mode = False
+        self._refresh_color_media_policy()
         manager = vars(self).get('dock_manager')
         if manager is not None:
             manager.hide('grading')
@@ -1958,7 +1961,8 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         # request fence, otherwise every player state (id 0) is rejected and
         # the UI play state/time never advances after that first seek.
         self.player.submit('seek', time=self.current, request_id=self._transport_request_id)
-        self.status.set('正在打开同步监看；多路原片较大时请使用代理。')
+        self.status.set('正在打开调色监看：调色及标准机位使用原片，其他机位遵循代理设置。' if self._color_mode else
+                        '正在打开同步监看；多路原片较大时请使用代理。')
 
     def _show_program_view(self, window):
         if self._stack_preview_active:
@@ -2021,9 +2025,14 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         self.comparison_stabilized_label.configure(text='防抖后 · 含裁切' if payload.get('stabilization_active') else '当前段未防抖')
 
     def _configure_player(self):
+        use_proxies = self._preview_use_proxies()
         if self.player:
-            self.player.submit('configure', project=copy.deepcopy(self.project), use_proxies=self.proxy_var.get(),
-                               gpu_live=self.gpu_live_var.get())
+            cameras = self._color_original_cameras()
+            self.player.submit('configure', project=copy.deepcopy(self.project), use_proxies=use_proxies,
+                               gpu_live=self.gpu_live_var.get(), original_cameras=cameras,
+                               color_monitoring=bool(self._color_mode))
+            self._published_original_cameras = cameras
+            self._published_color_monitoring = bool(self._color_mode)
             self._publish_transition_previews()
             self._publish_prerender()
             if self.stabilization_compare_var.get():self.player.submit('stabilization_compare',enabled=True)

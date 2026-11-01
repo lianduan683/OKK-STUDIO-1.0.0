@@ -221,6 +221,7 @@ class FinishingWorkspace(tk.Frame):
             ws.set_grade_target(ws.grade_target)
             ws.color_workspace.refresh()
             self.refresh_clips()
+        ws._refresh_color_media_policy()
         ws.program_panel.grid(in_=self.viewer_host, row=0, column=0, sticky='nsew')
         ws.program_panel.lift()
         ws._tag_transport_widgets(self)
@@ -234,7 +235,7 @@ class FinishingWorkspace(tk.Frame):
             ws._audition_grade_target()
         self._raise_active_panels()
         ws.status.set('调音页 · 音轨、总线、均衡压缩与 FabFilter / VST3 插件' if mode == 'audio' else
-                      '调色页 · 色轮、RGB 曲线与自动调色' if mode == 'color' else
+                      '调色页 · 单画面监看 · 调色及标准机位使用原片' if mode == 'color' else
                       '导出页 · 设置输出参数，添加到渲染队列后点击“渲染所有”。')
 
     def _size_panes(self):
@@ -309,6 +310,7 @@ class FinishingWorkspace(tk.Frame):
         self.mode = 'edit'
         ws.dock_manager.return_panels()
         ws._color_mode = self.saved_color_mode
+        ws._refresh_color_media_policy()
         ws.update_idletasks()
         ws._dock_saving_suspended = self.saved_suspended
         self.saved_layout = self.saved_chrome = None
@@ -318,7 +320,8 @@ class FinishingWorkspace(tk.Frame):
 
     def refresh_summary(self):
         ws = self.ws
-        self.summary_var.set(f'时间线  {ws.project.fps:g} fps  ·  时长 {format_time(ws.project.duration)}')
+        media = '单画面 · 调色 / 标准机位原片  ·  ' if self.mode == 'color' else ''
+        self.summary_var.set(f'{media}时间线  {ws.project.fps:g} fps  ·  时长 {format_time(ws.project.duration)}')
 
     def refresh_clips(self):
         spans = program_spans(self.ws.project)

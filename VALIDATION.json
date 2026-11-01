@@ -1,23 +1,24 @@
 {
-  "version": "1.0.18",
-  "build_id": "20261101-115152-f49d77ab",
+  "version": "1.0.19",
+  "build_id": "20261101-124550-8e0a15e7",
   "focused_regression": {
-    "run": 96,
-    "passed": 95,
-    "skipped": 1,
+    "run": 65,
+    "passed": 62,
+    "failures": 3,
+    "gpu_decode_fallback_failures_also_reproduced_on_v1_0_18": true,
+    "skipped": 0,
     "modules": [
-      "workspace_page_state",
-      "multicam_outer",
-      "video_stack_model",
-      "video_stack_render",
+      "color_single_monitor",
+      "color_original_media",
+      "auto_color",
       "video_stack_preview",
-      "timeline_insert_tracks",
-      "timeline_view_state",
-      "project_upgrade",
-      "audio_current_version"
+      "multicam_player",
+      "proxy_update",
+      "workspace_page_state",
+      "gpu_live_player"
     ]
   },
-  "prior_feature_build_ui_regression": {
+  "prior_ui_regression": {
     "run": 108,
     "passed": 106,
     "failures": 2,
@@ -42,7 +43,7 @@
     "third_party_vst3": "not tested"
   },
   "frozen_headless_export": "passed",
-  "version_metadata": "1.0.18",
+  "version_metadata": "1.0.19",
   "archive_crc_checks": "passed",
   "source_allowlist_and_known_private_path_and_key_pattern_scan": "passed",
   "trusted_code_signature": false,

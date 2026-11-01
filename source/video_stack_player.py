@@ -101,6 +101,7 @@ class VideoStackPlayerMixin:
             self._stack_job_key = key
             preview.request(self._stack_project(), self._position, self._playing, self._request_id,
                             ass_path=self._subtitle_ass_path or None, use_proxies=self._use_proxies,
+                            original_cameras=self._original_cameras,
                             preview_epoch=getattr(self, '_active_preview_epoch', None),
                             **self._stack_cache_options())
             self._emit('status', '透明图层实时预览 · 720p · CPU 合成 · 最高 30fps')
@@ -113,6 +114,7 @@ class VideoStackPlayerMixin:
             # its source probes/proxy cache, and the separate master audio.
             preview.request(self._stack_project(), position, self._playing, self._request_id,
                 ass_path=self._subtitle_ass_path or None, use_proxies=self._use_proxies,
+                original_cameras=self._original_cameras,
                 preview_epoch=None, **self._stack_cache_options())
             self._stack_job_key = (self._stack_revision, self._active_navigation_serial)
             self._stack_was_playing = self._playing

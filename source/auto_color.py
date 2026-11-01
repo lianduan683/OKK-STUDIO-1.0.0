@@ -2,7 +2,7 @@
 
 This is deliberately image-statistics based assistance. It neither infers a
 camera's Log transfer function from its model name nor detects people's faces.
-Raw/proxy/stabilized pixels are sampled before saved colour grades, so using a
+Original/stabilized pixels are sampled before saved colour grades, so using a
 preset again does not analyse and boost its own previous result.
 """
 from __future__ import annotations
@@ -286,7 +286,7 @@ def sample_analyze(project,start,end,ffmpeg,ffprobe='',*,cancel_event=None,progr
         if cancel_event is not None and cancel_event.is_set(): raise ExportCancelled('已取消自动调色分析')
         position=frame/fps;camera=project.camera_at(position)
         if camera is None: continue
-        media=project.media_at(camera,position,use_proxies=True)
+        media=project.media_at(camera,position,use_proxies=False)
         if media is None: continue
         path,source_time,_=media
         identity=(str(path),round(source_time*fps))
