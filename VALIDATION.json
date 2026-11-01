@@ -1,23 +1,37 @@
 {
-  "version": "1.0.15",
-  "build_id": "20261101-102002-e96def86",
+  "version": "1.0.16",
+  "build_id": "20261101-104004-12112ba9",
   "focused_regression": {
-    "run": 89,
-    "passed": 89,
+    "run": 109,
+    "passed": 109,
     "modules": [
+      "camera_numbers_ui",
       "camera_order_ui",
+      "camera_grid_layout",
+      "camera_rename",
       "camera_list_ui",
       "video_stack_ui",
-      "timeline_tracks",
+      "timeline_audio_ui",
       "timeline_insert_tracks",
-      "video_stack_model",
-      "timeline_wheel",
+      "timeline_tracks",
       "timeline_drag_merge",
       "effect_catalog_layout"
     ]
   },
+  "prior_feature_build_broader_regression": {
+    "run": 185,
+    "passed": 175,
+    "failures": 9,
+    "errors": 1,
+    "same_10_reproduced_on_prior_baseline": true,
+    "affected_areas": [
+      "program_edit_ui",
+      "creative_ui",
+      "batch_camera_ui"
+    ]
+  },
   "frozen_headless_export": "passed",
-  "version_metadata": "1.0.15",
+  "version_metadata": "1.0.16",
   "archive_crc_checks": "passed",
   "source_allowlist_and_known_private_path_and_key_pattern_scan": "passed",
   "trusted_code_signature": false,
@@ -27,9 +41,5 @@
     "production in-place upgrade",
     "online resource download during installation",
     "all physical display and hardware combinations"
-  ],
-  "historical_tests_not_rerun": [
-    "two preview seek fixture errors",
-    "one offscreen pointer hit failure"
   ]
 }

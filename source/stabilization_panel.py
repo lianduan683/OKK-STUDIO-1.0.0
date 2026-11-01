@@ -6,6 +6,8 @@ No data is described as recognised until a real backend probe reports it.
 """
 from __future__ import annotations
 
+from camera_display import camera_number, source_camera_order
+
 import copy
 from dataclasses import replace
 import math
@@ -274,7 +276,7 @@ class StabilizationDialog(tk.Toplevel):
         cameras = {span.camera for span in spans}
         camera = next(iter(cameras)) if len(cameras) == 1 else None
         self.target_var.set(f'仅所选片段 · {format_time(first)} — {format_time(last)}'
-                            + (f' · 机位 {camera}' if camera is not None else ' · 多机位范围'))
+                            + (f' · 机位 {camera_number(self.ws.project, camera)}' if camera is not None else ' · 多机位范围'))
         if camera is None:
             self._target_error = '此范围包含多个机位，请选择单个 Cut 片段后设置防抖。'
             self.source_var.set(self._target_error)

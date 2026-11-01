@@ -1,6 +1,8 @@
 """Dedicated Color and Deliver pages sharing the editor's project and HWNDs."""
 from __future__ import annotations
 
+from camera_display import camera_number
+
 import copy
 from dataclasses import dataclass
 import os
@@ -299,12 +301,12 @@ class FinishingWorkspace(tk.Frame):
 
     def refresh_clips(self):
         spans = program_spans(self.ws.project)
-        signature = tuple((span.start, span.end, span.camera) for span in spans)
+        signature = tuple((span.start, span.end, span.camera, camera_number(self.ws.project, span.camera)) for span in spans)
         if signature != self._clip_signature:
             self._clip_signature = signature
             self.clips.delete(*self.clips.get_children())
             for index, span in enumerate(spans):
-                self.clips.insert('', 'end', iid=str(index), values=(f'机位 {span.camera}', format_time(span.start)))
+                self.clips.insert('', 'end', iid=str(index), values=(f'机位 {camera_number(self.ws.project, span.camera)}', format_time(span.start)))
         self.refresh_summary()
 
     def _select_clip(self, _event=None):

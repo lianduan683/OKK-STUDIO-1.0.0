@@ -1,6 +1,8 @@
 """Selected-cut image-motion stabilization settings; no gyro data required."""
 from __future__ import annotations
 
+from camera_display import camera_number, source_camera_order
+
 import copy
 from dataclasses import replace
 import math
@@ -242,7 +244,7 @@ class ImageStabilizationDialog(tk.Toplevel):
             self.remove_button.configure(state='disabled')
             return
         camera = next(iter(cameras))
-        self.target_var.set(f'仅所选片段 · {format_time(first)} — {format_time(last)} · 机位 {camera}')
+        self.target_var.set(f'仅所选片段 · {format_time(first)} — {format_time(last)} · 机位 {camera_number(self.ws.project, camera)}')
         clips = self._target_token[2]
         self.source_var.set(Path(clips[0][2]).name if len(clips) == 1 else f'覆盖 {len(clips)} 个同机位原片文件')
 

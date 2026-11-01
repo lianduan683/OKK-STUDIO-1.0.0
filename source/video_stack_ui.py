@@ -1,6 +1,8 @@
 """Undoable timeline layer order while retaining the existing multicam edit."""
 from __future__ import annotations
 
+from camera_display import camera_number
+
 import tkinter as tk
 from video_stack import prune_stack
 
@@ -57,7 +59,7 @@ class VideoStackUIMixin:
         left = self.timeline.canvasx(0)
         hidden = camera in self.project.video_stack_hidden
         alpha = any(clip.camera == camera and clip.has_alpha for clip in self.project.clips)
-        text = f'V{camera}' + (' 隐藏' if hidden else ' α' if alpha else '')
+        text = f'V{camera_number(self.project, camera)}' + (' 隐藏' if hidden else ' α' if alpha else '')
         self.timeline.create_rectangle(left, top, left+self._timeline_left-2, top+height,
             fill='#25272a', outline='#3b4045', tags=('stack-header',))
         self.timeline.create_text(left+self._px(8), top+height/2, text=text,
@@ -74,7 +76,7 @@ class VideoStackUIMixin:
         order.insert(target, order.pop(index))
         self._remember(); self.project.video_stack_order = order
         self._refresh()
-        self.status.set(f'V{camera} 图层顺序已调整；上方轨道在画面上层。')
+        self.status.set(f'V{camera_number(self.project, camera)} 图层顺序已调整；上方轨道在画面上层。')
         return True
 
     def toggle_video_layer(self, camera):
@@ -84,7 +86,7 @@ class VideoStackUIMixin:
         if camera in hidden: hidden.remove(camera)
         else: hidden.append(camera)
         self._refresh()
-        self.status.set(f'V{camera} 已' + ('隐藏' if camera in hidden else '显示') + '；原片和切点保留，可撤销。')
+        self.status.set(f'V{camera_number(self.project, camera)} 已' + ('隐藏' if camera in hidden else '显示') + '；原片和切点保留，可撤销。')
         return True
 
     def _video_stack_context(self, event):
@@ -116,7 +118,7 @@ class VideoStackUIMixin:
             'order': self._timeline_camera_order(),
             'y': self.timeline.canvasy(event.y), 'target': camera, 'moved': False}
         self.timeline.configure(cursor='fleur')
-        self.status.set(f'拖动 V{camera} 标签调整图层；上方在画面上层，Esc 取消。')
+        self.status.set(f'拖动 V{camera_number(self.project, camera)} 标签调整图层；上方在画面上层，Esc 取消。')
         return True
 
     def _move_video_stack_drag(self, event):
@@ -157,5 +159,5 @@ class VideoStackUIMixin:
         camera = self._stack_track_at(event)
         if camera is None: return False
         self.timeline.configure(cursor='fleur')
-        self.status.set(f'V{camera} · 拖动标签调序，右键显示/隐藏；上方轨道在画面上层。')
+        self.status.set(f'V{camera_number(self.project, camera)} · 拖动标签调序，右键显示/隐藏；上方轨道在画面上层。')
         return True

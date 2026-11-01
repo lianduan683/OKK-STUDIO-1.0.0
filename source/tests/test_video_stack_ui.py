@@ -141,15 +141,17 @@ class VideoStackUITests(unittest.TestCase):
         ws.camera_buttons[3].invoke()
         self.assertEqual(ws.grade_target, 3)
         self.assertEqual(ws._displayed_camera, 3)
+        # Saved layer order is [2, 1, 3], so key 2 selects V1 in the second cell.
+        self.assertEqual(ws._visible_camera_ids, (2, 1, 3))
         ws._key(SimpleNamespace(widget=ws.timeline, state=0, keysym='2', char='2'))
-        self.assertEqual(ws.grade_target, 2)
+        self.assertEqual(ws.grade_target, 1)
         self.assertEqual(ws.project, original)
         self.assertEqual(ws.undo_stack, [])
         self.assertFalse(any(action == 'audition' and values.get('camera') is not None
                              for action, values in ws.player.commands))
         ws.player_queue.put(('state', dict(time=3., playing=False, camera=1, request_id=0)))
         ws._poll()
-        self.assertEqual(ws._displayed_camera, 2)
+        self.assertEqual(ws._displayed_camera, 1)
         self.assertIn('图层合成', ws.program_var.get())
         self.assertEqual(self.errors, [])
 

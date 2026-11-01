@@ -1,6 +1,8 @@
 """Compact, undoable grade, transition and SRT controls for the inspector."""
 from __future__ import annotations
 
+from camera_display import camera_number, source_camera_order
+
 import copy
 from dataclasses import replace
 import math
@@ -186,7 +188,7 @@ class CreativePanel(tk.Frame):
 
     def _scope(self):
         text = self.grade_scope_var.get()
-        target = grade_target_from_label(text)
+        target = grade_target_from_label(text, self.ws)
         if target is None:
             return None
         if target == 'selection':
@@ -617,7 +619,7 @@ class CreativePanel(tk.Frame):
     def refresh(self):
         self.loading = True
         try:
-            scopes = ['全片'] + [f'整机位 {camera}' for camera in self.ws.project.cameras]
+            scopes = ['全片'] + [grade_target_label(self.ws, camera) for camera in source_camera_order(self.ws.project)]
             selected = getattr(self.ws, 'selected_program_range', None)
             selected = selected() if callable(selected) else selected
             if selected is not None and callable(getattr(self.ws, 'get_selected_grade', None)):
@@ -629,7 +631,7 @@ class CreativePanel(tk.Frame):
             else:
                 # Read old labels that callers and pre-realtime stubs may set.
                 try:
-                    self.grade_scope_var.set(grade_target_label(self.ws, grade_target_from_label(self.grade_scope_var.get())))
+                    self.grade_scope_var.set(grade_target_label(self.ws, grade_target_from_label(self.grade_scope_var.get(), self.ws)))
                 except ValueError:
                     pass
             if self.grade_scope_var.get() not in scopes:
@@ -647,7 +649,7 @@ class CreativePanel(tk.Frame):
                 else:
                     preceding = [cut for cut in self.ws.project.cuts if cut.time <= time]
                     camera = max(preceding, key=lambda cut: cut.time).camera if preceding else 1
-                self._cut_choices[f'{format_time(time)} · 机位 {camera}'] = time
+                self._cut_choices[f'{format_time(time)} · 机位 {camera_number(self.ws.project, camera)}'] = time
             self.cut_combo.configure(values=list(self._cut_choices))
             selected = getattr(self.ws, 'selected_cut', None)
             if self.transition_cut_var.get() not in self._cut_choices or selected != self._last_ws_selected_cut:

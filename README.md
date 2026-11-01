@@ -1,12 +1,12 @@
-# OKK STUDIO 1.0.15
+# OKK STUDIO 1.0.16
 
-Windows 多机位视频剪辑应用。本版支持拖动机位排序，并同步调整列表和时间线顺序。
+Windows 多机位视频剪辑应用。本版同步机位列表、时间线和监看网格的顺序，并按列表顺序更新显示编号。
 
 本版提供曝光检测和 MCP 本机连接桥；外部 MCP 服务使用源码包及单独的 Python 环境，接入说明见 [MCP.md](MCP.md) 和 [EXPOSURE.md](EXPOSURE.md)。
 
 ## 下载
 
-**[下载 OKK-STUDIO-1.0.15-Setup.exe](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.15/OKK-STUDIO-1.0.15-Setup.exe)** · [发行页](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/tag/v1.0.15)
+**[下载 OKK-STUDIO-1.0.16-Setup.exe](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.16/OKK-STUDIO-1.0.16-Setup.exe)** · [发行页](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/tag/v1.0.16)
 
 主程序已内置安装器。安装时下载并校验 v1.0.0 的四份固定资源 ZIP（约 5.75 GB），完整安装约 6.5 GB，建议预留至少 15 GB。已有离线资源可通过 `/PAYLOADDIR` 复用。安装与升级见 [INSTALLATION.md](INSTALLATION.md)。
 
@@ -34,6 +34,7 @@ Windows 多机位视频剪辑应用。本版支持拖动机位排序，并同步
 - 向下滚动轨道时，时间刻度和播放头手柄始终可见并可拖动定位；右键视频、音频轨道可删除当前轨道或清理同类型空白轨道，支持撤销与保存。
 - 素材列表逐视频显示代理状态图标；右键“转代理…”可选择 H.264、DNxHR LB、ProRes Proxy、分辨率、帧率及代理保存目录。
 - 时间线“吸附”可控制光标吸附素材边缘与节目切点；“链接”可控制视频及机位原声成对编辑，A0 主音频保持独立。
+- 机位显示编号按素材库顺序连续排列，排序后同步更新列表、时间线和监看网格；内部素材与工程关联保持不变。
 - 机位编号旁显示代理状态，包括已代理、部分代理、未代理及代理丢失。
 - 现场音频使用多个分散窗口核对，抑制观众声和缓慢增益变化；分段分别恢复真实起点，不强制消除停录间隔。
 - 同步后自动列出未对齐 / 待检查片段，显示机位、文件名、可信度与原因，支持定位；保留未确认片段原位置。
@@ -60,6 +61,6 @@ Windows 10/11 64 位。缓存沿用可写的非 C 盘、非系统盘固定磁盘
 
 ## 源码与构建
 
-[下载 1.0.15 应用源码](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.15/OKK-STUDIO-1.0.15-source.zip)。源码包包含应用模块、回归测试、小型 UI 资源和构建文件；不包含用户工程、媒体、工作缓存或大型第三方二进制。构建步骤见 [BUILDING.md](BUILDING.md)。
+[下载 1.0.16 应用源码](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.16/OKK-STUDIO-1.0.16-source.zip)。源码包包含应用模块、回归测试、小型 UI 资源和构建文件；不包含用户工程、媒体、工作缓存或大型第三方二进制。构建步骤见 [BUILDING.md](BUILDING.md)。
 
 应用许可证见 [LICENSE](LICENSE)，第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

@@ -6,6 +6,8 @@ thread. Each completed drop is one undoable edit.
 """
 from __future__ import annotations
 
+from camera_display import camera_number
+
 import math
 import json
 from bisect import bisect_left
@@ -312,7 +314,7 @@ class TimelineInteractionMixin:
         top = canvas.canvasy(0)
         bottom = canvas.canvasy(canvas.winfo_height())
         canvas.create_line(x, top, x, bottom, fill='#58a6d6', width=self._px(2), tags='media-drop')
-        label = f'放入 V{camera}' if camera is not None else '放入节目时间线'
+        label = f'放入 V{camera_number(self.project, camera)}' if camera is not None else '放入节目时间线'
         canvas.create_text(x+self._px(6), top+self._px(8), text=label+' · '+format_signed_time(position),
                            fill='#b9ddf2', anchor='nw', tags='media-drop')
         return True
@@ -423,7 +425,7 @@ class TimelineInteractionMixin:
         self._refresh()
         self._reveal_timeline_clip(clips[0])
         self.seek(start)
-        self.status.set(f'已将 {len(clips)} 个素材放入 V{camera}，可拖动微调；Ctrl+Z 撤销。')
+        self.status.set(f'已将 {len(clips)} 个素材放入 V{camera_number(self.project, camera)}，可拖动微调；Ctrl+Z 撤销。')
 
     def _media_drag_press(self, event):
         self._media_drag_cancel()
@@ -494,7 +496,7 @@ class TimelineInteractionMixin:
         self._refresh()
         self._reveal_timeline_clip(clip)
         self.seek(start)
-        self.status.set(f'已将素材放到 {format_signed_time(start)} · V{clip.camera}；Ctrl+Z 撤销。')
+        self.status.set(f'已将素材放到 {format_signed_time(start)} · V{camera_number(self.project, clip.camera)}；Ctrl+Z 撤销。')
         return 'break'
 
     def _reveal_timeline_clip(self, clip):

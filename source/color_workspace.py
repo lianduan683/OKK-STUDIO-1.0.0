@@ -6,6 +6,8 @@ invalidation.  No global shortcuts are bound here: the editor owns those.
 """
 from __future__ import annotations
 
+from camera_display import camera_number, camera_id_for_number, source_camera_order
+
 import colorsys
 import copy
 import math
@@ -36,18 +38,19 @@ def grade_target_label(workspace, target):
             return '所选片段'
         cameras = {span.camera for span in program_spans(workspace.project)
                    if span.start < selected[1] - 1e-8 and span.end > selected[0] + 1e-8}
-        suffix = f'机位 {next(iter(cameras))}' if len(cameras) == 1 else '多机位'
+        suffix = f'机位 {camera_number(workspace.project, next(iter(cameras)))}' if len(cameras) == 1 else '多机位'
         return f'所选片段 · {suffix}'
-    return '全片' if target is None else f'整机位 {target}'
+    return '全片' if target is None else f'整机位 {camera_number(workspace.project, target)}'
 
 
-def grade_target_from_label(text):
+def grade_target_from_label(text, workspace=None):
     if text.startswith('所选片段'):
         return 'selection'
     if text == '全片':
         return None
     if text.startswith(('整机位 ', '机位 ')):
-        return int(text.split()[-1])
+        return (camera_id_for_number(workspace.project, text.split()[-1])
+                if workspace is not None else int(text.split()[-1]))
     raise ValueError('请选择有效的调色目标。')
 
 
@@ -532,7 +535,7 @@ class ColorWorkspace(tk.Frame):
     def _scope_changed(self, event=None):
         if self._refreshing or not self.available():
             return
-        target = grade_target_from_label(self.scope_var.get())
+        target = grade_target_from_label(self.scope_var.get(), self.ws)
         self.cancel_drafts()
         setter = getattr(self.ws, 'set_grade_target', None)
         if callable(setter):
@@ -619,7 +622,7 @@ class ColorWorkspace(tk.Frame):
             self._active_target_token = token
             target = token[0]
             self.scope_combo.configure(values=[grade_target_label(self.ws, 'selection')]
-                + [f'整机位 {camera}' for camera in self.ws.project.cameras] + ['全片'])
+                + [grade_target_label(self.ws, camera) for camera in source_camera_order(self.ws.project)] + ['全片'])
             self.scope_var.set(grade_target_label(self.ws, target))
             selection = self.ws.selected_program_range
             if selection is not None:
@@ -665,7 +668,7 @@ class ColorWorkspace(tk.Frame):
                                          outline=INPUT, width=max(1, self.px(1)))
             if x2 - x1 > self.px(42):
                 self.strip.create_text(x1 + self.px(7), (y1 + y2) / 2, anchor='w',
-                                        text=f'{index + 1} · 机位 {span.camera}', fill=INK,
+                                        text=f'{index + 1} · 机位 {camera_number(self.ws.project, span.camera)}', fill=INK,
                                         font=('Microsoft YaHei UI', 8))
             self._span_records.append(span)
         selection = self._draft_range or self.ws.selected_program_range

@@ -1,6 +1,8 @@
 """Context insertion of persistent video tracks and media at a frozen time."""
 from __future__ import annotations
 
+from camera_display import camera_number
+
 import math
 import copy
 import tkinter as tk
@@ -43,7 +45,7 @@ class TimelineInsertMixin:
         self._place_inserted_video_layer(camera, placement)
         self.project.video_stack_enabled = enabled
         self._refresh()
-        self.status.set(f'已插入空视频轨道 V{camera}；可在任意时间放入素材，上方轨道叠在上层。Ctrl+Z 撤销。')
+        self.status.set(f'已插入空视频轨道 V{camera_number(self.project, camera)}；可在任意时间放入素材，上方轨道叠在上层。Ctrl+Z 撤销。')
         return camera
 
     def remove_empty_video_track(self, camera):
@@ -99,17 +101,17 @@ class TimelineInsertMixin:
         tracks = tk.Menu(menu, tearoff=False, bg='#292b2e', fg='#dedfe3')
         tracks.add_command(label='插入最上方（顶层）', command=lambda: self.insert_video_track(('top', None)))
         if camera is not None:
-            tracks.add_command(label=f'插入 V{camera} 上方', command=lambda: self.insert_video_track(('above', camera)))
-            tracks.add_command(label=f'插入 V{camera} 下方', command=lambda: self.insert_video_track(('below', camera)))
+            tracks.add_command(label=f'插入 V{camera_number(self.project, camera)} 上方', command=lambda: self.insert_video_track(('above', camera)))
+            tracks.add_command(label=f'插入 V{camera_number(self.project, camera)} 下方', command=lambda: self.insert_video_track(('below', camera)))
         tracks.add_command(label='插入最下方', command=lambda: self.insert_video_track(('bottom', None)))
         menu.add_cascade(label='插入视频轨道', menu=tracks)
         media = tk.Menu(menu, tearoff=False, bg='#292b2e', fg='#dedfe3')
         media.add_command(label='新建顶层轨道', command=lambda: self._insert_timeline_media(position, placement=('top', None)))
         if camera is not None:
-            media.add_command(label=f'当前轨道 V{camera}', command=lambda: self._insert_timeline_media(position, camera))
-            media.add_command(label=f'新轨道 · V{camera} 上方',
+            media.add_command(label=f'当前轨道 V{camera_number(self.project, camera)}', command=lambda: self._insert_timeline_media(position, camera))
+            media.add_command(label=f'新轨道 · V{camera_number(self.project, camera)} 上方',
                 command=lambda: self._insert_timeline_media(position, placement=('above', camera)))
-            media.add_command(label=f'新轨道 · V{camera} 下方',
+            media.add_command(label=f'新轨道 · V{camera_number(self.project, camera)} 下方',
                 command=lambda: self._insert_timeline_media(position, placement=('below', camera)))
         menu.add_cascade(label=f'在此位置插入素材…（{position:.3f} 秒）', menu=media)
         if camera is not None:

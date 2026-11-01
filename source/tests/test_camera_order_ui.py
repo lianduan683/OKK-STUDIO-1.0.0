@@ -4,11 +4,13 @@ from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from multicam_core import CameraClip, MulticamProject
 from project_file import build_project_payload, read_project_file, write_project_file
 from studio_state import restore_okk
 from tests import test_timeline_drag_merge as fixture
+from tests.test_transport_controls import RecordingPlayer
 
 
 class CameraOrderUITests(unittest.TestCase):
@@ -52,6 +54,71 @@ class CameraOrderUITests(unittest.TestCase):
         self.assertEqual(ws.media_tree.get_children(), tuple(f'camera_{c}' for c in order))
         self.assertEqual(sorted(ws._timeline_track_bounds, key=lambda c: ws._timeline_track_bounds[c][0]), order)
         self.assertEqual(ws._timeline_audio_tracks(order), order)
+        capacity = ws.camera_rows*ws.camera_columns
+        visible = tuple(order[ws.camera_page*capacity:(ws.camera_page+1)*capacity])
+        self.assertEqual(ws._visible_camera_ids, visible)
+        self.assertEqual(tuple(ws.camera_frames), visible)
+        for index, camera in enumerate(visible):
+            cell = ws.camera_frames[camera].grid_info()
+            self.assertEqual((cell['row'], cell['column']), divmod(index, ws.camera_columns))
+        self.assertEqual(self.errors, [])
+
+    def test_grid_drag_preserves_native_video_handles_and_selects_correct_camera(self):
+        self.prepare(collapsed=True)
+        ws = self.workspace
+        before = {camera: surface.winfo_id() for camera, surface in ws.camera_surfaces.items()}
+        ws.player = RecordingPlayer()
+        self.drag('camera_3', 'camera_1')
+        self.assert_order([3, 1, 2])
+        self.assertEqual({camera: surface.winfo_id() for camera, surface in ws.camera_surfaces.items()}, before)
+        self.assertFalse(any(action == 'camera_windows' for action, _ in ws.player.commands))
+        with patch.object(ws, 'switch') as switch:
+            ws._key(SimpleNamespace(widget=ws.timeline, state=0, keysym='1', char='1'))
+            switch.assert_called_once_with(3)
+        with patch.object(ws, '_monitor_camera_click') as clicked:
+            ws.camera_buttons[3].invoke()
+            clicked.assert_called_once_with(3)
+        self.assertIn('全景', ws.camera_buttons[3].cget('text'))
+        ws.undo()
+        self.assert_order([1, 2, 3])
+        ws.redo()
+        self.assert_order([3, 1, 2])
+
+    def test_grid_pages_and_resize_anchor_follow_saved_order(self):
+        self.prepare(collapsed=True)
+        ws = self.workspace
+        for camera in range(4, 13):
+            ws.project.clips.append(CameraClip(str(camera), camera, f'{camera}.mp4', 0., 10.))
+        order = list(range(12, 0, -1))
+        ws.project.video_stack_order = order
+        ws._refresh()
+        self.assert_order(order)
+        ws._displayed_camera = 12
+        ws.set_camera_grid(2, 2, persist=False)
+        self.assertEqual(ws.camera_page, 0)
+        self.assert_order(order)
+        self.assertEqual(ws._visible_camera_ids, (12, 11, 10, 9))
+        ws._change_camera_page(1)
+        self.assertEqual(ws._visible_camera_ids, (8, 7, 6, 5))
+        with patch.object(ws, 'switch') as switch:
+            ws._key(SimpleNamespace(widget=ws.timeline, state=0, keysym='1', char='1'))
+            switch.assert_called_once_with(8)
+        ws._displayed_camera = 7
+        ws.set_camera_grid(1, 3, persist=False)
+        self.assertEqual(ws.camera_page, 1)
+        self.assertEqual(ws._visible_camera_ids, (9, 8, 7))
+        self.assert_order(order)
+
+    def test_monitor_order_omits_empty_rows_and_retains_hidden_camera_monitor(self):
+        self.prepare(collapsed=True)
+        ws = self.workspace
+        ws.project.timeline_empty_tracks = [4]
+        ws.project.video_stack_order = [4, 3, 1, 2]
+        ws.project.video_stack_hidden = [3]
+        ws._refresh()
+        self.assertEqual(ws._timeline_camera_order(), [4, 3, 1, 2])
+        self.assertEqual(ws._visible_camera_ids, (3, 1, 2))
+        self.assertEqual(set(ws.camera_surfaces), {1, 2, 3})
         self.assertEqual(self.errors, [])
 
     def test_collapsed_camera_drag_up_is_one_undo_and_preserves_edit(self):

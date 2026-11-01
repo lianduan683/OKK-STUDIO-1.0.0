@@ -1,6 +1,8 @@
 """Camera-linked audio rows, mute controls, and asynchronous real waveforms."""
 from __future__ import annotations
 
+from camera_display import camera_number
+
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -102,7 +104,7 @@ class TimelineAudioUIMixin(TimelineLayoutMixin):
         else: self._configure_player()
         self.draw_timeline()
         state = '出声' if audio_track_enabled(self.project, track) else '静音'
-        self.status.set(f'A{track} 已设为{state}；Ctrl+Z 撤销。')
+        self.status.set(f'A{camera_number(self.project, track)} 已设为{state}；Ctrl+Z 撤销。')
 
     def _toggle_timeline_audio_track(self, track):
         self._set_timeline_audio_track(track, not audio_track_enabled(self.project, track))
@@ -242,7 +244,7 @@ class TimelineAudioUIMixin(TimelineLayoutMixin):
             self._audio_fold_buttons[track] = bounds
             self._draw_audio_fold_icon(view_left+self._px(10), y+audio_h/2, compact, 'audio-fold-button')
         canvas.create_text(view_left+self._px(5 if track == 0 else 22), y+audio_h/2,
-                           text=f'A{track}', fill='#8ab7a4', anchor='w', font=label_font)
+                           text=f'A{camera_number(self.project, track)}', fill='#8ab7a4', anchor='w', font=label_font)
         left, right = view_left+self._px(28 if track == 0 else 52), view_left+self._timeline_left-self._px(3)
         if right > left:
             bounds = left, y+self._px(5), right, y+audio_h-self._px(5)

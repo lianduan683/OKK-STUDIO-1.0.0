@@ -6,13 +6,12 @@ import tkinter as tk
 from tkinter import ttk
 
 from editor_core import AlignmentResult
+from camera_display import source_camera_order
 
 
 class CameraListUIMixin:
     def _media_camera_order(self):
-        cameras = set(self.project.cameras)
-        return [camera for camera in self.project.stacked_cameras(include_hidden=True)
-                if camera in cameras]
+        return source_camera_order(self.project)
 
     def _camera_drag_is_current(self, drag):
         return (self.alive and not self.busy and not self.app.working

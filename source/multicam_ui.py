@@ -1,6 +1,8 @@
 """Native multi-camera editing workspace for RTX Video Render Studio."""
 from __future__ import annotations
 
+from camera_display import camera_number, camera_id_for_number
+
 import copy
 from bisect import bisect_right
 import math
@@ -236,7 +238,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         clip = self.project.clip_at(camera,self.current if time is None else time)
         if clip is None: clip = next((clip for clip in self.project.clips if clip.camera==camera),None)
         label = self.project.camera_names.get(camera) or (self._clip_camera_label(clip) if clip else '未知相机')
-        return f'机位 {camera} · {label}'
+        return f'机位 {camera_number(self.project, camera)} · {label}'
 
     def _camera_context(self, event):
         row = self.media_tree.identify_row(event.y)
@@ -263,7 +265,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         if not self._available() or camera not in self.project.cameras: return
         initial = self._label_camera(camera).split(' · ', 1)[-1]
         while True:
-            name = simpledialog.askstring('重命名机位', f'机位 {camera} 的新名称：',
+            name = simpledialog.askstring('重命名机位', f'机位 {camera_number(self.project, camera)} 的新名称：',
                                           initialvalue=initial, parent=self)
             if name is None: return
             candidate = copy.deepcopy(self.project)
@@ -290,23 +292,24 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
 
     def _camera_button_label(self,camera):
         visible=getattr(self,'_visible_camera_ids',())
+        number = camera_number(self.project, camera)
         if camera in visible and (self.camera_columns > 3 or self.camera_rows > 3):
             index = visible.index(camera)+1
-            number = f'{index}:{camera}' if index <= 9 and index != camera else str(camera)
+            number = f'{index}:{number}' if index <= 9 and index != number else str(number)
             name = self.project.camera_names.get(camera)
             return number + ' · ' + name if name else number
         if camera in visible and len(visible)>4:
             model=self._label_camera(camera).split(' · ',1)[-1]
             if model=='未知相机':model='未知'
             shortcut=visible.index(camera)+1
-            return (f'{shortcut}:{camera}' if shortcut!=camera else str(camera))+' '+model
-        if camera in visible and visible.index(camera)+1 != camera:
-            return f'{visible.index(camera)+1} · {camera}/'+self._label_camera(camera).split(' · ',1)[-1]
+            return (f'{shortcut}:{number}' if shortcut!=number else str(number))+' '+model
+        if camera in visible and visible.index(camera)+1 != number:
+            return f'{visible.index(camera)+1} · {number}/'+self._label_camera(camera).split(' · ',1)[-1]
         return self._label_camera(camera)
 
     def _set_program_label(self,camera,preview=False):
         if self.project.video_stack_enabled and not preview:
-            self.program_var.set(f'图层合成 · {len(self.project.stacked_cameras())} 层 · 选择 V{self._displayed_camera or camera or "—"}')
+            self.program_var.set(f'图层合成 · {len(self.project.stacked_cameras())} 层 · 选择 V{camera_number(self.project, self._displayed_camera or camera) or "—"}')
             return
         self._displayed_camera = camera
         if preview:
@@ -341,7 +344,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
 
     def _refresh_sync_reference_choices(self):
         self._sync_reference_choices={'主音频':None}
-        self._sync_reference_choices.update({self._label_camera(camera):camera for camera in self.project.cameras})
+        self._sync_reference_choices.update({self._label_camera(camera):camera for camera in self._media_camera_order()})
         reference=self.project.alignment_reference_camera
         if reference not in self.project.cameras: self.project.alignment_reference_camera=reference=None
         label=next((label for label,value in self._sync_reference_choices.items() if value==reference),'主音频')
@@ -1021,7 +1024,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
             self.selected_program_range = (span.start, span.end)
         self._cancel_grade_drafts()
         self.grade_target, self._grade_target_chosen = target, True
-        label = '所选片段' if target == 'selection' else '全片' if target is None else f'机位 {target}'
+        label = '所选片段' if target == 'selection' else '全片' if target is None else f'机位 {camera_number(self.project, target)}'
         self.creative_panel.grade_scope_var.set(label)
         self.creative_panel._load_grade()
         self.color_workspace.refresh()
@@ -1106,7 +1109,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         self._grade_preview_pending = None
         self._grade_preview_active = False
         self._remember(); self.project = candidate; self._refresh()
-        label = '全片' if self.grade_target is None else f'机位 {self.grade_target}'
+        label = '全片' if self.grade_target is None else f'机位 {camera_number(self.project, self.grade_target)}'
         self.status.set(f'{label} 调色已保存 · 其他机位参数保持独立')
         return True
 
@@ -1235,7 +1238,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         current_camera = self.project.camera_at(self.current)
         self._set_program_label(current_camera)
         self._highlight(current_camera)
-        self.status.set(f'所选片段已切换到机位 {camera}。')
+        self.status.set(f'所选片段已切换到机位 {camera_number(self.project, camera)}。')
 
     def add_transition_at_selected_end(self, kind='fade', duration=.5):
         if not self._available() or self.selected_program_range is None: return
@@ -1401,7 +1404,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
             self.grade_target = min(self.project.cameras) if self.project.cameras else None
         if self.grade_target == 'selection' and not self.project.clips:
             self.grade_target = None
-        label = '所选片段' if self.grade_target == 'selection' else '全片' if self.grade_target is None else f'机位 {self.grade_target}'
+        label = '所选片段' if self.grade_target == 'selection' else '全片' if self.grade_target is None else f'机位 {camera_number(self.project, self.grade_target)}'
         self.creative_panel.grade_scope_var.set(label)
         fps = self.project.fps
         frame = lambda value: math.floor(value * fps + .5)
@@ -1454,9 +1457,11 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         if selection: self.media_tree.selection_set(selection)
         self._update_camera_fold_button()
         self.cut_tree.delete(*self.cut_tree.get_children())
-        self.cut_camera_combo.configure(values=tuple(str(camera) for camera in self.project.cameras))
+        self.cut_camera_combo.configure(values=tuple(str(i+1) for i in range(len(self.project.cameras))))
         for i, cut in enumerate(self.project.cuts):
-            self.cut_tree.insert('', 'end', iid=str(i), values=(format_time(cut.time), f'{cut.camera}'))
+            self.cut_tree.insert('', 'end', iid=str(i), values=(format_time(cut.time), str(camera_number(self.project, cut.camera))))
+        if self.selected_cut is not None and self.selected_cut < len(self.project.cuts):
+            self.cut_camera_var.set(str(camera_number(self.project, self.project.cuts[self.selected_cut].camera)))
         self.master_var.set('主音频：' + Path(self.project.master_audio).name if self.project.master_audio else '未选择主音频（可在 A 轨选择机位原声）')
         self._build_camera_frames()
         self.draw_timeline()
@@ -1497,7 +1502,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
     def set_camera_grid(self, rows, columns, *, persist=True):
         rows, columns = self._checked_camera_grid(rows, columns)
         if (rows, columns) == (self.camera_rows, self.camera_columns): return
-        cameras = tuple(self.project.cameras)
+        cameras = tuple(self._media_camera_order())
         visible = self._visible_camera_ids
         current = self._displayed_camera if self._displayed_camera in visible else (visible[0] if visible else None)
         self.camera_rows, self.camera_columns = rows, columns
@@ -1511,7 +1516,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
 
     def _build_camera_frames(self):
         self.camera_proxy_badges = vars(self).get('camera_proxy_badges', {})
-        all_cameras=tuple(self.project.cameras)
+        all_cameras=tuple(self._media_camera_order())
         rows, cols = self.camera_rows, self.camera_columns
         capacity = rows*cols
         pages=max(1,math.ceil(len(all_cameras)/capacity))
@@ -1638,7 +1643,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         if camera is None:
             messagebox.showinfo('多机位', '先在素材列表中选择一个机位。', parent=self)
             return
-        paths = filedialog.askopenfilenames(parent=self, title=f'追加机位 {camera} 的片段', filetypes=VIDEO_TYPES)
+        paths = filedialog.askopenfilenames(parent=self, title=f'追加机位 {camera_number(self.project, camera)} 的片段', filetypes=VIDEO_TYPES)
         if paths: self._import(paths, camera)
 
     def _import(self, paths, camera):
@@ -1849,7 +1854,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         if selection:
             self.selected_cut = int(selection[0])
             cut = self.project.cuts[self.selected_cut]
-            self.cut_time_var.set(format_time(cut.time)); self.cut_camera_var.set(str(cut.camera))
+            self.cut_time_var.set(format_time(cut.time)); self.cut_camera_var.set(str(camera_number(self.project, cut.camera)))
 
     def _jump_cut(self, event=None):
         self._select_cut()
@@ -1860,7 +1865,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         if not self._available(): return
         try:
             time = parse_timecode(self.cut_time_var.get())
-            camera = int(self.cut_camera_var.get())
+            camera = camera_id_for_number(self.project, self.cut_camera_var.get())
             if camera not in self.project.cameras: raise ValueError('这个机位还没有素材。')
             if not 0 <= time < self.project.duration: raise ValueError('切点须位于工程范围内。')
         except ValueError as exc:
@@ -1892,7 +1897,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
             self.set_grade_target(camera)
             self._highlight(camera)
             self._set_program_label(camera)
-            self.status.set(f'已选图层 V{camera}；可调整整机位调色，合成顺序及原节目切点保留。')
+            self.status.set(f'已选图层 V{camera_number(self.project, camera)}；可调整整机位调色，合成顺序及原节目切点保留。')
             return
         if self.selected_program_range is not None:
             self._switch_selected_camera(camera)
@@ -1915,7 +1920,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         self._displayed_camera = camera
         self.program_var.set('成片监看 · '+self._label_camera(camera) + ('' if recording else '（试听）'))
         self._highlight(camera)
-        self.status.set(f'已切换到机位 {camera}' + ('，已在播放头记录切点。' if recording else '（试听，未记录切点）。'))
+        self.status.set(f'已切换到机位 {camera_number(self.project, camera)}' + ('，已在播放头记录切点。' if recording else '（试听，未记录切点）。'))
 
     def start_monitors(self):
         if not self._available() or not (self.project.clips or source_audio_clips(self.project) or self.project.master_audio): return
@@ -2649,7 +2654,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
                 continue
             canvas.create_rectangle(0, y, width, y + row_h, fill='#25272a' if i % 2 == 0 else '#222427',
                                     outline='')
-            canvas.create_text(self._px(8), y + row_h / 2, text=f'V{camera}', fill=MUTED, anchor='w',
+            canvas.create_text(self._px(8), y + row_h / 2, text=f'V{camera_number(self.project, camera)}', fill=MUTED, anchor='w',
                                font=label_font)
             for clip in camera_clips[camera]:
                 x = timeline_x(clip.start)
@@ -2852,8 +2857,8 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         self.select_program_range(*selected, seek=False)
         menu = tk.Menu(self, tearoff=False, bg=PANEL, fg=INK, activebackground='#3c5263')
         cameras = tk.Menu(menu, tearoff=False, bg=PANEL, fg=INK)
-        for camera in self.project.cameras:
-            label = self._label_camera(camera) if camera in self.project.camera_names else f'机位 {camera}'
+        for camera in self._media_camera_order():
+            label = self._label_camera(camera) if camera in self.project.camera_names else f'机位 {camera_number(self.project, camera)}'
             cameras.add_command(label=label, command=lambda value=camera: self.switch(value))
         menu.add_cascade(label='切换机位', menu=cameras)
         self._append_multicam_view_menu(menu)
@@ -3069,7 +3074,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
                     if first and not self.project.project_settings:
                         self.project.fps = infos[0].fps or 30; self.fps_var.set(f'{self.project.fps:.8g}')
                     if not self.project.cuts: self.project.set_cut(0, camera)
-                    self._refresh(); self.status.set(f'机位 {camera} 已导入 {len(infos)} 段；不同机位初始都从 00:00 开始，请同步。')
+                    self._refresh(); self.status.set(f'机位 {camera_number(self.project, camera)} 已导入 {len(infos)} 段；不同机位初始都从 00:00 开始，请同步。')
                 elif kind == 'master':
                     self.busy = False; self._remember()
                     self.project.master_audio, self.project.master_duration = payload

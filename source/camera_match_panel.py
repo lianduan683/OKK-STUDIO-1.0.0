@@ -1,6 +1,8 @@
 """Standard-camera controls and real sampled before/after previews."""
 from __future__ import annotations
 
+from camera_display import camera_number, source_camera_order
+
 import tkinter as tk
 from tkinter import messagebox, ttk
 
@@ -129,7 +131,7 @@ class CameraMatchPanel(tk.Frame):
 
     def refresh_choices(self):
         selected = self.targets.selection()
-        cameras = tuple(self.ws.project.cameras)
+        cameras = tuple(source_camera_order(self.ws.project))
         reference = getattr(self.ws.project, 'color_reference_camera', None)
         self._reference_choices = {getattr(self.ws, '_label_camera', lambda c: f'机位 {c}')(c): c for c in cameras}
         self.reference_combo.configure(values=list(self._reference_choices))
@@ -234,7 +236,7 @@ class CameraMatchPanel(tk.Frame):
             for label in self.preview_labels:
                 label.configure(image='', text='分析后显示')
             return
-        self.details_var.set(f'机位 {result.camera} · {result.samples} 帧 · {result.message}')
+        self.details_var.set(f'机位 {camera_number(self.ws.project, result.camera)} · {result.samples} 帧 · {result.message}')
         self._photos = []
         for label, pixels in zip(self.preview_labels, (result.reference_pixels, result.target_pixels, result.matched_pixels)):
             if pixels:

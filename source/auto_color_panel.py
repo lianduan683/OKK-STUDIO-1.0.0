@@ -1,6 +1,8 @@
 """Simple selected-cut automatic grading controls for the colour workspace."""
 from __future__ import annotations
 
+from camera_display import camera_number, source_camera_order
+
 import tkinter as tk
 from tkinter import ttk
 from auto_color import PRESET_LABELS
@@ -86,7 +88,7 @@ class AutoColorPanel(tk.Frame):
             excluded.add(project.camera_at(selected[0]))
             excluded.update(cut.camera for cut in project.cuts if selected[0]<cut.time<selected[1])
         if target is not None:
-            for camera in project.cameras:
+            for camera in source_camera_order(project):
                 if camera not in excluded:
                     label=getattr(self.ws,'_label_camera',lambda value:f'机位 {value}')(camera)
                     self._reference_choices[label]=camera
