@@ -21,6 +21,7 @@ from color_curve_editor import CurveEditor
 from auto_color_panel import AutoColorPanel
 from camera_match_panel import CameraMatchPanel
 from exposure_panel import ExposurePanel
+from timeline_interaction import timeline_wheel_steps
 
 
 BG, PANEL, INPUT = '#202124', '#292b2e', '#18191b'
@@ -348,6 +349,12 @@ class ColorWorkspace(tk.Frame):
         self._columns = 0
         self._drag = None
         self._draft_range = None
+        self._strip_zoom = 1.0
+        self._strip_start = 0.0
+        self._strip_pan = None
+        self._strip_last_position = workspace.current
+        self._timeline_wheel_mode = None
+        self._timeline_wheel_remainder = 0
         self._refreshing = False
         self._span_records = []
         self._active_target_token = None
@@ -379,6 +386,8 @@ class ColorWorkspace(tk.Frame):
                    style='Compact.TButton').pack(side='right', padx=self.px(3))
         selection_row = tk.Frame(self, bg=BG)
         selection_row.pack(fill='x', padx=self.px(8), pady=self.px(3))
+        ttk.Button(selection_row, text='适合', width=5, command=self._fit_strip,
+                   style='Compact.TButton').pack(side='right', padx=self.px(3))
         tk.Label(selection_row, text='范围', bg=BG, fg=MUTED,
                  font=('Microsoft YaHei UI', 9)).pack(side='left')
         for label, variable in (('入', self.range_start_var), ('出', self.range_end_var)):
@@ -401,6 +410,15 @@ class ColorWorkspace(tk.Frame):
         self.strip.bind('<ButtonPress-1>', self._strip_press)
         self.strip.bind('<B1-Motion>', self._strip_motion)
         self.strip.bind('<ButtonRelease-1>', self._strip_release)
+        for sequence, mode in (('<MouseWheel>', 'pan'), ('<Control-MouseWheel>', 'zoom'),
+                               ('<Alt-MouseWheel>', 'playhead'), ('<Control-Alt-MouseWheel>', 'zoom')):
+            self.strip.bind(sequence, lambda event, mode=mode: self._strip_wheel(event, mode))
+        self.strip.bind('<ButtonPress-2>', self._strip_pan_press)
+        self.strip.bind('<B2-Motion>', self._strip_pan_motion)
+        self.strip.bind('<ButtonRelease-2>', self._strip_pan_release)
+        self.strip.bind('<Unmap>', self._cancel_strip_navigation)
+        self.strip_scroll = ttk.Scrollbar(self, orient='horizontal', command=self._scroll_strip)
+        self.strip_scroll.pack(fill='x', padx=self.px(8), pady=(0, self.px(3)))
         self.grading_tabs = ttk.Notebook(self, style='Multicam.TNotebook')
         self.grading_tabs.pack(fill='both', expand=True)
         self.wheels_tab = tk.Frame(self.grading_tabs, bg=BG)
@@ -434,7 +452,8 @@ class ColorWorkspace(tk.Frame):
             wheel.y_scale.bind('<ButtonRelease-1>', wheel.commit_y)
             wheel.y_scale.bind('<KeyRelease>', wheel.commit_y)
             self.wheels[name] = wheel
-        self.note = tk.Label(self.controls, text='单击片段选择；拖动框选范围（Shift 也可）；上方标尺定位播放头。'
+        self.note = tk.Label(self.controls, text='滚轮平移 · Ctrl+滚轮缩放 · Alt+滚轮逐帧 · 中键拖动平移。'
+                            '单击片段选择；拖动框选范围（Shift 也可）；上方标尺定位播放头。'
                             ' C 剪切 · ←/→ 逐帧 · 1–9 切换所选片段机位。拖动色轮实时预览，松开应用；数字输入回车应用。',
                              bg=BG, fg=MUTED, justify='left', anchor='w',
                              font=('Microsoft YaHei UI', 8))
@@ -602,12 +621,87 @@ class ColorWorkspace(tk.Frame):
         return min(self._duration(), snapped)
 
     def _time_from_x(self, x):
-        width = max(1, self.strip.winfo_width() - self.px(16))
-        return self._snap((x - self.px(8)) / width * self._duration())
+        return self._snap(self._strip_start + (x - self.px(8)) / self._strip_scale())
 
     def _x_from_time(self, time):
-        width = max(1, self.strip.winfo_width() - self.px(16))
-        return self.px(8) + width * float(time) / max(self._duration(), 1e-9)
+        return self.px(8) + (float(time) - self._strip_start) * self._strip_scale()
+
+    def _strip_visible_duration(self):
+        return self._duration() / self._strip_zoom
+
+    def _strip_scale(self):
+        return max(1, self.strip.winfo_width() - self.px(16)) / max(self._strip_visible_duration(), 1e-9)
+
+    def _set_strip_start(self, value):
+        self._strip_start = max(0., min(max(0., self._duration() - self._strip_visible_duration()), value))
+
+    def _strip_navigation_locked(self):
+        locked = getattr(self.ws, '_timeline_navigation_locked', None)
+        return bool(self._drag or self._strip_pan or callable(locked) and locked())
+
+    def _strip_wheel(self, event, mode):
+        if self._strip_navigation_locked() or not self.available() or self._duration() <= 0:
+            return 'break'
+        steps = timeline_wheel_steps(self, event.delta, mode)
+        if not steps:
+            return 'break'
+        if mode == 'zoom':
+            zoom = min(10000., max(1., self._strip_zoom * 2. ** max(-14, min(14, steps))))
+            if zoom == self._strip_zoom:
+                return 'break'
+            anchor = self._x_from_time(self.ws.current)
+            left, right = self.px(8), self.strip.winfo_width() - self.px(8)
+            if not left <= anchor <= right:
+                anchor = (left + right) / 2
+            self._strip_zoom = zoom
+            self._set_strip_start(self.ws.current - (anchor - left) / self._strip_scale())
+        elif mode == 'pan':
+            self._set_strip_start(self._strip_start - steps * .3 * self._strip_visible_duration())
+        else:
+            stop = getattr(self.ws, '_stop_transport_hold', None)
+            if callable(stop):stop()
+            fps = self.ws.project.fps
+            last = max(0, math.ceil(self._duration() * fps - 1e-8) - 1)
+            frame = max(0, min(last, math.floor(self.ws.current * fps + .5) - steps))
+            self.ws.seek(frame / fps)
+            self.update_playhead(follow=True)
+        self._draw_strip()
+        return 'break'
+
+    def _scroll_strip(self, action, value, unit=None):
+        if self._strip_navigation_locked():return
+        if action == 'moveto':
+            self._set_strip_start(float(value) * self._duration())
+        else:
+            self._set_strip_start(self._strip_start + int(value) *
+                (.9 if unit == 'pages' else .1) * self._strip_visible_duration())
+        self._draw_strip()
+
+    def _fit_strip(self):
+        if self._strip_navigation_locked():return
+        self._strip_zoom, self._strip_start = 1., 0.
+        self._draw_strip()
+
+    def _strip_pan_press(self, event):
+        if not self._strip_navigation_locked() and self.available():
+            self._strip_pan = (event.x, self._strip_start)
+        return 'break'
+
+    def _strip_pan_motion(self, event):
+        if self._strip_pan:
+            x, start = self._strip_pan
+            self._set_strip_start(start + (x - event.x) / self._strip_scale())
+            self._draw_strip()
+        return 'break'
+
+    def _strip_pan_release(self, _event=None):
+        self._strip_pan = None
+        return 'break'
+
+    def _cancel_strip_navigation(self, _event=None):
+        self._drag = self._draft_range = self._strip_pan = None
+        self._timeline_wheel_mode = None
+        self._timeline_wheel_remainder = 0
 
     def refresh(self):
         if self._refreshing:
@@ -651,19 +745,29 @@ class ColorWorkspace(tk.Frame):
         if width <= 1:
             return
         duration = self._duration()
+        self._set_strip_start(self._strip_start)
+        visible = self._strip_visible_duration()
+        self.strip_scroll.set(self._strip_start / max(duration, 1e-9),
+                              min(1., (self._strip_start + visible) / max(duration, 1e-9)))
         y1, y2 = self.px(24), max(self.px(30), height - self.px(6))
         if duration <= 0:
             self.strip.create_text(self.px(12), height / 2, anchor='w', fill=MUTED,
                                     text='导入视频后选择片段调色', font=('Microsoft YaHei UI', 9))
             return
-        for index in range(6):
-            time = duration * index / 5.0
+        tick = max(1. / max(.001, self.ws.project.fps), visible / 5.)
+        first = math.ceil(self._strip_start / tick - 1e-8)
+        for index in range(first, first + 6):
+            time = tick * index
+            if time > self._strip_start + visible + 1e-8:break
             x = self._x_from_time(time)
             self.strip.create_line(x, self.px(15), x, self.px(21), fill='#60646a')
             self.strip.create_text(x, self.px(7), anchor='n', fill=MUTED,
                                     text=format_time(time), font=('Cascadia Mono', 8))
         for index, span in enumerate(program_spans(self.ws.project)):
+            if span.end < self._strip_start or span.start > self._strip_start + visible:
+                continue
             x1, x2 = self._x_from_time(span.start), self._x_from_time(span.end)
+            x1, x2 = max(self.px(8), x1), min(width - self.px(8), x2)
             self.strip.create_rectangle(x1, y1, x2, y2, fill=CAMERA_COLORS[(span.camera - 1) % len(CAMERA_COLORS)],
                                          outline=INPUT, width=max(1, self.px(1)))
             if x2 - x1 > self.px(42):
@@ -682,11 +786,20 @@ class ColorWorkspace(tk.Frame):
                                              fill='#e5bc6a', outline='', tags='range')
         self.update_playhead()
 
-    def update_playhead(self):
+    def update_playhead(self, *, follow=False):
         self.strip.delete('playhead')
         if self._duration() <= 0:
             return
+        changed = self._strip_last_position != self.ws.current
+        self._strip_last_position = self.ws.current
         x = self._x_from_time(self.ws.current)
+        left, right = self.px(8), self.strip.winfo_width() - self.px(8)
+        if (changed or follow) and not self._drag and not self._strip_pan and not left <= x <= right:
+            fraction = .25 if x > right else .75
+            self._set_strip_start(self.ws.current - self._strip_visible_duration() * fraction)
+            self._draw_strip()
+            return
+        if not left <= x <= right:return
         self.strip.create_line(x, self.px(16), x, self.strip.winfo_height(), fill='#ef675d',
                                 width=max(1, self.px(2)), tags='playhead')
         self.strip.create_polygon(x - self.px(4), self.px(14), x + self.px(4), self.px(14),

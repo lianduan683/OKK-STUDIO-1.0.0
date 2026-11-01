@@ -1,32 +1,31 @@
 {
-  "version": "1.0.19",
-  "build_id": "20261101-124550-8e0a15e7",
+  "version": "1.0.20",
+  "build_id": "20261101-125611-66f29021",
   "focused_regression": {
-    "run": 65,
-    "passed": 62,
-    "failures": 3,
-    "gpu_decode_fallback_failures_also_reproduced_on_v1_0_18": true,
+    "run": 59,
+    "passed": 59,
     "skipped": 0,
     "modules": [
+      "color_timeline_wheel",
+      "timeline_wheel",
+      "timeline_viewport",
       "color_single_monitor",
       "color_original_media",
-      "auto_color",
-      "video_stack_preview",
-      "multicam_player",
-      "proxy_update",
-      "workspace_page_state",
-      "gpu_live_player"
+      "realtime_grade_ui",
+      "workspace_page_state"
     ]
   },
-  "prior_ui_regression": {
-    "run": 108,
-    "passed": 106,
-    "failures": 2,
-    "same_failures_reproduced_on_baseline": true,
-    "affected_areas": [
-      "finishing_workspace pointer hit test",
-      "workspace_docking pointer hit test"
-    ]
+  "prior_feature_build_ui_regression": {
+    "run": 73,
+    "passed": 72,
+    "failures": 1,
+    "same_failure_reproduced_on_baseline": true,
+    "affected_area": "finishing_workspace pointer hit test"
+  },
+  "v1_0_19_gpu_regression": {
+    "failures": 3,
+    "same_failures_reproduced_on_v1_0_18": true,
+    "affected_area": "GPU decoder failure fallback"
   },
   "earlier_broader_regression": {
     "run": 185,
@@ -43,7 +42,7 @@
     "third_party_vst3": "not tested"
   },
   "frozen_headless_export": "passed",
-  "version_metadata": "1.0.19",
+  "version_metadata": "1.0.20",
   "archive_crc_checks": "passed",
   "source_allowlist_and_known_private_path_and_key_pattern_scan": "passed",
   "trusted_code_signature": false,

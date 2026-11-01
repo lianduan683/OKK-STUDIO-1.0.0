@@ -26,6 +26,17 @@ from timeline_boundary import (boundary_limits, move_program_boundary,
                                boundary_has_library_overlay, OVERLAY_BOUNDARY_MESSAGE)
 
 
+def timeline_wheel_steps(owner, delta, mode):
+    """Accumulate precision-wheel notches independently for each view/mode."""
+    if owner._timeline_wheel_mode != mode:
+        owner._timeline_wheel_mode = mode
+        owner._timeline_wheel_remainder = 0
+    delta += owner._timeline_wheel_remainder
+    steps = math.trunc(delta / 120)
+    owner._timeline_wheel_remainder = delta - steps * 120
+    return steps
+
+
 def probe_timeline_master(ffprobe, path):
     result = subprocess.run([ffprobe, '-v', 'error', '-select_streams', 'a:0',
         '-show_entries', 'stream=index', '-of', 'json', path],
@@ -96,13 +107,7 @@ class TimelineInteractionMixin:
         # Windows wheel deltas are multiples of 120; precision devices can
         # split a notch across several events. Do not discard those events
         # or promote each small delta into a full frame/zoom step.
-        if self._timeline_wheel_mode != mode:
-            self._timeline_wheel_mode = mode
-            self._timeline_wheel_remainder = 0
-        delta = self._timeline_wheel_remainder + event.delta
-        steps = math.trunc(delta / 120)
-        self._timeline_wheel_remainder = delta - steps * 120
-        return steps
+        return timeline_wheel_steps(self, event.delta, mode)
 
     def _timeline_playhead_wheel(self, event):
         if self._timeline_navigation_locked() or not self._available() or self.project.duration <= 0:
