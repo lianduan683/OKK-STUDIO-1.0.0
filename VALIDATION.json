@@ -1,23 +1,38 @@
 {
-  "version": "1.0.17",
-  "build_id": "20261101-110104-d9f9bdcb",
+  "version": "1.0.18",
+  "build_id": "20261101-115152-f49d77ab",
   "focused_regression": {
-    "run": 71,
-    "passed": 70,
+    "run": 96,
+    "passed": 95,
     "skipped": 1,
-    "skip_reason": "FabFilter VST3 not installed",
     "modules": [
-      "audio_mixer",
-      "audio_console",
-      "audio_current_version",
-      "audio_workspace",
-      "program_camera_labels",
-      "camera_numbers_ui",
-      "camera_order_ui",
-      "timeline_audio_model",
-      "timeline_audio_session",
-      "project_upgrade"
+      "workspace_page_state",
+      "multicam_outer",
+      "video_stack_model",
+      "video_stack_render",
+      "video_stack_preview",
+      "timeline_insert_tracks",
+      "timeline_view_state",
+      "project_upgrade",
+      "audio_current_version"
     ]
+  },
+  "prior_feature_build_ui_regression": {
+    "run": 108,
+    "passed": 106,
+    "failures": 2,
+    "same_failures_reproduced_on_baseline": true,
+    "affected_areas": [
+      "finishing_workspace pointer hit test",
+      "workspace_docking pointer hit test"
+    ]
+  },
+  "earlier_broader_regression": {
+    "run": 185,
+    "passed": 175,
+    "failures": 9,
+    "errors": 1,
+    "same_10_reproduced_on_prior_baseline": true
   },
   "frozen_audio_worker": {
     "passed": true,
@@ -26,20 +41,8 @@
     "eq_compressor_gate_reverb_limiter": "passed",
     "third_party_vst3": "not tested"
   },
-  "prior_broader_regression": {
-    "run": 185,
-    "passed": 175,
-    "failures": 9,
-    "errors": 1,
-    "same_10_reproduced_on_prior_baseline": true,
-    "affected_areas": [
-      "program_edit_ui",
-      "creative_ui",
-      "batch_camera_ui"
-    ]
-  },
   "frozen_headless_export": "passed",
-  "version_metadata": "1.0.17",
+  "version_metadata": "1.0.18",
   "archive_crc_checks": "passed",
   "source_allowlist_and_known_private_path_and_key_pattern_scan": "passed",
   "trusted_code_signature": false,

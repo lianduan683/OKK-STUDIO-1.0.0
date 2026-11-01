@@ -41,6 +41,11 @@ class VideoStackPlayerMixin:
 
     def _configure_stack_mode(self):
         enabled = bool(getattr(self._project, 'video_stack_enabled', False))
+        if getattr(self._project, 'multicam_outer_order', ()):
+            from multicam_outer import outer_cameras
+            if not self._project.multicam_inner_stack and not any(
+                    clip.camera in outer_cameras(self._project) for clip in self._project.clips):
+                enabled = False
         if self._stack_preview is not None: self._stack_preview.cancel()
         self._stack_revision += 1
         self._stack_job_key = None

@@ -238,7 +238,7 @@ class TimelineSelectionMixin:
     def _selection_press(self, event):
         if self._timeline_ruler_contains(event): return False
         y = self.timeline.canvasy(event.y)
-        if y < self._timeline_program_bounds[0]: return False
+        if y < self._timeline_ruler_h: return False
         if self._stack_track_at(event) is not None: return False
         self.timeline.focus_set()
         key = self._timeline_hit_key(event)

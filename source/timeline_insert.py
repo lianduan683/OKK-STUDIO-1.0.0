@@ -22,6 +22,10 @@ class TimelineInsertMixin:
 
     def _place_inserted_video_layer(self, camera, placement):
         """Inside the caller's undo transaction; front of order is topmost."""
+        from multicam_outer import outer_cameras, place_outer
+        if self.project.timeline_multicam_collapsed or placement[1] in outer_cameras(self.project) or placement[1] == 0:
+            place_outer(self.project, camera, placement)
+            return
         side, reference = placement
         order = [value for value in self.project.stacked_cameras(include_hidden=True) if value != camera]
         if reference in order and side in {'above', 'below'}:
@@ -43,7 +47,7 @@ class TimelineInsertMixin:
         # An empty track must not change the existing multicam programme.
         enabled = self.project.video_stack_enabled
         self._place_inserted_video_layer(camera, placement)
-        self.project.video_stack_enabled = enabled
+        if not self.project.multicam_outer_order: self.project.video_stack_enabled = enabled
         self._refresh()
         self.status.set(f'已插入空视频轨道 V{camera_number(self.project, camera)}；可在任意时间放入素材，上方轨道叠在上层。Ctrl+Z 撤销。')
         return camera
@@ -57,6 +61,7 @@ class TimelineInsertMixin:
         available = (self._timeline_camera_order() if kind == 'V' else
                      self._timeline_audio_tracks(self._timeline_camera_order()))
         tracks = sorted(set(tracks).intersection(available))
+        if kind == 'V': tracks = [track for track in tracks if track != 0]
         if not tracks: return False
         candidate = copy.deepcopy(self.project)
         self._capture_timeline_range(candidate)
@@ -77,9 +82,11 @@ class TimelineInsertMixin:
     def _empty_timeline_tracks(self, kind):
         tracks = (self._timeline_camera_order() if kind == 'V' else
                   self._timeline_audio_tracks(self._timeline_camera_order()))
-        return [track for track in tracks if track_empty(self.project, kind, track)]
+        return [track for track in tracks if not (kind == 'V' and track == 0)
+                and track_empty(self.project, kind, track)]
 
     def _append_track_delete_menu(self, menu, kind, track):
+        if kind == 'V' and track == 0: return
         menu.add_separator()
         state = 'normal' if not (self.busy or self.app.working) else 'disabled'
         menu.add_command(label='删除轨道', state=state,
@@ -101,17 +108,19 @@ class TimelineInsertMixin:
         tracks = tk.Menu(menu, tearoff=False, bg='#292b2e', fg='#dedfe3')
         tracks.add_command(label='插入最上方（顶层）', command=lambda: self.insert_video_track(('top', None)))
         if camera is not None:
-            tracks.add_command(label=f'插入 V{camera_number(self.project, camera)} 上方', command=lambda: self.insert_video_track(('above', camera)))
-            tracks.add_command(label=f'插入 V{camera_number(self.project, camera)} 下方', command=lambda: self.insert_video_track(('below', camera)))
+            label = '多机位轨道' if camera == 0 else f'V{camera_number(self.project, camera)}'
+            tracks.add_command(label=f'插入 {label} 上方', command=lambda: self.insert_video_track(('above', camera)))
+            tracks.add_command(label=f'插入 {label} 下方', command=lambda: self.insert_video_track(('below', camera)))
         tracks.add_command(label='插入最下方', command=lambda: self.insert_video_track(('bottom', None)))
         menu.add_cascade(label='插入视频轨道', menu=tracks)
         media = tk.Menu(menu, tearoff=False, bg='#292b2e', fg='#dedfe3')
         media.add_command(label='新建顶层轨道', command=lambda: self._insert_timeline_media(position, placement=('top', None)))
         if camera is not None:
-            media.add_command(label=f'当前轨道 V{camera_number(self.project, camera)}', command=lambda: self._insert_timeline_media(position, camera))
-            media.add_command(label=f'新轨道 · V{camera_number(self.project, camera)} 上方',
+            if camera != 0:
+                media.add_command(label=f'当前轨道 V{camera_number(self.project, camera)}', command=lambda: self._insert_timeline_media(position, camera))
+            media.add_command(label=f'新轨道 · {label} 上方',
                 command=lambda: self._insert_timeline_media(position, placement=('above', camera)))
-            media.add_command(label=f'新轨道 · V{camera_number(self.project, camera)} 下方',
+            media.add_command(label=f'新轨道 · {label} 下方',
                 command=lambda: self._insert_timeline_media(position, placement=('below', camera)))
         menu.add_cascade(label=f'在此位置插入素材…（{position:.3f} 秒）', menu=media)
         if camera is not None:

@@ -69,6 +69,7 @@ class DockManager:
         self._home_anchors={};self._default_hidden={}
         self._grid_defaults={}
         self._containers=[];self._groups={};self._sashes=[];self._bound={}
+        self._borrowed=None
         self._drag=None;self._overlay=None;self._drag_preview=None;self._closed=False;self._after=None
         self._native_drag=None;self._native_sync_after=None
         self._binding_ids=[]
@@ -266,6 +267,70 @@ class DockManager:
             widget.pack(in_=container,**options)
         else:getattr(widget,home.manager)(in_=container,**options)
 
+    def borrow_panels(self,keys):
+        """Lend existing leaves to another page without rebuilding their layout."""
+        if self._borrowed is not None:raise RuntimeError('面板正在被其他页面使用。')
+        self.fullscreen.exit()
+        self.workspace.update_idletasks()
+        state={'layout':self.serialize(),'panels':[], 'notebooks':[], 'windows':[], 'sashes':[]}
+        for notebook in self._bound.values():
+            if notebook.winfo_exists():state['notebooks'].append((notebook,str(notebook.select())))
+        panes=[widget for widget in _walk(self.workspace)
+               if isinstance(widget,(tk.PanedWindow,ttk.Panedwindow)) and widget.winfo_ismapped()]
+        for pane in panes:
+            horizontal=str(pane.cget('orient'))=='horizontal'
+            length=pane.winfo_width() if horizontal else pane.winfo_height()
+            positions=[pane.sashpos(i) if isinstance(pane,ttk.Panedwindow)
+                       else pane.sash_coord(i)[0 if horizontal else 1]
+                       for i in range(max(0,len(pane.panes())-1))]
+            state['sashes'].append((pane,horizontal,length,positions))
+        for window in self.iter_floating_windows():
+            state['windows'].append((window,str(window.tk.call('wm','state',window)),
+                                     self.fullscreen.geometry(window)))
+        # Capture every index before detaching any siblings.
+        for key in keys:
+            panel=self.panels[key];group=self._floating_group(key)
+            host=self._float_hosts[group['id']].members[key] if group else None
+            home=(None if host or key in self._floating or key in self._hidden or not panel.widget.winfo_manager()
+                  else self._capture_home(panel.widget))
+            state['panels'].append((key,home,host))
+        self._borrowed=state
+        for window,_,_ in state['windows']:window.tk.call('wm','withdraw',window)
+        for key,_,host in state['panels']:
+            if host:host.detach()
+            else:self._detach(self.panels[key].widget)
+
+    def return_panels(self):
+        """Return borrowed leaves to the same live notebooks and floating shells."""
+        state=self._borrowed
+        if state is None:return
+        for key,_,_ in state['panels']:self._detach(self.panels[key].widget)
+        for key,home,host in sorted(state['panels'],key=lambda item:
+                (str(item[1].container),item[1].index) if item[1] else ('',0)):
+            widget=self.panels[key].widget
+            if host:host.attach()
+            elif key in self._floating:self._manage_float(key,self._floating[key])
+            elif home:self._mount(widget,home)
+        for notebook,selected in state['notebooks']:
+            if notebook.winfo_exists() and selected in notebook.tabs():notebook.select(selected)
+        for host in self._float_hosts.values():
+            host._visible_key=None;host._visible_size=None
+        self.workspace.update_idletasks()
+        for pane,horizontal,old_length,positions in state['sashes']:
+            length=pane.winfo_width() if horizontal else pane.winfo_height()
+            for index,position in enumerate(positions):
+                if index>=len(pane.panes())-1:break
+                value=round(position*length/max(1,old_length))
+                if isinstance(pane,ttk.Panedwindow):pane.sashpos(index,value)
+                else:pane.sash_place(index,value if horizontal else 0,0 if horizontal else value)
+        self._borrowed=None
+        for window,visibility,geometry in state['windows']:
+            window.tk.call('wm','geometry',window,geometry)
+            window.tk.call('wm','state',window,visibility)
+        for host in self._float_hosts.values():host._configure()
+        self._raise_panels()
+        self._sync_native_drag()
+
     def _nodes(self,node):
         if not node:return
         yield node
@@ -327,6 +392,7 @@ class DockManager:
                     if child is target:node['children'][index]=replacement;return
 
     def _capture_ratios(self):
+        if self._borrowed is not None:return
         for key in self._floating:self._floating[key]=self._float_geometry(key)
         for identity,host in self._float_hosts.items():
             if identity in self._floating_groups:
@@ -760,6 +826,7 @@ class DockManager:
             getattr(container,'grid_'+axis+'configure')(index,**settings)
 
     def serialize(self):
+        if self._borrowed is not None:return copy.deepcopy(self._borrowed['layout'])
         self._capture_ratios()
         return {'version':self.VERSION,'active':self._active,'roots':copy.deepcopy(self._roots),
                 'floating':{key:self._float_geometry(key) for key in self._floating},
@@ -1004,12 +1071,13 @@ class DockManager:
 
     def _workspace_map(self,event):
         if event.widget is not self.workspace or self._closed:return
-        visible=event.type==tk.EventType.Map
+        visible=event.type==tk.EventType.Map and self._borrowed is None
         if not visible:self._cancel_drag()
         for host in self._float_hosts.values():
             try:host.window.deiconify() if visible else host.window.withdraw()
             except tk.TclError:pass
         for key in self._floating:
+            if self._borrowed is not None and any(item[0]==key for item in self._borrowed['panels']):continue
             try:self.workspace.tk.call('wm','deiconify' if visible else 'withdraw',self.panels[key].widget)
             except tk.TclError:pass
 

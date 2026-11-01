@@ -18,7 +18,7 @@ import tempfile
 import threading
 import time
 
-from exporter_core import CREATE_NO_WINDOW, _media_probe_command, _media_info_from_payload
+from exporter_core import CREATE_NO_WINDOW, _media_probe_command, _media_info_from_payload, ExportCancelled
 from multicam_frame_clock import canonical_frame_rate
 from video_stack_render import build_stack_command, plan_stack_segments, validate_stack_media
 from proxy_media import PreviewProxyResolver, validate_proxy_media
@@ -378,6 +378,10 @@ class StackPreview:
             # hides every lower layer; transparent/letterboxed layers retain
             # their backgrounds. Future sources never delay the first frame.
             layers = []
+            if getattr(project, 'multicam_outer_order', ()):
+                from multicam_outer import resolve_compound
+                segment = resolve_compound(segment, project, self.ffmpeg, self.ffprobe,
+                    width, height, preview=True, cancel=cancel)
             for layer in segment.layers:
                 self._check(cancel)
                 for path in (layer.original_path, layer.path):
@@ -517,7 +521,7 @@ class StackPreview:
                 job = self._pending; self._pending = None
                 cancel = self._cancel = threading.Event()
             try: self._render(job, cancel)
-            except PreviewCancelled: pass
+            except (PreviewCancelled, ExportCancelled): pass
             except PreviewCatchUp as recovery:
                 with self._condition:
                     if (not self._closed and not cancel.is_set() and self._playing

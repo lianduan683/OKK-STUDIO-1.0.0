@@ -165,6 +165,8 @@ class MulticamProject:
     clip_transforms: list[ClipTransformRange] = field(default_factory=list)
     timeline_view: dict = field(default_factory=dict, compare=False)
     audio_mixer: dict = field(default_factory=dict)
+    multicam_outer_order: list[int] = field(default_factory=list)
+    multicam_inner_stack: bool = False
 
     def set_camera_name(self, camera: int, name: str) -> None:
         if _camera(camera) not in self.timeline_cameras:
@@ -260,6 +262,7 @@ class MulticamProject:
         self.cuts = normalized
 
     def validate(self) -> None:
+        from multicam_outer import validate_outer
         from audio_mixer import validate_settings
         validate_settings(self.audio_mixer)
         if type(self.timeline_multicam_collapsed) is not bool:
@@ -344,6 +347,7 @@ class MulticamProject:
                 raise ValueError("素材终点无效")
         available = set(self.cameras)
         validate_stack(self)
+        validate_outer(self)
         if not isinstance(self.camera_names, dict) or len(self.camera_names) > 100_000:
             raise ValueError("机位名称设置无效")
         for camera, name in self.camera_names.items():
@@ -552,6 +556,11 @@ class MulticamProject:
             payload['version'] = 20
         else:
             payload.pop('audio_mixer')
+        if self.multicam_outer_order:
+            payload['version'] = 21
+        else:
+            payload.pop('multicam_outer_order')
+            payload.pop('multicam_inner_stack')
         for clip in instances:
             if clip['enabled']: clip.pop('enabled')
         if not self.master_audio_clips: payload.pop('master_audio_clips')
@@ -636,13 +645,13 @@ class MulticamProject:
         base = Path(base_directory).resolve()
         try:
             if (not isinstance(payload, dict) or payload.get("format") != "okk-multicam"
-                    or type(payload.get("version")) is not int or payload.get("version") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}):
+                    or type(payload.get("version")) is not int or payload.get("version") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21}):
                 raise ValueError("不是受支持的多机位工程")
             allowed = {"format", "version", "clips", "cuts", "master_audio", "master_duration", "fps",
                        "range_start", "range_end", "global_grade", "camera_grades", "transitions", "subtitles",
                        "edit_points", "clip_grades", "clip_transforms", "stabilizations", "library_overlays", "alignment_reference_camera", "color_reference_camera",
                        "video_stack_enabled", "video_stack_order", "video_stack_hidden", "timeline_empty_tracks", "camera_names",
-                       "audio_track_enabled", "timeline_markers", "timeline_snap_enabled", "timeline_link_enabled", "audio_overrides", "timeline_removed_tracks", "project_settings", "monitor_layout", "timeline_view", "master_audio_clips", "timeline_multicam_collapsed", "audio_mixer"}
+                       "audio_track_enabled", "timeline_markers", "timeline_snap_enabled", "timeline_link_enabled", "audio_overrides", "timeline_removed_tracks", "project_settings", "monitor_layout", "timeline_view", "master_audio_clips", "timeline_multicam_collapsed", "audio_mixer", "multicam_outer_order", "multicam_inner_stack"}
             if set(payload) - allowed:
                 raise ValueError("工程包含未知字段")
 
@@ -748,6 +757,8 @@ class MulticamProject:
                           timeline_multicam_collapsed=payload.get('timeline_multicam_collapsed', False))
             project.master_audio_clips = master_clips
             project.audio_mixer = payload.get('audio_mixer', {})
+            project.multicam_outer_order = payload.get('multicam_outer_order', [])
+            project.multicam_inner_stack = payload.get('multicam_inner_stack', False)
             project.validate()
             return project
         except (json.JSONDecodeError, TypeError, KeyError, OverflowError) as exc:
@@ -926,11 +937,10 @@ def render_multicam(
         pictures = ([layer.path for layer in segment.layers] if stacked else
                     (segment.path, getattr(segment, 'other_path', None)))
         for picture in pictures:
+            if picture == 'okk-multicam://programme': continue
             if picture and picture not in media:
                 if not Path(picture).is_file(): raise ValueError('防抖或转场素材不存在：' + picture)
                 media[picture] = probe_media(ffprobe, picture)
-    if stacked:
-        validate_stack_media(segments, media)
     if reference.width <= 0 or reference.height <= 0:
         raise ValueError("无法读取素材画面尺寸")
     height = _resolution_height(settings.resolution) or reference.height
@@ -946,6 +956,20 @@ def render_multicam(
     # Software fallback normalizes mixed aspect ratios and unsupported inputs;
     # compatible camera chunks retain CUDA surfaces throughout the pipeline.
     pixel_format = "yuv420p10le" if depth == 10 else "yuv420p"
+    if stacked and project.multicam_outer_order:
+        from multicam_outer import resolve_compound
+        prepared = []
+        for index, segment in enumerate(segments):
+            cancelled()
+            if progress: progress(index, len(segments), '准备多机位轨道')
+            segment = resolve_compound(segment, project, ffmpeg, ffprobe, width, height,
+                                       deep=depth == 10, cancel=cancel_event)
+            for layer in segment.layers:
+                if layer.path not in media: media[layer.path] = probe_media(ffprobe, layer.path)
+            prepared.append(segment)
+        segments = prepared
+    if stacked:
+        validate_stack_media(segments, media)
     rate = Fraction(project.fps).limit_denominator(100_000)
     rate_text = f"{rate.numerator}/{rate.denominator}"
     duration = sum(segment.frames for segment in segments) / project.fps

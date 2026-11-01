@@ -2,7 +2,7 @@
 
 
 def track_move_targets(project, gesture, y):
-    order = gesture['track_order']
+    order = [camera for camera in gesture['track_order'] if camera != 0]
     original = gesture['clip_cameras']
     anchor = gesture['anchor_camera']
     if not original or anchor not in order: return original
@@ -38,7 +38,8 @@ def apply_track_move(project, gesture, targets):
         # Retain the emptied source rows so moving back has a stable target.
         project.timeline_empty_tracks = list(dict.fromkeys(
             project.timeline_empty_tracks + list(gesture['clip_cameras'].values())))
-        project.video_stack_order = list(gesture['track_order'])
+        if not getattr(project, 'multicam_outer_order', ()):
+            project.video_stack_order = list(gesture['track_order'])
         project.video_stack_enabled = True
 
     elif gesture.get('track_changed'):

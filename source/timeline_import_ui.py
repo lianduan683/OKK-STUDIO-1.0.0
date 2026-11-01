@@ -176,7 +176,11 @@ class TimelineImportMixin:
         self.project.timeline_multicam_collapsed = bool(collapsed)
         self._set_timeline_selection(set(), redraw=False)
         self.draw_timeline()
-        self.status.set('已合并显示为多机位时间线；右键节目轨可展开。' if collapsed else '已在时间线上打开多机位，显示各机位源轨。')
+        if not collapsed:
+            self.timeline.yview_moveto(0)
+            self._queue_timeline_redraw()
+        self.status.set('多机位轨道已收起并回到外层位置；可拖动轨头或在上方插入机位。' if collapsed
+                        else '已打开多机位内部源轨；节目轨临时放在最上方，收起后恢复外层位置。')
         return True
 
     def _append_multicam_view_menu(self, menu):

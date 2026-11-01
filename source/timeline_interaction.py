@@ -315,6 +315,7 @@ class TimelineInteractionMixin:
         bottom = canvas.canvasy(canvas.winfo_height())
         canvas.create_line(x, top, x, bottom, fill='#58a6d6', width=self._px(2), tags='media-drop')
         label = f'放入 V{camera_number(self.project, camera)}' if camera is not None else '放入节目时间线'
+        if camera == 0: label = '在多机位轨道上方添加机位'
         canvas.create_text(x+self._px(6), top+self._px(8), text=label+' · '+format_signed_time(position),
                            fill='#b9ddf2', anchor='nw', tags='media-drop')
         return True
@@ -337,6 +338,9 @@ class TimelineInteractionMixin:
         if not paths and not master_audio:
             return False
         start = self.current if start is None else float(start)
+        if camera == 0:
+            camera = None
+            layer_placement = layer_placement or ('above', 0)
         if not math.isfinite(start) or start < 0:
             raise ValueError('时间线起点必须是非负有限数字')
         if camera is not None and (type(camera) is not int or camera < 1):
@@ -415,11 +419,16 @@ class TimelineInteractionMixin:
         stop = math.floor(position*project.fps+.5)/project.fps
         if layer_placement is not None:
             self._place_inserted_video_layer(camera, layer_placement)
+        elif project.timeline_multicam_collapsed and camera not in project.multicam_outer_order:
+            self._place_inserted_video_layer(camera, ('above', 0))
         elif alpha: self._activate_alpha_layers([camera])
         elif camera in project.timeline_empty_tracks:
             project.video_stack_enabled = True
         if not project.cuts: project.set_cut(0, min(project.cameras))
-        if stop > start and not project.video_stack_enabled:
+        from multicam_outer import outer_cameras
+        internal_edit = (bool(project.multicam_outer_order) and camera not in outer_cameras(project)
+                         and not project.multicam_inner_stack)
+        if stop > start and (not project.video_stack_enabled or internal_edit):
             set_camera_on_range(project, start, stop, camera)
         self.selected_program_range = (start, stop) if stop > start else None
         self._refresh()

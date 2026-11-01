@@ -47,6 +47,7 @@ class FinishingWorkspace(tk.Frame):
         self.serial = 0
         self._clip_signature = None
         self._last_size = None
+        self._page_sashes = {}
         px = workspace._px
         self.title_var = tk.StringVar(self)
         self.summary_var = tk.StringVar(self)
@@ -176,10 +177,8 @@ class FinishingWorkspace(tk.Frame):
         if ws._dock_save_after is not None:
             ws.after_cancel(ws._dock_save_after)
             ws._dock_save_after = None
-        # Detach through the docking controller so floating and tabbed panels
-        # keep their HWNDs and can return to their exact original locations.
-        for key in ('program', 'timeline', 'grading', 'delivery'):
-            ws.dock_manager.hide(key)
+        # Keep the editing containers alive; only lend the required leaves.
+        ws.dock_manager.borrow_panels(('program', 'timeline', 'grading', 'delivery'))
         ws._color_mode = False
         self.mode = mode
         ws.workspace_split.grid_remove()
@@ -241,6 +240,12 @@ class FinishingWorkspace(tk.Frame):
     def _size_panes(self):
         if self.mode == 'edit':
             return
+        if self.mode in self._page_sashes:
+            for pane,ratios in zip((self.upper,self.split),self._page_sashes[self.mode]):
+                length=pane.winfo_width() if pane is self.upper else pane.winfo_height()
+                for index,ratio in enumerate(ratios[:max(0,len(pane.panes())-1)]):
+                    pane.sashpos(index,round(length*ratio))
+            return
         px = self.ws._px
         width, height = self.upper.winfo_width(), self.split.winfo_height()
         if self.mode == 'delivery' and width > 10:
@@ -284,6 +289,10 @@ class FinishingWorkspace(tk.Frame):
         if self.mode == 'edit':
             return
         ws = self.ws
+        self._page_sashes[self.mode]=[
+            [pane.sashpos(index)/max(1,pane.winfo_width() if pane is self.upper else pane.winfo_height())
+             for index in range(max(0,len(pane.panes())-1))]
+            for pane in (self.upper,self.split)]
         if self.mode == 'audio':
             ws.audio_workspace.apply()
         ws._cancel_grade_drafts()
@@ -298,17 +307,9 @@ class FinishingWorkspace(tk.Frame):
         ws.workspace_bar.grid()
         ws.delivery_export_button.configure(text='开始导出', command=ws.export)
         self.mode = 'edit'
-        ws.dock_manager.restore(self.saved_layout)
+        ws.dock_manager.return_panels()
         ws._color_mode = self.saved_color_mode
         ws.update_idletasks()
-        # Restore only the split positions. Reapplying the camera-grid settings
-        # would recreate decoder surfaces even though the grid never changed.
-        for pane, field, horizontal in ((ws.body, 'body_sashes', True),
-                                        (ws.workspace_split, 'main_sashes', False)):
-            length = pane.winfo_width() if horizontal else pane.winfo_height()
-            for index, ratio in enumerate(self.saved_chrome.get(field, ())):
-                if index < len(pane.panes()) - 1:
-                    pane.sashpos(index, round(length * ratio))
         ws._dock_saving_suspended = self.saved_suspended
         self.saved_layout = self.saved_chrome = None
         ws._tag_transport_widgets(ws)

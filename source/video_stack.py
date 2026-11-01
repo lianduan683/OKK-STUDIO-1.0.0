@@ -48,3 +48,5 @@ def prune_stack(project):
     available = set(project.timeline_cameras)
     project.video_stack_order = list(dict.fromkeys(camera for camera in project.video_stack_order if camera in available))
     project.video_stack_hidden = list(dict.fromkeys(camera for camera in project.video_stack_hidden if camera in available))
+    from multicam_outer import prune_outer
+    prune_outer(project)

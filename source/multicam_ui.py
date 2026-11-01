@@ -1222,18 +1222,23 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         return True
 
     def _switch_selected_camera(self, camera):
+        from multicam_outer import outer_cameras
+        if camera in outer_cameras(self.project):
+            self.status.set('这是外层机位，请在对应外层轨道上编辑；多机位内部切点保持不变。')
+            return
         selected = self.selected_program_range
         try:
             candidate = copy.deepcopy(self.project)
             set_camera_on_range(candidate, *selected, camera)
-            candidate.video_stack_enabled = False
+            if candidate.multicam_outer_order: candidate.video_stack_enabled = self.project.video_stack_enabled
+            if not candidate.multicam_outer_order: candidate.video_stack_enabled = False
             candidate.validate()
         except Exception as exc:
             messagebox.showerror('切换片段机位', str(exc), parent=self); return
         self._remember(); self.project = candidate
         self._set_timeline_selection({('program', selected)}, redraw=False)
         self._finish_preview_epoch(seek=False)
-        self._set_stack_preview_mode(False)
+        if not self.project.multicam_outer_order: self._set_stack_preview_mode(False)
         self._refresh()
         current_camera = self.project.camera_at(self.current)
         self._set_program_label(current_camera)
@@ -1457,7 +1462,9 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         if selection: self.media_tree.selection_set(selection)
         self._update_camera_fold_button()
         self.cut_tree.delete(*self.cut_tree.get_children())
-        self.cut_camera_combo.configure(values=tuple(str(i+1) for i in range(len(self.project.cameras))))
+        from multicam_outer import outer_cameras
+        self.cut_camera_combo.configure(values=tuple(str(camera_number(self.project, camera))
+            for camera in self._media_camera_order() if camera not in outer_cameras(self.project)))
         for i, cut in enumerate(self.project.cuts):
             self.cut_tree.insert('', 'end', iid=str(i), values=(format_time(cut.time), str(camera_number(self.project, cut.camera))))
         if self.selected_cut is not None and self.selected_cut < len(self.project.cuts):
@@ -1868,6 +1875,8 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         try:
             time = parse_timecode(self.cut_time_var.get())
             camera = camera_id_for_number(self.project, self.cut_camera_var.get())
+            from multicam_outer import outer_cameras
+            if camera in outer_cameras(self.project): raise ValueError('外层机位不属于多机位内部切点，请在对应外层轨道上编辑。')
             if camera not in self.project.cameras: raise ValueError('这个机位还没有素材。')
             if not 0 <= time < self.project.duration: raise ValueError('切点须位于工程范围内。')
         except ValueError as exc:
@@ -1894,6 +1903,12 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
 
     def switch(self, camera, *, record=None):
         if not self._available() or camera not in self.project.cameras: return
+        from multicam_outer import outer_cameras
+        if camera in outer_cameras(self.project) and not self._color_mode:
+            self._displayed_camera = camera
+            self._highlight(camera)
+            self.status.set(self._label_camera(camera)+' · 外层机位；在外层轨道上编辑，内部切点保持不变。')
+            return
         if self.project.video_stack_enabled and self._color_mode:
             self._displayed_camera = camera
             self.set_grade_target(camera)
@@ -1904,7 +1919,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         if self.selected_program_range is not None:
             self._switch_selected_camera(camera)
             return
-        was_stack = self.project.video_stack_enabled
+        was_stack = self.project.video_stack_enabled and not self.project.multicam_outer_order
         recording = self.record_var.get() if record is None else record
         if recording or was_stack:
             self._remember()
@@ -2510,9 +2525,8 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         canvas = self.timeline
         canvas.delete('all')
         cameras = self._timeline_camera_order()
-        source_cameras = cameras
+        source_cameras = self.project.timeline_cameras
         collapsed = self.project.timeline_multicam_collapsed
-        if collapsed: cameras = []
         height = max(self._px(100), canvas.winfo_height())
         left_edge = self._timeline_left
         origin = self._timeline_origin()
@@ -2534,12 +2548,18 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         self._timeline_program_bounds = (ruler_h, ruler_h + program_h)
         audio_h = max(self._px(40), label_font.metrics('linespace') + self._px(20))
         subtitle_h = max(self._px(30), label_font.metrics('linespace') + self._px(8))
-        subtitle_y = ruler_h + program_h + self._px(3)
+        subtitle_y = ruler_h + (0 if collapsed else program_h) + self._px(3)
         self._timeline_subtitle_bounds = (subtitle_y, subtitle_y+subtitle_h)
         track_top = subtitle_y + subtitle_h + self._px(6)
         minimum_row = label_font.metrics('linespace') + self._px(6)
         row_h, audio_y, content_height = self._timeline_track_layout(
             cameras, height, track_top, minimum_row, audio_h)
+        program_top = ruler_h
+        if collapsed:
+            program_h = row_h
+            program_top = track_top + cameras.index(0)*row_h
+        program_bottom = program_top + program_h
+        self._timeline_program_bounds = (program_top, program_bottom)
         canvas.configure(scrollregion=(0, 0, width, content_height))
         if content_height > canvas.winfo_height() + self._px(2):
             self.timeline_vscroll.grid()
@@ -2553,8 +2573,8 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
             return x2 >= view_left and x <= view_right and y2 >= view_top and y <= view_bottom
         duration = self._timeline_view_duration()
         canvas.create_rectangle(0, 0, width, ruler_h, fill='#292b2e', outline='')
-        canvas.create_rectangle(0, ruler_h, width, ruler_h + program_h, fill='#27292c', outline='')
-        canvas.create_text(self._px(8), ruler_h + program_h / 2, text='多机位' if collapsed else '合成' if self.project.video_stack_enabled else '节目', fill=INK, anchor='w',
+        canvas.create_rectangle(0, program_top, width, program_bottom, fill='#27292c', outline='')
+        canvas.create_text(self._px(8), program_top + program_h / 2, text='多机位' if collapsed else '合成' if self.project.video_stack_enabled else '节目', fill=INK, anchor='w',
                            font=title_font)
         displayed_project = self.project
         if self._timeline_drag_geometry is not None:
@@ -2564,13 +2584,18 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
             displayed_project.master_duration = max(self.project.master_duration, self._timeline_drag_geometry[2])
         # Programme geometry is independent of selection and viewport. Avoid
         # validation/sorting again for every mouse movement or scroll tick.
-        span_key = (id(self.project), self.project.fps, displayed_project.duration, tuple(cameras),
+        from multicam_outer import compound_duration
+        group_end = compound_duration(self.project) if self.project.multicam_outer_order else displayed_project.duration
+        span_key = (id(self.project), self.project.fps, displayed_project.duration, group_end, tuple(cameras),
                     tuple((item.time, item.camera) for item in self.project.cuts),
                     tuple(self.project.edit_points),
                     tuple((item.start, item.end) for item in self.project.clip_grades))
         cached_spans = vars(self).get('_timeline_span_cache')
         if cached_spans is None or cached_spans[0] != span_key:
-            cached_spans = self._timeline_span_cache = (span_key, program_spans(displayed_project))
+            from dataclasses import replace
+            spans = [replace(span, end=min(span.end, group_end)) for span in program_spans(displayed_project)
+                     if span.start < group_end]
+            cached_spans = self._timeline_span_cache = (span_key, spans)
         displayed_spans = cached_spans[1]
         self._timeline_boundary_times = [span.start for span in displayed_spans if span.start > 0]
         self._update_timeline_snap_points()
@@ -2586,12 +2611,12 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         for span in displayed_spans:
             x = timeline_x(span.start)
             x2 = timeline_x(span.end)
-            if not visible(x, ruler_h, x2, ruler_h+program_h):
+            if not visible(x, program_top, x2, program_bottom):
                 continue
             span_sources = [clip for clip in camera_clips.get(span.camera, ())
                             if clip.start < span.end and clip.end > span.start]
             disabled = bool(span_sources) and not any(clip.enabled for clip in span_sources)
-            item = canvas.create_rectangle(x, ruler_h + self._px(4), x2, ruler_h + program_h - self._px(3),
+            item = canvas.create_rectangle(x, program_top + self._px(4), x2, program_bottom - self._px(3),
                 fill='#383a3e' if disabled else COLORS[(span.camera-1) % 9], outline='#91a0ac',
                 width=1, tags=('program',))
             self.timeline_program_items[item] = (span.start, span.end)
@@ -2614,7 +2639,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
                 graded = grade_index >= 0 and span.start < grades[grade_index].end-1e-8
                 title=('已禁用 · ' if disabled else '')+f'{camera_number(self.project, span.camera)} · '+camera_title + (' · 调色' if graded else '') + stabilization_label
                 title = self._timeline_fit_label(title_font, title, x2-x-self._px(12))
-                item = canvas.create_text(x + self._px(7), ruler_h + program_h / 2,
+                item = canvas.create_text(x + self._px(7), program_top + program_h / 2,
                     text=title,
                     fill=MUTED if disabled else INK, anchor='w', font=title_font, tags=('program',))
                 self.timeline_program_items[item] = (span.start, span.end)
@@ -2623,16 +2648,16 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
             x2 = timeline_x(transition.time + transition.duration / 2)
             midpoint = timeline_x(transition.time)
             if x2 - x < self._px(10): x, x2 = midpoint - self._px(5), midpoint + self._px(5)
-            if not visible(x, ruler_h, x2, ruler_h+program_h):
+            if not visible(x, program_top, x2, program_bottom):
                 continue
-            item = canvas.create_rectangle(x, ruler_h + self._px(2), x2,
-                ruler_h + program_h - self._px(2), fill='#a18a52', outline='#e3c980', tags=('transition',))
+            item = canvas.create_rectangle(x, program_top + self._px(2), x2,
+                program_bottom - self._px(2), fill='#a18a52', outline='#e3c980', tags=('transition',))
             self.timeline_transition_items[item] = transition.time
         for boundary in self._timeline_boundary_times:
             x = timeline_x(boundary)
-            if not visible(x, ruler_h, x, ruler_h+program_h):
+            if not visible(x, program_top, x, program_bottom):
                 continue
-            self.timeline.create_line(x, ruler_h+self._px(2), x, ruler_h+program_h-self._px(2),
+            self.timeline.create_line(x, program_top+self._px(2), x, program_bottom-self._px(2),
                 fill='#c0d0dc', width=max(1, self._px(2)), tags=('program-boundary',))
         canvas.create_rectangle(0, subtitle_y, width, subtitle_y + subtitle_h, fill='#2b2831', outline='')
         canvas.create_text(self._px(8), subtitle_y + subtitle_h / 2, text='S1 字幕', fill='#c4a4e4',
@@ -2656,6 +2681,8 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         for i, camera in enumerate(cameras):
             y = track_top + i * row_h
             self._timeline_track_bounds[camera] = (y, y + row_h)
+            if camera == 0:
+                continue
             if y+row_h < view_top or y > view_bottom:
                 continue
             canvas.create_rectangle(0, y, width, y + row_h, fill='#25272a' if i % 2 == 0 else '#222427',
@@ -2678,6 +2705,8 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
                                                 fill=INK if clip.enabled else MUTED, anchor='w', font=label_font, tags=('clip',))
                     self.timeline_clip_items[label] = clip.id
             self._draw_stack_track_header(camera, y, row_h, label_font)
+        if collapsed:
+            self._draw_stack_track_header(0, program_top, program_h, label_font)
         for point in self.project.edit_points:
             x = timeline_x(point)
             if not visible(x, track_top, x, audio_y):

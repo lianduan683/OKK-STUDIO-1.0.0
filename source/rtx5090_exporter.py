@@ -95,7 +95,7 @@ from editor_core import build_proxy_encode_command, proxy_format_labels, resolve
 
 
 APP_NAME = "RTX 视频渲染工坊"
-APP_VERSION = "1.0.17"
+APP_VERSION = "1.0.18"
 BG = "#18191b"
 SURFACE = "#202124"
 PANEL = "#242629"
@@ -418,13 +418,13 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
         self.export_notebook.select(project_export)
         self._build_export_tab(basic)
         self._build_editor(editor)
-        # Keep one editor and one set of native video surfaces across all three
-        # pages. A common parent allows packing into each notebook page.
+        # Project pages share one persistent host. Changing the selected page
+        # must not unmap the editor and all of its native/floating windows.
         self.multicam_workspace = MulticamWorkspace(notebook, self)
         # The existing delivery preference serializer retains this independent
         # standalone choice without replacing the project's export resolution.
         self.multicam_workspace.delivery_transcode_resolution_var = self.transcode_resolution_var
-        self.multicam_workspace.pack(in_=multicam, fill="both", expand=True)
+        self.multicam_workspace.place(x=0, y=0, relwidth=1, relheight=1)
         self._log("应用启动。正在检测硬件与 FFmpeg…")
         notebook.bind("<<NotebookTabChanged>>", self._on_page_changed)
         self.export_notebook.bind("<<NotebookTabChanged>>", self._on_page_changed)
@@ -464,13 +464,12 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
         transcoding = self.active_page == "delivery" and self._export_section() == "basic"
         if self.active_page in {"multicam", "color", "audio", "delivery"} and not transcoding:
             ws = self.multicam_workspace
-            target = (self.export_sections["delivery"] if self.active_page == "delivery"
-                      else self.page_frames[self.active_page])
-            if str(ws.pack_info().get('in', '')) != str(target):
-                ws.pack_forget()
-                ws.pack(in_=target, fill="both", expand=True)
+            if ws.winfo_manager() != 'place':
+                ws.place(x=0, y=0, relwidth=1, relheight=1)
+            ws.lift()
             ws.finishing_workspace.show(self.active_page if self.active_page != 'multicam' else 'edit')
         else:
+            self.multicam_workspace.place_forget()
             self.multicam_workspace.pause()
         text = ("开始转码" if transcoding else "渲染所有" if self.active_page == "delivery"
                 else "交付 / 导出" if self.active_page in {"multicam", "color", "audio"} else "导出设置")

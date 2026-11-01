@@ -32,6 +32,7 @@ class StackLayer:
     source_start: float
     phase_origin: float
     has_alpha: bool = False
+    programme: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +75,9 @@ def _layer(project, clip, position):
 
 def plan_stack_segments(project):
     """Open only active layers, with half-open boundaries on one frame clock."""
+    if getattr(project, 'multicam_outer_order', ()):
+        from multicam_outer import plan_outer_segments
+        return plan_outer_segments(project)
     if not project.clips:
         return []
     fps = float(project.fps)
@@ -147,17 +151,23 @@ def build_stack_command(segment, project, base, width, height, pixel_format,
             if decoder:
                 command += ['-c:v', decoder]
         command += ['-i', layer.path]
-        transform = transform_at(project, segment.start)
+        from clip_transform import ClipTransform
+        transform = (transform_at(project, segment.start) if layer.programme or not getattr(project, 'multicam_outer_order', ())
+                     else ClipTransform())
+        pad = 'black' if layer.programme else 'black@0'
         framing = (f'scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,'
-                   f'pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black@0,setsar=1'
+                   f'pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color={pad},setsar=1'
                    if transform_is_identity(transform) else
-                   framing_filter(transform, width, height, pad_color='black@0'))
+                   framing_filter(transform, width, height, pad_color=pad))
         normalize = (f'[{index}:v:0]setpts=PTS-STARTPTS,fps=fps={rate_text}:start_time=0,'
                      f'format={alpha_format},{framing},'
                      f'tpad=stop_mode=clone:stop_duration={segment.duration+prefix/project.fps+1:.9f},'
                      f'trim=start_frame={prefix}:end_frame={prefix+segment.frames},'
                      f'settb=AVTB,setpts=N/({rate_text}*TB),format={alpha_format}')
         grades = [project.camera_grades.get(layer.camera)]
+        if layer.programme:
+            grades.append(grade_at(project, segment.start))
+            normalize += f',format=rgb24,format={alpha_format}'
         effects = ','.join(filter(None, (grade_filter(grade) for grade in grades if grade is not None)))
         if effects:
             # RGB LUT/curves can discard alpha. Keep the original mask on a
@@ -173,7 +183,7 @@ def build_stack_command(segment, project, base, width, height, pixel_format,
     # A ClipGrade belongs to a programme time range, not to any camera. Apply
     # it to the finished blend once; nonlinear curves cannot be distributed
     # across translucent layers without changing the picture.
-    local = grade_at(project, segment.start)
+    local = None if getattr(project, 'multicam_outer_order', ()) else grade_at(project, segment.start)
     final = ([grade_filter(local)] if local is not None else []) + [grade_filter(project.global_grade)]
     if ass_path is not None:
         final += [f'setpts=PTS+{segment.start:.12g}/TB', subtitle_filter(ass_path), 'setpts=PTS-STARTPTS']
