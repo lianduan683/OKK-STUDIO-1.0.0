@@ -1441,7 +1441,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         selection = self.media_tree.selection()
         expanded = {parent: self.media_tree.item(parent, 'open') for parent in self.media_tree.get_children()}
         self.media_tree.delete(*self.media_tree.get_children())
-        for camera in self.project.cameras:
+        for camera in self._media_camera_order():
             parent = f'camera_{camera}'
             self.media_tree.insert('', 'end', iid=parent, text=self._camera_tree_label(camera),
                 open=expanded.get(parent, not getattr(self, '_media_tree_collapsed', False)))
@@ -2136,6 +2136,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
             return 'break'
         action = self._keyboard_action(event)
         if action == 'escape':
+            if self._media_drag_cancel() == 'break': return 'break'
             browser = vars(self).get('effects_browser')
             if browser is not None and vars(browser).get('_effect_drag') is not None:
                 browser._effect_drag_cancel(event)

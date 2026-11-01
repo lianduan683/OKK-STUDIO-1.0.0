@@ -54,6 +54,7 @@ class TimelineInteractionMixin:
         self.media_tree.bind('<B1-Motion>', self._media_drag_motion, add='+')
         self.media_tree.bind('<ButtonRelease-1>', self._media_drag_release, add='+')
         self.media_tree.bind('<Escape>', self._media_drag_cancel, add='+')
+        self.media_tree.bind('<Unmap>', self._media_drag_cancel, add='+')
         self.timeline.bind('<ButtonPress-2>', self._timeline_pan_press)
         self.timeline.bind('<B2-Motion>', self._timeline_pan_motion)
         self.timeline.bind('<MouseWheel>', self.pan_timeline)
@@ -425,12 +426,20 @@ class TimelineInteractionMixin:
         self.status.set(f'已将 {len(clips)} 个素材放入 V{camera}，可拖动微调；Ctrl+Z 撤销。')
 
     def _media_drag_press(self, event):
-        self._media_drag = None
+        self._media_drag_cancel()
         if self.busy or self.app.working:
             return
         if self.media_tree.identify_region(event.x, event.y) not in {'tree', 'cell'}:
             return
         identifier = self.media_tree.identify_row(event.y)
+        if identifier.startswith('camera_'):
+            if self.media_tree.identify_element(event.x, event.y).endswith('indicator'):
+                return
+            camera = int(identifier.removeprefix('camera_'))
+            self._media_drag = dict(kind='camera', camera=camera, project=self.project,
+                order=self.project.stacked_cameras(include_hidden=True),
+                x=event.x_root, y=event.y_root, active=False, target=None)
+            return
         if any(clip.id == identifier for clip in self.project.clips):
             self._media_drag = dict(id=identifier, x=event.x_root, y=event.y_root, active=False)
 
@@ -443,18 +452,27 @@ class TimelineInteractionMixin:
                 return
             drag['active'] = True
             self.pause()
-            self.media_tree.configure(cursor='hand2')
+            self.media_tree.configure(cursor='fleur' if drag.get('kind') == 'camera' else 'hand2')
+        if drag.get('kind') == 'camera':
+            self._camera_drag_motion(event)
+            return 'break'
         self.timeline_drop_hover(event.x_root, event.y_root)
         return 'break'
 
     def _media_drag_cancel(self, _event=None):
         drag, self._media_drag = self._media_drag, None
+        self._clear_camera_drag_preview()
         self.timeline_drop_clear_hover()
         self.media_tree.configure(cursor='')
         return 'break' if drag and drag['active'] else None
 
     def _media_drag_release(self, event):
         drag = self._media_drag
+        if drag and drag.get('kind') == 'camera':
+            if drag['active']: self._preview_camera_drop(event.x_root, event.y_root)
+            self._media_drag_cancel()
+            if drag['active']: self._commit_camera_drop(drag)
+            return 'break' if drag['active'] else None
         self._media_drag_cancel()
         if not drag or not drag['active']:
             return

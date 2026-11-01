@@ -9,6 +9,105 @@ from editor_core import AlignmentResult
 
 
 class CameraListUIMixin:
+    def _media_camera_order(self):
+        cameras = set(self.project.cameras)
+        return [camera for camera in self.project.stacked_cameras(include_hidden=True)
+                if camera in cameras]
+
+    def _camera_drag_is_current(self, drag):
+        return (self.alive and not self.busy and not self.app.working
+                and drag['project'] is self.project
+                and drag['order'] == self.project.stacked_cameras(include_hidden=True))
+
+    def _clear_camera_drag_preview(self):
+        pending = getattr(self, '_camera_drag_scroll_after', None)
+        if pending is not None:
+            self.after_cancel(pending)
+            self._camera_drag_scroll_after = None
+        marker = getattr(self, '_camera_drag_marker', None)
+        if marker is not None: marker.place_forget()
+
+    def _preview_camera_drop(self, x_root, y_root):
+        """Resolve a group insertion without changing the project during motion."""
+        drag = self._media_drag
+        drag['target'] = None
+        tree = self.media_tree
+        marker = getattr(self, '_camera_drag_marker', None)
+        if marker is not None: marker.place_forget()
+        if not self._camera_drag_is_current(drag): return
+        x, y = int(x_root-tree.winfo_rootx()), int(y_root-tree.winfo_rooty())
+        if not (0 <= x < tree.winfo_width() and 0 <= y < tree.winfo_height()): return
+        region = tree.identify_region(x, y)
+        if region in {'heading', 'separator'}: return
+        row = tree.identify_row(y)
+        parents = tree.get_children()
+        if not parents: return
+        if row:
+            parent = tree.parent(row) or row
+            if parent not in parents: return
+            bounds = tree.bbox(parent)
+            # Dropping on a child inserts after its entire camera group.
+            after = row != parent or (bounds and y >= bounds[1]+bounds[3]/2)
+        else:
+            parent, after = parents[-1], True
+            bounds = tree.bbox(parent)
+            if not bounds or y < bounds[1]+bounds[3]: return
+        camera = int(parent.removeprefix('camera_'))
+        if camera == drag['camera']: return
+        drag['target'] = camera, bool(after)
+        if after:
+            rows = (parent, *tree.get_children(parent)) if tree.item(parent, 'open') else (parent,)
+            visible = [tree.bbox(item) for item in rows if tree.bbox(item)]
+            line_y = max((box[1]+box[3] for box in visible), default=y)
+        else:
+            line_y = bounds[1] if bounds else y
+        if marker is None:
+            marker = self._camera_drag_marker = tk.Frame(tree, bg='#58a6d6', height=self._px(3))
+        marker.place(x=1, y=min(tree.winfo_height()-self._px(3), line_y), relwidth=1,
+                     width=-2, height=self._px(3))
+        marker.lift()
+
+    def _camera_drag_motion(self, event):
+        drag = self._media_drag
+        drag['pointer'] = event.x_root, event.y_root
+        self._preview_camera_drop(*drag['pointer'])
+        self.status.set('拖动机位到蓝线位置，松开同步调整时间线顺序；Esc 取消。')
+        if getattr(self, '_camera_drag_scroll_after', None) is None:
+            self._camera_drag_scroll_after = self.after(80, self._camera_drag_autoscroll)
+
+    def _camera_drag_autoscroll(self):
+        self._camera_drag_scroll_after = None
+        drag = self._media_drag
+        if not drag or drag.get('kind') != 'camera' or not drag['active']: return
+        if not self._camera_drag_is_current(drag):
+            self._media_drag_cancel()
+            return
+        tree = self.media_tree
+        x_root, y_root = drag['pointer']
+        x, y = x_root-tree.winfo_rootx(), y_root-tree.winfo_rooty()
+        if 0 <= x < tree.winfo_width() and 0 <= y < tree.winfo_height():
+            margin = self._px(28)
+            direction = -1 if y < margin*2 else 1 if y > tree.winfo_height()-margin else 0
+            if direction:
+                tree.yview_scroll(direction, 'units')
+            self._preview_camera_drop(x_root, y_root)
+        self._camera_drag_scroll_after = self.after(80, self._camera_drag_autoscroll)
+
+    def _commit_camera_drop(self, drag):
+        if drag['target'] is None or not self._camera_drag_is_current(drag): return
+        camera, after = drag['target']
+        order = [value for value in drag['order'] if value != drag['camera']]
+        order.insert(order.index(camera)+int(after), drag['camera'])
+        if order == drag['order']: return
+        self._remember()
+        self.project.video_stack_order = order
+        self._refresh()
+        parent = f"camera_{drag['camera']}"
+        self.media_tree.selection_set(parent)
+        self.media_tree.focus(parent)
+        self.media_tree.see(parent)
+        self.status.set(self._label_camera(drag['camera'])+' 顺序已调整，时间线已同步；Ctrl+Z 撤销。')
+
     def _build_camera_list_tools(self, parent):
         row = tk.Frame(parent, bg='#292b2e')
         row.pack(fill='x', padx=self._px(6), pady=(0, self._px(3)))
