@@ -77,6 +77,12 @@ class FinishingWorkspace(tk.Frame):
         self.viewer_host = tk.Frame(self.upper, bg=INPUT)
         self.viewer_host.grid_columnconfigure(0, weight=1)
         self.viewer_host.grid_rowconfigure(0, weight=1)
+        detached = tk.Frame(self.viewer_host, bg=INPUT)
+        detached.grid(row=0, column=0, sticky='nsew')
+        tk.Label(detached, text='预览已浮动，可拖到其他屏幕并按 F11 全屏', bg=INPUT,
+                 fg=MUTED, font=(FONT, 10)).pack(expand=True, pady=px(12))
+        ttk.Button(detached, text='放回预览', command=lambda: workspace.dock_manager.return_borrowed_panel('program'),
+                   style='Compact.TButton').pack(pady=px(12))
         transport = tk.Frame(self.viewer_host, bg=PANEL)
         transport.grid(row=1, column=0, sticky='ew')
         for title, command in (('|◀', lambda: workspace.seek(0)),
@@ -86,6 +92,9 @@ class FinishingWorkspace(tk.Frame):
                                ('监看', workspace.start_monitors)):
             ttk.Button(transport, text=title, command=command, width=6,
                        style='Compact.TButton').pack(side='left', padx=px(2), pady=px(5))
+        self.float_preview_button = ttk.Button(transport, text='浮动预览',
+            command=lambda: workspace._float_dock_panel('program'), style='Compact.TButton')
+        self.float_preview_button.pack(side='left', padx=px(2), pady=px(5))
         tk.Label(transport, textvariable=workspace.time_var, bg=PANEL, fg=INK,
                  font=('Cascadia Mono', 10)).pack(side='right', padx=px(10))
         self.timeline_host = tk.Frame(self.split, bg=BG)

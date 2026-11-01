@@ -46,6 +46,14 @@ class WindowsMonitorFullscreen:
         self.rectangle = W.RECT()
         if not self.api.GetWindowRect(self.hwnd(), C.byref(self.rectangle)):
             raise C.WinError(C.get_last_error())
+        # Tk reports the maximized client size as wm geometry. Remember the
+        # normal client size as well: setting that maximized geometry during
+        # a page roundtrip otherwise becomes a later "restore" size in Tk.
+        normal = self.placement.normal
+        border_width = self.rectangle.right - self.rectangle.left - window.winfo_width()
+        border_height = self.rectangle.bottom - self.rectangle.top - window.winfo_height()
+        self.normal_size = (max(1, normal.right - normal.left - border_width),
+                            max(1, normal.bottom - normal.top - border_height))
 
     def hwnd(self):
         # Tk replaces the outer wrapper when changing fullscreen attributes;
@@ -69,6 +77,9 @@ class WindowsMonitorFullscreen:
         # Preserve the normal restore rectangle as well as a maximized state;
         # restoring only Tk's geometry loses that rectangle on secondary screens.
         if self.placement.show == 3:  # SW_SHOWMAXIMIZED
+            width, height = self.normal_size
+            self.window.tk.call('wm', 'geometry', self.window, f'{width}x{height}')
+            self.window.update_idletasks()
             if not self.calls.call(self.api.SetWindowPlacement, self.hwnd(), C.byref(self.placement)):
                 raise C.WinError(C.get_last_error())
         else:

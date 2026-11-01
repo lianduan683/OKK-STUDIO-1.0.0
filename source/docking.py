@@ -18,6 +18,7 @@ import re
 import tkinter as tk
 from tkinter import ttk
 from dock_fullscreen import DockFullscreen
+from monitor_fullscreen import WindowsMonitorFullscreen
 
 PANEL='#292b2e'; BORDER='#18191b'; TEXT='#dedfe3'; ACCENT='#58a6d6'
 
@@ -226,6 +227,10 @@ class DockManager:
         self._bind(notebook,'<ButtonRelease-1>',self._release)
 
     def _double(self,key):
+        if self.is_borrowed(key):
+            if key in self._borrowed['floats']:self.return_borrowed_panel(key)
+            else:self.float_panel(key)
+            return 'break'
         if key in self._floating:self._return_home(key)
         else:self.float_panel(key)
         return 'break'
@@ -270,9 +275,12 @@ class DockManager:
     def borrow_panels(self,keys):
         """Lend existing leaves to another page without rebuilding their layout."""
         if self._borrowed is not None:raise RuntimeError('面板正在被其他页面使用。')
+        fullscreen_restore=self.fullscreen.active
+        fullscreen_key=fullscreen_restore['key'] if fullscreen_restore else None
         self.fullscreen.exit()
         self.workspace.update_idletasks()
-        state={'layout':self.serialize(),'panels':[], 'notebooks':[], 'windows':[], 'sashes':[]}
+        state={'layout':self.serialize(),'panels':[], 'notebooks':[], 'windows':[], 'sashes':[],
+               'fullscreen':fullscreen_key,'fullscreen_restore':fullscreen_restore,'floats':{}}
         for notebook in self._bound.values():
             if notebook.winfo_exists():state['notebooks'].append((notebook,str(notebook.select())))
         panes=[widget for widget in _walk(self.workspace)
@@ -285,8 +293,10 @@ class DockManager:
                        for i in range(max(0,len(pane.panes())-1))]
             state['sashes'].append((pane,horizontal,length,positions))
         for window in self.iter_floating_windows():
+            native=WindowsMonitorFullscreen(window) if os.name=='nt' else None
+            if native is not None:native.capture(window)
             state['windows'].append((window,str(window.tk.call('wm','state',window)),
-                                     self.fullscreen.geometry(window)))
+                                     self.fullscreen.geometry(window),native))
         # Capture every index before detaching any siblings.
         for key in keys:
             panel=self.panels[key];group=self._floating_group(key)
@@ -295,7 +305,7 @@ class DockManager:
                   else self._capture_home(panel.widget))
             state['panels'].append((key,home,host))
         self._borrowed=state
-        for window,_,_ in state['windows']:window.tk.call('wm','withdraw',window)
+        for window,_,_,_ in state['windows']:window.tk.call('wm','withdraw',window)
         for key,_,host in state['panels']:
             if host:host.detach()
             else:self._detach(self.panels[key].widget)
@@ -304,6 +314,7 @@ class DockManager:
         """Return borrowed leaves to the same live notebooks and floating shells."""
         state=self._borrowed
         if state is None:return
+        for key in tuple(state['floats']):self.return_borrowed_panel(key)
         for key,_,_ in state['panels']:self._detach(self.panels[key].widget)
         for key,home,host in sorted(state['panels'],key=lambda item:
                 (str(item[1].container),item[1].index) if item[1] else ('',0)):
@@ -324,12 +335,53 @@ class DockManager:
                 if isinstance(pane,ttk.Panedwindow):pane.sashpos(index,value)
                 else:pane.sash_place(index,value if horizontal else 0,0 if horizontal else value)
         self._borrowed=None
-        for window,visibility,geometry in state['windows']:
+        for window,visibility,geometry,native in state['windows']:
             window.tk.call('wm','geometry',window,geometry)
             window.tk.call('wm','state',window,visibility)
+            if native is not None:native.restore()
         for host in self._float_hosts.values():host._configure()
         self._raise_panels()
         self._sync_native_drag()
+        if state['fullscreen'] is not None:
+            self.fullscreen.toggle(state['fullscreen'])
+            # Keep the original Win32 normal-placement rectangle. Tk's
+            # geometry for a maximized window describes its current size,
+            # not the size it must restore after leaving fullscreen.
+            previous=state['fullscreen_restore']
+            current=self.fullscreen.active
+            current['geometry']=previous['geometry']
+            current['state']=previous['state']
+            if previous['native'] is not None:
+                current['native']=previous['native']
+                current['native'].cover()
+
+    def is_borrowed(self,key):
+        return self._borrowed is not None and any(item[0]==key for item in self._borrowed['panels'])
+
+    def _float_borrowed_panel(self,key,geometry=None):
+        panel=self.panels[key];widget=panel.widget
+        if key in self._borrowed['floats'] and geometry is None:
+            self.focus(key)
+            return
+        geometry=self._geometry(key,geometry)
+        if key not in self._borrowed['floats']:
+            self._borrowed['floats'][key]={'home':self._capture_home(widget),'location':panel.location}
+        self._manage_float(key,geometry)
+        self.focus(key)
+        self._sync_native_drag()
+
+    def return_borrowed_panel(self,key):
+        if not self.is_borrowed(key) or key not in self._borrowed['floats']:return False
+        state=self._borrowed['floats'][key]
+        widget=self.panels[key].widget
+        self._detach(widget)
+        self._remove_grip(self.panels[key])
+        self._mount(widget,state['home'])
+        self.panels[key].location=state['location']
+        del self._borrowed['floats'][key]
+        widget.lift()
+        self._sync_native_drag()
+        return True
 
     def _nodes(self,node):
         if not node:return
@@ -347,16 +399,21 @@ class DockManager:
         return next((group for group in self._floating_groups.values() if key in group['tabs']),None)
 
     def group_members(self,key):
+        if self.is_borrowed(key):return (key,)
         group=self._floating_group(key) or self._find(key)[1]
         return tuple(group['tabs']) if group is not None else (key,)
 
     def floating_group_window(self,key):
+        if self.is_borrowed(key):
+            return self.panels[key].widget if key in self._borrowed['floats'] else None
         group=self._floating_group(key)
         host=self._float_hosts.get(group['id']) if group else None
         return host.window if host else None
 
     def iter_floating_windows(self):
-        yield from (self.panels[key].widget for key in self._floating)
+        if self._borrowed is not None:
+            yield from (self.panels[key].widget for key in self._borrowed['floats'])
+        yield from (self.panels[key].widget for key in self._floating if not self.is_borrowed(key))
         yield from (host.window for host in self._float_hosts.values())
 
     iter_float_windows=iter_floating_windows
@@ -439,12 +496,15 @@ class DockManager:
                     self._sync_native_drag(settled=True)
                 self._native_sync_after=self.workspace.after_idle(sync)
             return
-        if self._native_drag is None and (self._floating or self._float_hosts):
+        if self._borrowed is not None:
+            windows=[(key,False,self.panels[key].widget) for key in self._borrowed['floats']]
+        else:
+            windows=[(key,False,self.panels[key].widget) for key in self._floating]
+            windows.extend((host.group['tabs'][0],True,host.window) for host in self._float_hosts.values())
+        if self._native_drag is None and windows:
             from native_dock_drag import NativeDockDrag
             self._native_drag=NativeDockDrag(self)
         if self._native_drag is not None:
-            windows=[(key,False,self.panels[key].widget) for key in self._floating]
-            windows.extend((host.group['tabs'][0],True,host.window) for host in self._float_hosts.values())
             self._native_drag.sync(windows)
 
     def _close_float_hosts(self):
@@ -565,6 +625,11 @@ class DockManager:
         return key not in self._hidden and bool(self.panels[key].widget.winfo_ismapped())
 
     def focus(self,key):
+        if self.is_borrowed(key):
+            widget=self.panels[key].widget
+            if widget.winfo_manager()=='wm':self.workspace.tk.call('wm','deiconify',widget)
+            widget.lift()
+            return widget
         if key in self._hidden:self.show(key)
         anchor=self.focus_home(key)
         if anchor is not None and callable(self.on_focus):self.on_focus(anchor)
@@ -711,12 +776,14 @@ class DockManager:
 
     def float_panel(self,key,geometry=None):
         if key not in self.panels:raise KeyError(key)
+        if self.is_borrowed(key):return self._float_borrowed_panel(key,geometry)
         self._capture_ratios();geometry=self._geometry(key,geometry)
         self._remove(key);self._floating[key]=geometry
         self._render();self.focus(key);self._changed()
 
     def float_group(self,key,geometry=None):
         if key not in self.panels:raise KeyError(key)
+        if self.is_borrowed(key):return self._float_borrowed_panel(key,geometry)
         self._capture_ratios()
         existing=self._floating_group(key)
         if existing is not None:
@@ -754,6 +821,7 @@ class DockManager:
         return self._dock_members(self.group_members(key),target,side)
 
     def _return_home(self,key):
+        if self.is_borrowed(key):return self.return_borrowed_panel(key)
         anchor=self._home_anchors[key]
         self._capture_ratios();self._remove(key)
         root=self._roots.get(anchor)
@@ -974,6 +1042,7 @@ class DockManager:
 
     def _press(self,event,key,*,whole_group=False):
         if self._closed:return
+        if self.is_borrowed(key):whole_group=False
         self._cancel_drag()
         self._drag={'key':key,'x':event.x_root,'y':event.y_root,'widget':event.widget,'started':False,'whole_group':whole_group}
 
@@ -996,6 +1065,15 @@ class DockManager:
         return 'break'
 
     def _drag_target(self,x,y,key):
+        if self.is_borrowed(key):
+            entry=self._borrowed['floats'].get(key)
+            if entry is not None:
+                container=entry['home'].container
+                left,top=container.winfo_rootx(),container.winfo_rooty()
+                width,height=container.winfo_width(),container.winfo_height()
+                if container.winfo_viewable() and left<=x<left+width and top<=y<top+height:
+                    return key,'home',(left,top,width,height)
+            return None
         for target in self._empty_targets():
             left,top,width,height=target[2]
             if left<=x<left+width and top<=y<top+height:return target
@@ -1039,6 +1117,13 @@ class DockManager:
         started=drag['started'];key=drag['key'];target=self._drag_target(event.x_root,event.y_root,key) if started else None
         self._cancel_drag()
         if not started:return
+        if self.is_borrowed(key):
+            if target and target[1]=='home':self.return_borrowed_panel(key)
+            elif not drag.get('native'):
+                panel=self.panels[key]
+                geometry=f'{max(self._px(panel.minsize[0]),panel.widget.winfo_width())}x{max(self._px(panel.minsize[1]),panel.widget.winfo_height())}+{event.x_root-self._px(30)}+{event.y_root-self._px(12)}'
+                self.float_panel(key,geometry)
+            return 'break'
         if target and target[1]=='home':
             self._dock_home(self.group_members(key) if drag.get('whole_group') else (key,),target[0])
         elif target and target[0]!=key:
@@ -1080,6 +1165,9 @@ class DockManager:
             if self._borrowed is not None and any(item[0]==key for item in self._borrowed['panels']):continue
             try:self.workspace.tk.call('wm','deiconify' if visible else 'withdraw',self.panels[key].widget)
             except tk.TclError:pass
+        if self._borrowed is not None:
+            for key in self._borrowed['floats']:
+                self.workspace.tk.call('wm','deiconify' if event.type==tk.EventType.Map else 'withdraw',self.panels[key].widget)
 
     def close(self):
         if self._closed:return

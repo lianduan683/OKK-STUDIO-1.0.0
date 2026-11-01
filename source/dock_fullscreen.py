@@ -30,12 +30,12 @@ class DockFullscreen:
         native = WindowsMonitorFullscreen(panel.widget) if os.name == 'nt' else None
         window = manager.floating_group_window(key)
         if window is None:
-            if key not in manager._floating:
+            if manager.is_borrowed(key) or key not in manager._floating:
                 manager.float_panel(key)
             window = manager.panels[key].widget
         manager.focus(key)
         window.update_idletasks()
-        group = manager._floating_group(key)
+        group = None if manager.is_borrowed(key) else manager._floating_group(key)
         host = manager._float_hosts[group['id']] if group else None
         if native is not None:
             native.capture(window)

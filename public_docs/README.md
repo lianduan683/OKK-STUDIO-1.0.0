@@ -1,12 +1,12 @@
-# OKK STUDIO 1.0.20
+# OKK STUDIO 1.0.21
 
-Windows 多机位视频剪辑应用。本版增加调色时间线滚轮平移、缩放与逐帧定位。
+Windows 多机位视频剪辑应用。本版恢复调色预览的全屏和浮动窗口，并在返回剪辑页时恢复原监看状态。
 
 本版提供曝光检测和 MCP 本机连接桥；外部 MCP 服务使用源码包及单独的 Python 环境，接入说明见 [MCP.md](MCP.md) 和 [EXPOSURE.md](EXPOSURE.md)。
 
 ## 下载
 
-**[下载 OKK-STUDIO-1.0.20-Setup.exe](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.20/OKK-STUDIO-1.0.20-Setup.exe)** · [发行页](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/tag/v1.0.20)
+**[下载 OKK-STUDIO-1.0.21-Setup.exe](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.21/OKK-STUDIO-1.0.21-Setup.exe)** · [发行页](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/tag/v1.0.21)
 
 主程序已内置安装器。安装时下载并校验 v1.0.0 的四份固定资源 ZIP（约 5.75 GB），完整安装约 6.5 GB，建议预留至少 15 GB。已有离线资源可通过 `/PAYLOADDIR` 复用。安装与升级见 [INSTALLATION.md](INSTALLATION.md)。
 
@@ -30,6 +30,7 @@ Windows 多机位视频剪辑应用。本版增加调色时间线滚轮平移、
 
 - “工程设置 → 预渲染”可开启自动缓存、选择保存目录及预设/自定义分辨率；刻度尺下沿以黄色显示预计可直接播放的区间，红色显示待渲染区间，完成校验后变绿并用于回放。暂停且空闲时自动处理，编辑后重新检查。
 - 右下角“工程设置”提供时间线分辨率、帧率、音频采样率与位深；支持 48/96/192 kHz、24bit、32bit 和 32bit 浮点，设置随工程保存。
+- 调色预览支持 F11 全屏、Esc 退出和浮动窗口；返回剪辑页恢复原监看窗口和全屏状态。
 - 调色时间线支持滚轮水平平移、Ctrl＋滚轮围绕播放头缩放、Alt＋滚轮逐帧，以及中键拖动和适配全片。
 - 调色页仅播放当前调色画面并使用原片，标准机位按需读取；返回剪辑页恢复机位网格的代理预览，保留代理设置。
 - 多机位收起后可作为外层视频轨道排序，上方轨道可覆盖或叠加画面；切换编辑页面时保留标签、浮动窗口、分隔位置和视图。
@@ -65,6 +66,6 @@ Windows 10/11 64 位。缓存沿用可写的非 C 盘、非系统盘固定磁盘
 
 ## 源码与构建
 
-[下载 1.0.20 应用源码](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.20/OKK-STUDIO-1.0.20-source.zip)。源码包包含应用模块、回归测试、小型 UI 资源和构建文件；不包含用户工程、媒体、工作缓存或大型第三方二进制。构建步骤见 [BUILDING.md](BUILDING.md)。
+[下载 1.0.21 应用源码](https://github.com/lianduan683/OKK-STUDIO-1.0.0/releases/download/v1.0.21/OKK-STUDIO-1.0.21-source.zip)。源码包包含应用模块、回归测试、小型 UI 资源和构建文件；不包含用户工程、媒体、工作缓存或大型第三方二进制。构建步骤见 [BUILDING.md](BUILDING.md)。
 
 应用许可证见 [LICENSE](LICENSE)，第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

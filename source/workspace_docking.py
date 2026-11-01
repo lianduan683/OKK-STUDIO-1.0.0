@@ -105,6 +105,7 @@ class WorkspaceDockingMixin:
             self.show_effects_library()
         self.dock_manager.float_panel(key)
         self._tag_transport_widgets(self._dock_widgets[key])
+        self._bind_floating_transport()
 
     def _float_dock_group(self, key):
         if key == 'library' and vars(self).get('effects_browser') is None:
