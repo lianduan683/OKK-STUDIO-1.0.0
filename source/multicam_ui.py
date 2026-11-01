@@ -57,6 +57,7 @@ from workspace_docking import WorkspaceDockingMixin
 from video_stack_ui import VideoStackUIMixin
 from stack_preview_ui import StackPreviewUIMixin
 from timeline_selection import TimelineSelectionMixin
+from timeline_sync import TimelineSyncMixin, selected_video_clips, reference_audio_clips
 from timeline_insert import TimelineInsertMixin
 from timeline_merge_ui import TimelineMergeMixin
 from preview_focus import PreviewFocusMixin
@@ -66,7 +67,7 @@ from keyboard_edit_ui import KeyboardEditMixin
 from camera_list_ui import CameraListUIMixin
 from timeline_controls import TimelineControlsMixin
 from timeline_link import preserve_source_audio, move_source_audio
-from timeline_audio import source_audio_clips
+from timeline_audio import source_audio_clips, master_audio_clips
 from project_settings_ui import ProjectSettingsMixin
 from playback_metrics import PlaybackMetricsUIMixin
 from prerender_ui import PrerenderUIMixin
@@ -86,7 +87,7 @@ COLORS = ['#496e87', '#4b8289', '#667e9e', '#64867c', '#7c718d', '#7e8870', '#80
 VIDEO_TYPES = [('视频', '*.mp4 *.mov *.mkv *.mxf *.avi *.mts *.m2ts *.webm'), ('所有文件', '*.*')]
 
 
-class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsUIMixin, TimelineControlsMixin, CameraListUIMixin, KeyboardEditMixin, TimelineAudioUIMixin, TimelineMarkersMixin, CameraImportMixin, PreviewFocusMixin, TimelineMergeMixin, TimelineInsertMixin, TimelineSelectionMixin, StackPreviewUIMixin, VideoStackUIMixin, WorkspaceDockingMixin, TransportControlsMixin, TimelineInteractionMixin, MulticamProxyMixin, LibraryApplyMixin, AutoColorWorkspaceMixin, EffectsWorkspaceMixin, tk.Frame):
+class MulticamWorkspace(TimelineSyncMixin, TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsUIMixin, TimelineControlsMixin, CameraListUIMixin, KeyboardEditMixin, TimelineAudioUIMixin, TimelineMarkersMixin, CameraImportMixin, PreviewFocusMixin, TimelineMergeMixin, TimelineInsertMixin, TimelineSelectionMixin, StackPreviewUIMixin, VideoStackUIMixin, WorkspaceDockingMixin, TransportControlsMixin, TimelineInteractionMixin, MulticamProxyMixin, LibraryApplyMixin, AutoColorWorkspaceMixin, EffectsWorkspaceMixin, tk.Frame):
     def __init__(self, parent, app):
         super().__init__(parent, bg=BG)
         self.app = app
@@ -498,7 +499,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         line = tk.Frame(media_tab, bg=PANEL)
         line.pack(fill='x', padx=self._px(5), pady=(self._px(0), self._px(6)))
         self._button(line, '主音频…', self.choose_master)
-        self._button(line, '同步并对齐', self.align)
+        self._button(line, '同步并对齐', self.auto_align)
         self._button(line, '精调', lambda: self.show_inspector('clip'))
 
         cut_frame = tk.Frame(edit_tab, bg=INPUT)
@@ -788,7 +789,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         self._button(line, '− 1帧', lambda: self.nudge(-1))
         self._button(line, '＋ 1帧', lambda: self.nudge(1))
         self._button(line, '应用', self.apply_offset)
-        ttk.Button(clip, text='同步选中片段', command=lambda: self.align(True),
+        ttk.Button(clip, text='自动对齐所选视频…', command=self.align_selected,
                    style='Compact.TButton').pack(fill='x', padx=self._px(12), pady=self._px(5))
         self._section(clip, '主音频')
         ttk.Button(clip, text='选择连续主录音…', command=self.choose_master,
@@ -1774,22 +1775,16 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
             except Exception as exc: self.jobs.put(('error', str(exc)))
         threading.Thread(target=worker, daemon=True).start()
 
-    def align(self, selected=False):
+    def align(self, selected=False, *, reference_audio_keys=None, use_master=False):
         if not self._available(): return
         ffmpeg = self.app.caps.ffmpeg_path
-        clip = self._selected_clip()
-        # A camera's split recordings already occupy one track. Selecting its
-        # header or any part analyses the track, validating each part's timing.
-        selection = self.media_tree.selection()
-        selected_camera = clip.camera if clip else (int(selection[0].split('_')[1])
-            if selection and selection[0].startswith('camera_') else None)
-        if selected and selected_camera is None:
-            messagebox.showinfo('同步', '请先选择需要同步的机位或片段。', parent=self)
+        clips = (selected_video_clips(self.project, self._timeline_selection, self.media_tree.selection())
+                 if selected else list(self.project.clips))
+        if selected and not clips:
+            messagebox.showinfo('同步', '请先选择需要同步的视频片段或机位。', parent=self)
             return
-        clips = ([item for item in self.project.clips if item.camera == selected_camera]
-                 if selected and selected_camera is not None else list(self.project.clips))
-        reference=self.project.alignment_reference_camera
-        if reference is None and self.project.master_audio:
+        reference = None if use_master or reference_audio_keys is not None else self.project.alignment_reference_camera
+        if not selected and reference_audio_keys is None and reference is None and self.project.master_audio:
             master_key = os.path.normcase(os.path.abspath(self.project.master_audio))
             partial = next((item for item in self.project.clips
                 if os.path.normcase(os.path.abspath(item.path)) == master_key
@@ -1809,9 +1804,35 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
                 self.project.alignment_reference_camera = reference = partial.camera
                 self._refresh_sync_reference_choices()
                 self._mark_dirty()
-        reference_clips=[copy.deepcopy(item) for item in self.project.clips if item.camera==reference] if reference is not None else []
-        if reference is not None:clips=[item for item in clips if item.camera!=reference]
-        if not clips or not ffmpeg or (reference is None and not self.project.master_audio):
+        reference_clips = None
+        reference_label = '主音频' if reference is None else self._label_camera(reference)
+        if reference_audio_keys is not None:
+            try:
+                reference_clips = reference_audio_clips(self.project, reference_audio_keys)
+            except ValueError as error:
+                messagebox.showinfo('同步', str(error), parent=self); return
+            if not reference_clips:
+                messagebox.showinfo('同步', '请选择至少一个参考音频片段。', parent=self); return
+            # A linked reference includes its picture. Keep that pair anchored,
+            # but let other selected parts on the same camera move independently.
+            if self.project.timeline_link_enabled:
+                anchored = {identifier for kind, identifier in reference_audio_keys if kind == 'camera_audio'}
+                clips = [item for item in clips if item.id not in anchored]
+            reference_label = f'所选音频（{len(reference_clips)} 段）'
+        elif reference is not None:
+            reference_clips = [copy.deepcopy(item) for item in self.project.clips if item.camera == reference]
+            clips = [item for item in clips if item.camera != reference]
+        elif self.project.master_audio:
+            master_parts = master_audio_clips(self.project)
+            # Preserve the established batch matcher for an untouched A0. An
+            # edited/moved master must instead use its actual anchored intervals.
+            if (len(master_parts) != 1 or master_parts[0].start != 0 or master_parts[0].source_in != 0
+                    or abs(master_parts[0].duration-self.project.master_duration) > 1e-8):
+                reference_clips = reference_audio_clips(self.project, {('audio', item.id) for item in master_parts})
+        if not clips:
+            messagebox.showinfo('同步', '所选视频都是参考音频的绑定片段，已保持原位。请再选中需要移动的视频片段。', parent=self)
+            return
+        if not clips or not ffmpeg or (reference_clips is None and not self.project.master_audio):
             messagebox.showinfo('同步', '请选择待同步素材，以及主音频或一个参考机位；参考机位自身保持固定。', parent=self); return
         if any(not self._can_move_timeline_clip(item) for item in clips): return
         self.stop_monitors()
@@ -1820,10 +1841,12 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         self.app.cancel_event.clear()
         self.app._set_working(True)
         self.app._begin_shared_progress('同步并对齐 0.0%')
-        self._alignment_reference_label='主音频' if reference is None else self._label_camera(reference)
+        self._alignment_reference_label = reference_label
         self.status.set('正在多窗口匹配'+self._alignment_reference_label+'；逐段核对真实起点，未确认的片段保留原位。底部可取消。')
         sync_clips = copy.deepcopy(clips)
         sync_fps = self.project.fps
+        sync_ffprobe = self.app.caps.ffprobe_path
+        reference_clips = copy.deepcopy(reference_clips)
         ids = [c.id for c in clips]
         self._alignment_attempt_ids = tuple(ids)
         master = self.project.master_audio
@@ -1833,8 +1856,8 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
             try:
                 progress=lambda percent,phase:self.jobs.put(('sync_progress',(percent,phase)))
                 results = align_camera_tracks(ffmpeg, sync_clips, master,
-                    reference_clips=reference_clips if reference is not None else None,
-                    ffprobe_path=self.app.caps.ffprobe_path, mode=mode,
+                    reference_clips=reference_clips,
+                    ffprobe_path=sync_ffprobe, mode=mode,
                     cancel_event=self.app.cancel_event, progress=progress, fps=sync_fps)
                 if self.app.cancel_event.is_set(): raise ExportCancelled('同步已取消')
                 self.jobs.put(('aligned', (list(zip(ids, results)), time.monotonic() - began)))
@@ -3108,20 +3131,8 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
                     if not cancelled:messagebox.showerror('导入机位',text,parent=self)
                     continue
                 if kind=='batch_import_ready':
-                    self.busy=False;self.app._set_working(False)
-                    if self.app.cancel_event.is_set():
-                        self.status.set('已取消批量导入，保留原工程');continue
-                    if not payload:continue
-                    self._remember();first=not self.project.clips
-                    for camera,info in payload:
-                        self.project.clips.append(CameraClip(uuid.uuid4().hex,camera,info.path,0.,info.duration,has_alpha=bool(getattr(info,'has_alpha',False)),has_audio=info.has_audio))
-                        if not self.project.master_audio and info.has_audio:
-                            self.project.master_audio=info.path;self.project.master_duration=info.duration;self.project.master_audio_clips=[]
-                    if first and not self.project.project_settings:
-                        self.project.fps=payload[0][1].fps or 30;self.fps_var.set(f'{self.project.fps:.8g}')
-                    if not self.project.cuts:self.project.set_cut(0,payload[0][0])
-                    self._refresh();self.fit_timeline()
-                    self.status.set(f'已导入 {len(payload)} 个视频，新增 {len(payload)} 个机位；同机位分段请使用“追加”。')
+                    self._handle_camera_import_job('camera_import_ready',
+                        (self.project, [(camera, [info]) for camera, info in payload]))
                     continue
                 if kind.startswith('camera_match_'):
                     self._handle_camera_match_job(kind,payload);continue
@@ -3240,6 +3251,8 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
             '   监看上方可分别选择1–6行、1–6列，最多6×6同屏36机位；超过当前网格容量时左右箭头翻页。\n'
             '   数字键1–9选择本页前九格，第10–36格请点击机位按钮；网格设置随工作区布局保存。\n'
             '2. “对齐参考”可选主音频或单个机位；参考机位固定，其他机位按其波形对齐。\n'
+            '   时间线上 Ctrl/Shift 多选或框选视频，右键“自动对齐所选视频”，选择主音频或选中的音频作参考。\n'
+            '   只移动所选视频；参考音频及其绑定视频保持原位，未选中素材不参与移动，可 Ctrl+Z 撤销。\n'
             '   无法自动确认的片段会列入“未对齐片段”列表，显示机位、文件名和原因；可定位到所选片段检查。\n'
             '   机位列表上方“全部收起 / 全部展开”可一键折叠全部机位；刷新后保留展开状态。\n'
             '   也可手填片段起点、拖动时间线或逐帧微调；同步不会替换主音频。\n'

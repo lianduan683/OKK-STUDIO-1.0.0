@@ -34,6 +34,8 @@ class VideoStackUIMixin:
         if value == self.project.video_stack_enabled: return
         self._remember()
         self.project.video_stack_enabled = value
+        if self.project.multicam_outer_order == [0]:
+            self.project.multicam_inner_stack = value
         if value:
             self.project.video_stack_order = self.project.stacked_cameras(include_hidden=True)
         self._refresh()

@@ -173,6 +173,8 @@ class TimelineImportMixin:
     def set_multicam_timeline_view(self, collapsed):
         if not self._available() or self.project.timeline_multicam_collapsed == collapsed: return False
         self._remember_timeline_change()
+        from multicam_outer import retain_compound
+        retain_compound(self.project)
         self.project.timeline_multicam_collapsed = bool(collapsed)
         self._set_timeline_selection(set(), redraw=False)
         self.draw_timeline()

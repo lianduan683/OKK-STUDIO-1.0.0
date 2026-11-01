@@ -22,8 +22,8 @@ class TimelineInsertMixin:
 
     def _place_inserted_video_layer(self, camera, placement):
         """Inside the caller's undo transaction; front of order is topmost."""
-        from multicam_outer import outer_cameras, place_outer
-        if self.project.timeline_multicam_collapsed or placement[1] in outer_cameras(self.project) or placement[1] == 0:
+        from multicam_outer import place_outer
+        if self.project.multicam_outer_order or self.project.timeline_multicam_collapsed or placement[1] == 0:
             place_outer(self.project, camera, placement)
             return
         side, reference = placement

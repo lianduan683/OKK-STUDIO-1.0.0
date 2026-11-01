@@ -384,6 +384,13 @@ class TimelineInteractionMixin:
             return
         if not infos and not master:
             return
+        from multicam_outer import has_compound, retain_compound, outer_cameras
+        compound = has_compound(project)
+        existing_cameras = set(project.timeline_cameras)
+        # A collapsed compound is one destination, not an invitation to move
+        # one of its source tracks outside or append new media to that source.
+        if compound and project.timeline_multicam_collapsed and camera not in outer_cameras(project):
+            camera = None
         alpha = any(bool(getattr(info, 'has_alpha', False)) for info in infos)
         if alpha and camera in project.cameras:
             camera = max(project.timeline_cameras, default=0)+1
@@ -393,6 +400,7 @@ class TimelineInteractionMixin:
             self.status.set('此轨道已有库叠加特效，请先移除特效，再在该范围插入素材。')
             return
         self._remember()
+        if compound: retain_compound(project)
         if master:
             project.master_audio, project.master_duration = master
         if not infos:
@@ -424,13 +432,12 @@ class TimelineInteractionMixin:
         stop = math.floor(position*project.fps+.5)/project.fps
         if layer_placement is not None:
             self._place_inserted_video_layer(camera, layer_placement)
-        elif project.timeline_multicam_collapsed and camera not in project.multicam_outer_order:
+        elif compound and camera not in existing_cameras:
             self._place_inserted_video_layer(camera, ('above', 0))
         elif alpha: self._activate_alpha_layers([camera])
         elif camera in project.timeline_empty_tracks:
             project.video_stack_enabled = True
-        if not project.cuts: project.set_cut(0, min(project.cameras))
-        from multicam_outer import outer_cameras
+        if not project.cuts and not compound: project.set_cut(0, min(project.cameras))
         internal_edit = (bool(project.multicam_outer_order) and camera not in outer_cameras(project)
                          and not project.multicam_inner_stack)
         if stop > start and (not project.video_stack_enabled or internal_edit):

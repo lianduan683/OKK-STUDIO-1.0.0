@@ -474,6 +474,7 @@ class TimelineSelectionMixin:
         source_count = sum(key[0] == 'clip' for key in self._timeline_selection)
         menu.add_command(label='合并选中素材（首尾接齐）', command=self._merge_timeline_selection,
                          state='normal' if source_count >= 2 else 'disabled')
+        self._append_selection_sync_menu(menu)
         label = '取消绑定主音轨' if self._timeline_selection == {('audio', 'master')} else '删除所选内容'
         menu.add_command(label=label, accelerator='Delete', command=self._delete_timeline_selection)
         menu.add_command(label='全选素材与字幕', accelerator='Ctrl+A', command=self._select_all_timeline)

@@ -28,6 +28,18 @@ def outer_cameras(project):
     return set(getattr(project, 'multicam_outer_order', ())) - {GROUP}
 
 
+def has_compound(project):
+    """A collapsed legacy view or persistent outer order denotes a compound."""
+    return bool(project.clips and (project.timeline_multicam_collapsed or project.multicam_outer_order))
+
+
+def retain_compound(project):
+    """Remember the compound even while expanded and without any outer tracks."""
+    if project.clips and not project.multicam_outer_order:
+        project.multicam_inner_stack = project.video_stack_enabled
+        project.multicam_outer_order = [GROUP]
+
+
 def compound_duration(project):
     outside = outer_cameras(project)
     inside = [clip for clip in project.clips if clip.camera not in outside]
@@ -50,12 +62,11 @@ def validate_outer(project):
 
 def prune_outer(project):
     if not getattr(project, 'multicam_outer_order', ()): return
+    had_outer = bool(outer_cameras(project))
     project.multicam_outer_order = [value for value in project.multicam_outer_order
         if value == GROUP or value in project.timeline_cameras]
-    if project.multicam_outer_order == [GROUP]:
-        project.multicam_outer_order = []
+    if had_outer and project.multicam_outer_order == [GROUP]:
         project.video_stack_enabled = project.multicam_inner_stack
-        project.multicam_inner_stack = False
 
 
 def place_outer(project, camera, placement):

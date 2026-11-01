@@ -10,6 +10,7 @@ from tkinter import filedialog, messagebox
 from camera_import import grouped_import
 from exporter_core import ExportCancelled, find_binary
 from multicam_core import CameraClip
+from multicam_outer import has_compound, retain_compound, place_outer
 
 VIDEO_TYPES = [('视频', '*.mp4 *.mov *.mkv *.mxf *.avi *.mts *.m2ts *.webm *.mpg *.mpeg *.m4v *.wmv *.ts'),
                ('所有文件', '*.*')]
@@ -80,7 +81,10 @@ class CameraImportMixin:
             return True
         if not groups:
             return True
+        compound = has_compound(project)
+        existing_cameras = set(project.timeline_cameras)
         self._remember()
+        if compound: retain_compound(project)
         first = not project.clips
         had_master = bool(project.master_audio)
         imported = []
@@ -92,17 +96,22 @@ class CameraImportMixin:
                 project.clips.append(clip)
                 imported.append(clip)
                 start += info.duration
-                if not project.master_audio and info.has_audio:
+                if not compound and not project.master_audio and info.has_audio:
                     project.master_audio, project.master_duration = info.path, info.duration
+                    project.master_audio_clips = []
+        new_cameras = list(dict.fromkeys(camera for camera, _ in groups if camera not in existing_cameras))
+        if compound:
+            for camera in reversed(new_cameras):
+                place_outer(project, camera, ('top', None))
         if first and not project.project_settings:
             project.fps = groups[0][1][0].fps or 30
             self.fps_var.set(f'{project.fps:.8g}')
-        if not project.cuts:
+        if not project.cuts and not compound:
             project.set_cut(0, groups[0][0])
         reference_camera = next((camera for camera, infos in groups
                                  if len(infos) > 1 and any(info.has_audio for info in infos)), None)
         reference_selected = False
-        if not had_master and project.alignment_reference_camera is None and reference_camera is not None:
+        if not compound and not had_master and project.alignment_reference_camera is None and reference_camera is not None:
             # A split recording is a full reference track, not just its first
             # audio-bearing file. A later explicit master selection overrides it.
             project.alignment_reference_camera = reference_camera
@@ -117,6 +126,8 @@ class CameraImportMixin:
         self.app.progress_var.set(100)
         count = len(imported)
         message = f'已导入 {count} 段视频到 {len(groups)} 条机位轨道；分段已首尾接齐。'
+        if compound and new_cameras:
+            message += '新机位位于多机位片段外层，原多机位内容保持不变。'
         if reference_selected:
             message += f'机位 {reference_camera} 整轨作为对齐参考；节目主音频暂为首段，请选择全程主音频。'
         else:
