@@ -164,6 +164,7 @@ class MulticamProject:
     timeline_multicam_collapsed: bool = False
     clip_transforms: list[ClipTransformRange] = field(default_factory=list)
     timeline_view: dict = field(default_factory=dict, compare=False)
+    audio_mixer: dict = field(default_factory=dict)
 
     def set_camera_name(self, camera: int, name: str) -> None:
         if _camera(camera) not in self.timeline_cameras:
@@ -259,6 +260,8 @@ class MulticamProject:
         self.cuts = normalized
 
     def validate(self) -> None:
+        from audio_mixer import validate_settings
+        validate_settings(self.audio_mixer)
         if type(self.timeline_multicam_collapsed) is not bool:
             raise ValueError('多机位时间线视图设置必须是布尔值')
         validate_project_settings(self.project_settings)
@@ -545,6 +548,10 @@ class MulticamProject:
             payload['version'] = 19
         else:
             payload.pop('timeline_view')
+        if self.audio_mixer:
+            payload['version'] = 20
+        else:
+            payload.pop('audio_mixer')
         for clip in instances:
             if clip['enabled']: clip.pop('enabled')
         if not self.master_audio_clips: payload.pop('master_audio_clips')
@@ -629,13 +636,13 @@ class MulticamProject:
         base = Path(base_directory).resolve()
         try:
             if (not isinstance(payload, dict) or payload.get("format") != "okk-multicam"
-                    or type(payload.get("version")) is not int or payload.get("version") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19}):
+                    or type(payload.get("version")) is not int or payload.get("version") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}):
                 raise ValueError("不是受支持的多机位工程")
             allowed = {"format", "version", "clips", "cuts", "master_audio", "master_duration", "fps",
                        "range_start", "range_end", "global_grade", "camera_grades", "transitions", "subtitles",
                        "edit_points", "clip_grades", "clip_transforms", "stabilizations", "library_overlays", "alignment_reference_camera", "color_reference_camera",
                        "video_stack_enabled", "video_stack_order", "video_stack_hidden", "timeline_empty_tracks", "camera_names",
-                       "audio_track_enabled", "timeline_markers", "timeline_snap_enabled", "timeline_link_enabled", "audio_overrides", "timeline_removed_tracks", "project_settings", "monitor_layout", "timeline_view", "master_audio_clips", "timeline_multicam_collapsed"}
+                       "audio_track_enabled", "timeline_markers", "timeline_snap_enabled", "timeline_link_enabled", "audio_overrides", "timeline_removed_tracks", "project_settings", "monitor_layout", "timeline_view", "master_audio_clips", "timeline_multicam_collapsed", "audio_mixer"}
             if set(payload) - allowed:
                 raise ValueError("工程包含未知字段")
 
@@ -740,6 +747,7 @@ class MulticamProject:
                           timeline_view=payload.get('timeline_view', {}),
                           timeline_multicam_collapsed=payload.get('timeline_multicam_collapsed', False))
             project.master_audio_clips = master_clips
+            project.audio_mixer = payload.get('audio_mixer', {})
             project.validate()
             return project
         except (json.JSONDecodeError, TypeError, KeyError, OverflowError) as exc:
@@ -977,11 +985,22 @@ def render_multicam(
     # mute/enable map is also honored when every selected track is silent.
     mix_sources = []
     audio_infos = {}
+    from audio_mixer import enabled as mixer_enabled
+    processed_audio = ''
+    if settings.audio != 'none' and mixer_enabled(project):
+        if settings.audio == 'copy':
+            raise ValueError('调音已启用，请将音频格式改为 AAC、PCM 或 FLAC；复制原音频不会包含调音。')
+        from audio_mix_render import prepare_mix
+        processed_audio = prepare_mix(project, ffmpeg, ffprobe, cancel=cancel_event)
     if settings.audio != 'none':
         audio_project = replace(project, clips=[replace(clip, has_audio=media[clip.path].has_audio)
                                                 for clip in project.clips])
         mix_sources, audio_infos = probe_audio_sources(ffprobe, audio_sources(audio_project), cancel_event,
                                                       probe=lambda path: _audio_stream_info(ffprobe, path))
+        if processed_audio:
+            from timeline_audio import AudioSource
+            mix_sources = [AudioSource(0, processed_audio, 0., project.duration)]
+            audio_infos = {processed_audio: _audio_stream_info(ffprobe, processed_audio)[0]}
     in_range = [source for source in mix_sources
                 if source.start < timeline_start+duration and source.end > timeline_start]
     audio_source = audio_infos.get(in_range[0].path, {}) if in_range else {}

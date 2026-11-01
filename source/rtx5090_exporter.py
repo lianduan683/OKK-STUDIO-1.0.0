@@ -95,7 +95,7 @@ from editor_core import build_proxy_encode_command, proxy_format_labels, resolve
 
 
 APP_NAME = "RTX 视频渲染工坊"
-APP_VERSION = "1.0.16"
+APP_VERSION = "1.0.17"
 BG = "#18191b"
 SURFACE = "#202124"
 PANEL = "#242629"
@@ -402,9 +402,10 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
         editor = ttk.Frame(notebook, style="Panel.TFrame", padding=8)
         multicam = ttk.Frame(notebook, style="Panel.TFrame", padding=0)
         color = ttk.Frame(notebook, style="Panel.TFrame", padding=0)
+        audio = ttk.Frame(notebook, style="Panel.TFrame", padding=0)
         delivery = ttk.Frame(notebook, style="Panel.TFrame", padding=0)
         self.page_frames = {"editor": editor, "multicam": multicam,
-                            "color": color, "delivery": delivery}
+                            "color": color, "audio": audio, "delivery": delivery}
         for name, frame in self.page_frames.items():
             notebook.add(frame, text=name)
         self.export_notebook = ttk.Notebook(delivery)
@@ -454,14 +455,14 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
         selected = self.page_notebook.select()
         self.active_page = next((name for name, frame in self.page_frames.items() if str(frame) == selected), "multicam")
         labels = {"editor": "剪辑工具", "multicam": "多机位剪辑",
-                  "color": "调色", "delivery": "转码与导出"}
+                  "color": "调色", "audio": "调音", "delivery": "转码与导出"}
         self.page_title_var.set(labels[self.active_page])
         for name, button in self.page_buttons.items():
             button.configure(bg="#30363d" if name == self.active_page else SURFACE,
                              fg=TEXT if name == self.active_page else MUTED,
                              highlightbackground=PURPLE if name == self.active_page else SURFACE)
         transcoding = self.active_page == "delivery" and self._export_section() == "basic"
-        if self.active_page in {"multicam", "color", "delivery"} and not transcoding:
+        if self.active_page in {"multicam", "color", "audio", "delivery"} and not transcoding:
             ws = self.multicam_workspace
             target = (self.export_sections["delivery"] if self.active_page == "delivery"
                       else self.page_frames[self.active_page])
@@ -472,14 +473,14 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
         else:
             self.multicam_workspace.pause()
         text = ("开始转码" if transcoding else "渲染所有" if self.active_page == "delivery"
-                else "交付 / 导出" if self.active_page in {"multicam", "color"} else "导出设置")
+                else "交付 / 导出" if self.active_page in {"multicam", "color", "audio"} else "导出设置")
         self.export_button.configure(text=text)
 
 
     def _context_export(self) -> None:
         if self.working:
             return
-        if self.active_page in {"multicam", "color"}:
+        if self.active_page in {"multicam", "color", "audio"}:
             self.multicam_workspace.show_delivery()
         elif self.active_page == "delivery":
             if self._export_section() == "basic":
@@ -4055,6 +4056,7 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
         holder.pack()
         for name, label in (("editor", "剪辑工具"),
                             ("multicam", "多机位剪辑"), ("color", "调色"),
+                            ("audio", "调音"),
                             ("delivery", "转码与导出")):
             button = tk.Button(holder, text=label, command=lambda key=name: self._select_page(key),
                                bg=SURFACE, fg=MUTED, activebackground=PANEL_ALT, activeforeground=TEXT,
@@ -5204,6 +5206,9 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
 
 
 if __name__ == "__main__":
+    if "--audio-plugin-worker" in sys.argv:
+        from audio_plugin_worker import main as audio_worker_main
+        raise SystemExit(audio_worker_main(sys.argv[2:]))
     if "--headless-export" in sys.argv:
         from okk_cli import run_headless_cli
 

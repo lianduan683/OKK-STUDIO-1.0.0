@@ -1471,6 +1471,8 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
             refresh_creative()
         if vars(self).get('color_workspace'):
             self.color_workspace.refresh()
+        if vars(self).get('audio_workspace'):
+            self.audio_workspace.refresh()
         if reconfigure:
             self._configure_player()
         finishing = vars(self).get("finishing_workspace")
@@ -2060,12 +2062,16 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         # Playback remains controllable while an independent import/proxy job
         # is running; only opening a new set of decoders requires availability.
         if self.player is None and not self._available(): return
+        audio = vars(self).get('audio_workspace')
+        if not self.playing and audio and not audio.ensure_playback(): return
         self._stop_transport_hold()
         if not self.player: self.start_monitors()
         if self.player: self.player.submit('toggle')
 
     def replay(self):
         if not self._available(): return
+        audio = vars(self).get('audio_workspace')
+        if audio and not audio.ensure_playback(): return
         self.record_var.set(False)
         if not self.player: self.start_monitors()
         if self.player:
@@ -2606,7 +2612,7 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
                 camera_title = self.project.camera_names.get(span.camera) or (self._clip_camera_label(source) if source else '未知相机')
                 grade_index = bisect_right(grade_starts, span.start+1e-8)-1
                 graded = grade_index >= 0 and span.start < grades[grade_index].end-1e-8
-                title=('已禁用 · ' if disabled else '')+f'{span.camera} · '+camera_title + (' · 调色' if graded else '') + stabilization_label
+                title=('已禁用 · ' if disabled else '')+f'{camera_number(self.project, span.camera)} · '+camera_title + (' · 调色' if graded else '') + stabilization_label
                 title = self._timeline_fit_label(title_font, title, x2-x-self._px(12))
                 item = canvas.create_text(x + self._px(7), ruler_h + program_h / 2,
                     text=title,
@@ -3211,6 +3217,8 @@ class MulticamWorkspace(TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin
         return self._confirm_discard()
 
     def close(self):
+        audio = vars(self).get('audio_workspace')
+        if audio is not None: audio.close()
         self._close_timeline_view()
         crop_editor = vars(self).get('_crop_editor')
         if crop_editor is not None: crop_editor.close()

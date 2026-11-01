@@ -81,6 +81,10 @@ def _trim_project_edges(project):
                              if camera in available}
     project.camera_names = {camera: name for camera, name in project.camera_names.items()
                             if camera in project.timeline_cameras}
+    if getattr(project, 'audio_mixer', None):
+        tracks = {'master', '0', *(str(camera) for camera in project.timeline_cameras)}
+        project.audio_mixer['strips'] = {track: config for track, config in
+            project.audio_mixer.get('strips', {}).items() if track in tracks}
     project.audio_track_enabled = {track: enabled for track, enabled in project.audio_track_enabled.items()
                                     if track == 0 or track in project.timeline_cameras}
     if project.alignment_reference_camera not in available:

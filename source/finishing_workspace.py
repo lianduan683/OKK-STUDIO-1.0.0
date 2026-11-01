@@ -93,6 +93,10 @@ class FinishingWorkspace(tk.Frame):
         self.color_host = tk.Frame(self.split, bg=BG)
         self.color_host.grid_columnconfigure(0, weight=1)
         self.color_host.grid_rowconfigure(0, weight=1)
+        from audio_workspace import AudioWorkspace
+        self.audio_host = tk.Frame(self.split, bg=BG)
+        workspace.audio_workspace = AudioWorkspace(self.audio_host, workspace)
+        workspace.audio_workspace.pack(fill='both', expand=True)
         self.queue_host = tk.Frame(self.upper, bg=PANEL, width=px(280))
         self._build_queue()
         self.clips_host = tk.Frame(self.upper, bg=PANEL, width=px(260))
@@ -156,7 +160,7 @@ class FinishingWorkspace(tk.Frame):
         if mode == self.mode:
             return
         self._leave()
-        if mode not in {'color', 'delivery'}:
+        if mode not in {'color', 'audio', 'delivery'}:
             return
         ws = self.ws
         # Run the editor's pending initial layout restoration before capturing
@@ -195,6 +199,13 @@ class FinishingWorkspace(tk.Frame):
             ws.delivery_export_button.configure(text='添加到渲染队列', command=self.add_job)
             self.split.add(self.timeline_host, weight=2)
             ws.timeline_section.grid(in_=self.timeline_host, row=0, column=0, sticky='nsew')
+        elif mode == 'audio':
+            self.title_var.set('调音 · AUDIO')
+            self.upper.add(self.viewer_host, weight=1)
+            self.split.add(self.audio_host, weight=5)
+            self.split.add(self.timeline_host, weight=2)
+            ws.timeline_section.grid(in_=self.timeline_host, row=0, column=0, sticky='nsew')
+            ws.audio_workspace.refresh()
         else:
             self.title_var.set('调色 · COLOR')
             self.upper.add(self.viewer_host, weight=1)
@@ -223,7 +234,8 @@ class FinishingWorkspace(tk.Frame):
         if mode == 'color':
             ws._audition_grade_target()
         self._raise_active_panels()
-        ws.status.set('调色页 · 色轮、RGB 曲线与自动调色' if mode == 'color' else
+        ws.status.set('调音页 · 音轨、总线、均衡压缩与 FabFilter / VST3 插件' if mode == 'audio' else
+                      '调色页 · 色轮、RGB 曲线与自动调色' if mode == 'color' else
                       '导出页 · 设置输出参数，添加到渲染队列后点击“渲染所有”。')
 
     def _size_panes(self):
@@ -239,6 +251,10 @@ class FinishingWorkspace(tk.Frame):
         elif self.mode == 'color' and width > 10:
             self.upper.sashpos(0, width - min(px(260), round(width * .23)))
         if height > 10:
+            if self.mode == 'audio':
+                self.split.sashpos(0, round(height * .22))
+                self.split.sashpos(1, round(height * .82))
+                return
             delivery_ratio = .67 if height < px(800) else .59
             top = round(height * delivery_ratio) if self.mode == 'delivery' else min(
                 round(height * .46), max(px(140), height - px(410)))
@@ -252,6 +268,8 @@ class FinishingWorkspace(tk.Frame):
         self.ws.program_panel.lift()
         if self.mode == 'color':
             self.ws.color_workspace.lift()
+        elif self.mode == 'audio':
+            self.ws.timeline_section.lift()
         else:
             self.ws.delivery_tab.lift()
             self.ws.timeline_section.lift()
@@ -266,6 +284,8 @@ class FinishingWorkspace(tk.Frame):
         if self.mode == 'edit':
             return
         ws = self.ws
+        if self.mode == 'audio':
+            ws.audio_workspace.apply()
         ws._cancel_grade_drafts()
         if ws.player:
             ws.player.submit('audition', camera=None)

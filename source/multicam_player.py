@@ -483,6 +483,9 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
         elif action == "configure":
             position = self._clock() if self._project is not None else 0.0
             self._project = values["project"]
+            from audio_mixer import ready_mix
+            self._audio_mix_path = ready_mix(self._project)
+            self._audio_mix_bypass = False
             self._prerender_items = []
             self._prune_track_audio_slots()
             resolver = getattr(self, '_proxy_resolver', None)
@@ -515,6 +518,9 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
             # file keeps its running decoder and clock; only an actual file
             # change below freezes playback while it is being opened.
             self._sync(force=stack_changed)
+        elif action == 'audio_bypass':
+            self._audio_mix_bypass = bool(values.get('enabled', False))
+            self._sync(force=True)
         elif action == 'prerender_cache':
             from prerender import picture_signature
             items = values.get('items', [])
@@ -844,6 +850,11 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
         return True
 
     def _audio_spec(self, position: float) -> tuple | None:
+        mixed = getattr(self, '_audio_mix_path', '')
+        if mixed and not getattr(self, '_audio_mix_bypass', False):
+            self._audio_offset = 0.
+            if position < 0 or position >= self._duration(): return None
+            return ('audio-mix', mixed), mixed, position
         if not audio_track_enabled(self._project, 0):
             return None
         master = _get(self._project, "master_audio", "")
@@ -867,6 +878,8 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
 
     def _camera_audio_spec(self, camera: int, position: float) -> tuple | None:
         """Sound follows its source row, independently of programme cuts/proxies."""
+        if getattr(self, '_audio_mix_path', '') and not getattr(self, '_audio_mix_bypass', False):
+            return None
         if not audio_track_enabled(self._project, camera):
             return None
         clip_at = _get(self._project, 'clip_at')

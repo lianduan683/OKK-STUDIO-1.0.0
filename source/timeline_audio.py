@@ -197,7 +197,7 @@ def coalesce_audio_sources(sources):
     return result
 
 
-def build_audio_mix_args(sources, start: float, duration: float, *, sample_rate=48000, input_offset=0):
+def build_audio_mix_args(sources, start: float, duration: float, *, sample_rate=48000, input_offset=0, clip_sum=True):
     """Return FFmpeg input args, a filter graph, and its output label.
 
     The graph is exactly the requested timeline range, including leading,
@@ -231,7 +231,7 @@ def build_audio_mix_args(sources, start: float, duration: float, *, sample_rate=
         # A zero-latency hard bound keeps summed tracks from overflowing without
         # normalizing or changing single-track gain.
         clipping = (',aeval=clip(val(0)\\,-1\\,1)|clip(val(1)\\,-1\\,1),'
-                    'aformat=channel_layouts=stereo' if multiple else '')
+                    'aformat=channel_layouts=stereo' if multiple and clip_sum else '')
         filters.append(mix + f'apad,atrim=duration={duration:.9f}' + clipping + '[okk_audio_mix]')
     else:
         index = input_offset
