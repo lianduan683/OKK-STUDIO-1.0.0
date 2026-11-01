@@ -7,6 +7,7 @@ from pathlib import Path
 
 from exporter_core import find_binary
 from video_stack_preview import StackPreview
+from video_placement import has_placement
 
 
 class VideoStackPlayerMixin:
@@ -41,11 +42,13 @@ class VideoStackPlayerMixin:
 
     def _configure_stack_mode(self):
         enabled = bool(getattr(self._project, 'video_stack_enabled', False))
+        placed = has_placement(self._project)
         if getattr(self._project, 'multicam_outer_order', ()):
             from multicam_outer import outer_cameras
             if not self._project.multicam_inner_stack and not any(
                     clip.camera in outer_cameras(self._project) for clip in self._project.clips):
                 enabled = False
+        enabled = enabled or placed
         if self._stack_preview is not None: self._stack_preview.cancel()
         self._stack_revision += 1
         self._stack_job_key = None
@@ -73,6 +76,11 @@ class VideoStackPlayerMixin:
         project = copy.deepcopy(self._project)
         project.range_start = 0.
         project.range_end = None
+        if not project.video_stack_enabled and has_placement(project):
+            # Use the shared compositor for the programme's chosen camera,
+            # keeping ordinary multicam cuts instead of stacking all angles.
+            project.multicam_outer_order = [0]
+            project.multicam_inner_stack = False
         if self._grade_draft:
             target, grade = self._grade_draft
             if target[0] == 'global': project.global_grade = grade

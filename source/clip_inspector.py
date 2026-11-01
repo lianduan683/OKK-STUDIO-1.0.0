@@ -23,6 +23,8 @@ from image_stabilization_panel import image_defaults, MODEL_NAMES, QUALITY_NAMES
 from stabilization_panel import ZOOM_NAMES, open_stabilization_dialog
 from program_edits import split_at, program_spans
 from clip_transform import ClipTransform, validate_transform
+from video_placement import placement_values
+from project_settings import timeline_dimensions
 from project_settings import DEFAULT_SETTINGS
 
 PANEL, INPUT, INK, MUTED, ACCENT = '#292b2e', '#18191b', '#dedfe3', '#969ba3', '#58a6d6'
@@ -41,6 +43,11 @@ class ClipInspector(tk.Frame):
         self._probe_token = None
         self.sections = {}
         self.action_widgets = []
+        self.placement_x = tk.StringVar(self, value='0')
+        self.placement_y = tk.StringVar(self, value='0')
+        self.placement_scale = tk.StringVar(self, value='100')
+        self.placement_text = tk.StringVar(self)
+        self._placement_token = None
         self.target_text = tk.StringVar(self, value='请选择节目轨中的片段')
         self.camera_var = tk.StringVar(self)
         self.camera_choices = {}
@@ -80,7 +87,7 @@ class ClipInspector(tk.Frame):
         self.select_current_button.pack(fill='x', pady=(self.px(6), 0))
         navigation = tk.Frame(self, bg=PANEL)
         navigation.pack(fill='x', padx=self.px(8), pady=(0, self.px(7)))
-        for i, (key, title) in enumerate((('camera', '机位'), ('framing', '裁切缩放'), ('color', '调色'), ('image', '画面防抖'),
+        for i, (key, title) in enumerate((('placement', '位置与大小'), ('camera', '机位'), ('framing', '裁切缩放'), ('color', '调色'), ('image', '画面防抖'),
                                          ('gyro', 'Gyroflow'), ('transition', '转场'), ('overlay', '叠加特效'))):
             navigation.columnconfigure(i % 4, weight=1, uniform='module')
             ttk.Button(navigation, text=title, command=lambda name=key: self.scroll_to(name),
@@ -98,6 +105,7 @@ class ClipInspector(tk.Frame):
         window = self.canvas.create_window(0, 0, window=self.body, anchor='nw')
         self.canvas.bind('<Configure>', lambda event: self.canvas.itemconfigure(window, width=max(1, event.width)))
         self.body.bind('<Configure>', lambda event: self.canvas.configure(scrollregion=self.canvas.bbox('all')))
+        self._build_placement()
         self._build_camera()
         self._build_framing()
         self._build_color()
@@ -162,6 +170,50 @@ class ClipInspector(tk.Frame):
         self.camera_combo = ttk.Combobox(section, textvariable=self.camera_var, state='readonly', width=1)
         self.camera_combo.pack(fill='x', padx=self.px(10), pady=self.px(5))
         self._actions(section, [('应用机位', self.apply_camera), ('定位片段', self.seek_selection)])
+
+    def _build_placement(self):
+        section = self._section('placement', '视频位置与大小',
+            '调整所选视频素材整段的位置和等比大小，透明素材可独立叠加。')
+        self._label(section, self.placement_text).pack(fill='x', padx=self.px(10), pady=self.px(4))
+        self.placement_fields = []
+        for title, variable in (('水平位置 X（像素）', self.placement_x),
+                                ('垂直位置 Y（像素）', self.placement_y),
+                                ('缩放 %（1–400）', self.placement_scale)):
+            entry = self._row(section, title, variable)
+            entry.bind('<Return>', lambda _event: self.apply_placement())
+            self.placement_fields.append(entry)
+        self._label(section, '位置 0 为居中；X 正值向右，Y 正值向下。缩放 100% 为原始适配大小。').pack(
+            fill='x', padx=self.px(10), pady=self.px(4))
+        self.placement_actions = self._actions(section, [('应用位置与大小', self.apply_placement),
+                                                        ('重置位置与大小', self.reset_placement)])
+
+    def apply_placement(self):
+        try:
+            width, height = timeline_dimensions(self.ws.project, (1920, 1080))
+            return self.ws.apply_video_placement(dict(x=self._number(self.placement_x, '水平位置')/width,
+                y=self._number(self.placement_y, '垂直位置')/height,
+                scale=self._number(self.placement_scale, '缩放')/100))
+        except (ValueError, TypeError) as error: self._report(error)
+
+    def reset_placement(self):
+        try: return self.ws.apply_video_placement({})
+        except (ValueError, TypeError) as error: self._report(error)
+
+    def _refresh_placement(self, force=False):
+        clips = self.ws.video_placement_targets()
+        token = (id(self.ws.project), tuple(clip.id for clip in clips), timeline_dimensions(self.ws.project, (1920, 1080)))
+        enabled = bool(clips)
+        for widget in [*self.placement_fields, *self.placement_actions]:
+            widget.configure(state='normal' if enabled else 'disabled')
+        self.placement_text.set((('已选中 '+str(len(clips))+' 个视频素材，统一应用参数。') if len(clips) > 1
+            else '整段素材：'+Path(clips[0].path).name) if clips else '请在时间线上选中视频素材。')
+        if not force and token == self._placement_token: return
+        self._placement_token = token
+        x, y, scale = placement_values(clips[0]) if clips else (0., 0., 1.)
+        width, height = timeline_dimensions(self.ws.project, (1920, 1080))
+        self.placement_x.set(f'{x*width:g}')
+        self.placement_y.set(f'{y*height:g}')
+        self.placement_scale.set(f'{scale*100:g}')
 
     def _build_color(self):
         section = self._section('color', '片段调色', '常用参数直接调整；完整参数页包含阴影、高光、伽马与 LUT。')
@@ -431,11 +483,13 @@ class ClipInspector(tk.Frame):
         return browser
 
     def refresh(self, force=False):
+        self._refresh_placement(force)
         selected = self.ws.selected_program_range
         fallback = self.ws.program_range_at_playhead() if selected is None else None
         self.camera_choices = {self.ws._label_camera(camera): camera for camera in self.ws.project.cameras}
         self.camera_combo.configure(values=list(self.camera_choices))
         for button in self.action_widgets:
+            if button in self.placement_actions: continue
             enabled = selected is not None or (fallback is not None and button in self.framing_actions)
             button.configure(state='normal' if enabled else 'disabled')
         self.select_current_button.configure(state='normal' if fallback is not None else 'disabled')
@@ -446,16 +500,20 @@ class ClipInspector(tk.Frame):
             self.select_current_button.pack_forget()
         if selected is None:
             self._target = None
+            source_targets = (self.ws.video_placement_targets() if any(
+                kind == 'clip' for kind, _ in self.ws._timeline_selection) else [])
+            source_title = ('所选视频素材 · '+Path(source_targets[0].path).name
+                            + (f' 等 {len(source_targets)} 段' if len(source_targets) > 1 else '')) if source_targets else ''
             if fallback is None:
-                self.target_text.set('播放头处没有可用的节目画面\n请把播放头移到视频上，或点击最上方“节目”轨中的片段。')
+                self.target_text.set(source_title or '播放头处没有可用的节目画面\n请把播放头移到视频上，或点击最上方“节目”轨中的片段。')
                 self._fallback_target = None
                 return
             start, end = fallback
             camera = self.ws.project.camera_at(self.ws.current)
             clip = self.ws.project.clip_at(camera, self.ws.current)
-            self.target_text.set('播放头处片段 · 点击裁切将自动选中\n'
+            self.target_text.set(source_title or ('播放头处片段 · 点击裁切将自动选中\n'
                 f'{format_time(start)} — {format_time(end)}\n'
-                + self.ws._label_camera(camera, self.ws.current) + (' · '+Path(clip.path).name if clip else ''))
+                + self.ws._label_camera(camera, self.ws.current) + (' · '+Path(clip.path).name if clip else '')))
             token = (id(self.ws.project), fallback)
             if force or token != self._fallback_target:
                 self._fallback_target = token

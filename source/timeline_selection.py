@@ -177,6 +177,8 @@ class TimelineSelectionMixin:
             refresh = vars(self).get('creative_panel_refresh')
             if refresh: refresh()
             if vars(self).get('clip_inspector'): self.clip_inspector.refresh()
+        elif changed and vars(self).get('clip_inspector'):
+            self.clip_inspector.refresh()
 
     def _clear_timeline_selection(self):
         had_selection = bool(self._timeline_selection or self.selected_program_range)

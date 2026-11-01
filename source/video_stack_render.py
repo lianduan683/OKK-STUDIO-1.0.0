@@ -18,6 +18,7 @@ from library_overlay import overlay_cache_matches
 from program_edits import grade_at
 from subtitle_core import subtitle_filter
 from video_stack import pixel_format_has_alpha
+from video_placement import placement_values, placement_filter
 
 
 def _frame(seconds, fps):
@@ -33,6 +34,7 @@ class StackLayer:
     phase_origin: float
     has_alpha: bool = False
     programme: bool = False
+    placement: tuple = (0., 0., 1.)
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,7 +72,8 @@ def _layer(project, clip, position):
         source = max(0.0, position - clip.source_origin - overlay.source_start)
         picture = overlay.cache_path
         origin = max(0.0, clip.source_origin + overlay.source_start)
-    return StackLayer(clip.camera, picture, clip.path, source, origin, clip.has_alpha)
+    return StackLayer(clip.camera, picture, clip.path, source, origin, clip.has_alpha,
+                      placement=placement_values(clip))
 
 
 def plan_stack_segments(project):
@@ -161,6 +164,7 @@ def build_stack_command(segment, project, base, width, height, pixel_format,
                    framing_filter(transform, width, height, pad_color=pad))
         normalize = (f'[{index}:v:0]setpts=PTS-STARTPTS,fps=fps={rate_text}:start_time=0,'
                      f'format={alpha_format},{framing},'
+                     + placement_filter(layer.placement, width, height, pad_color=pad) + ',' +
                      f'tpad=stop_mode=clone:stop_duration={segment.duration+prefix/project.fps+1:.9f},'
                      f'trim=start_frame={prefix}:end_frame={prefix+segment.frames},'
                      f'settb=AVTB,setpts=N/({rate_text}*TB),format={alpha_format}')

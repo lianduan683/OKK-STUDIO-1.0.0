@@ -1,26 +1,28 @@
 {
-  "version": "1.0.24",
-  "build_id": "20261101-184715-787d3338",
+  "version": "1.0.25",
+  "build_id": "20261101-191211-e15a021b",
   "focused_regression": {
-    "run": 89,
-    "passed": 88,
+    "run": 74,
+    "passed": 73,
     "failures": 1,
-    "failure": "batch_camera_ui: twenty-track project roundtrip; previously reproduced on baseline",
     "skipped": 0,
     "isolated_private_desktop": true,
+    "failure": "clip_inspector library/color tab selection; previously reproduced on baseline",
     "modules": [
-      "compound_import",
-      "selected_sync",
+      "video_placement",
+      "clip_inspector",
+      "clip_transform",
+      "clip_transform_render",
       "multicam_outer",
-      "timeline_insert_tracks",
-      "camera_folder_import",
       "project_upgrade"
     ]
   },
   "prior_feature_build_validation": {
-    "unique_tests": 74,
-    "passed": 74,
-    "actual_ffmpeg_composition": "passed"
+    "new_feature_tests": 14,
+    "passed": 14,
+    "actual_ffmpeg_pixels": "passed",
+    "baseline_failure": "library and color tab selection also reproduced on previous source",
+    "optional_hardware_skips": 3
   },
   "v1_0_22_validation": {
     "private_desktop_tests": 121,
@@ -42,7 +44,7 @@
     "third_party_vst3": "not tested"
   },
   "frozen_headless_export": "passed",
-  "version_metadata": "1.0.24",
+  "version_metadata": "1.0.25",
   "archive_crc_checks": "passed",
   "source_allowlist_and_known_private_path_and_key_pattern_scan": "passed",
   "trusted_code_signature": false,

@@ -59,6 +59,9 @@ def _check_processed(project, identifiers):
 
 
 def _check_camera_grades(project, sources):
+    from video_placement import placement_values
+    if any(placement_values(clip) != placement_values(sources[0]) for clip in sources[1:]):
+        raise ValueError('所选视频的位置或大小不同，请先统一参数后再合并，避免丢失各片段的位置设置。')
     def effective(camera):
         grade=project.camera_grades.get(camera,ColorGrade())
         return grade if grade.enabled else ColorGrade()

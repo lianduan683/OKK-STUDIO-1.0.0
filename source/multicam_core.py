@@ -50,6 +50,7 @@ from library_overlay import (LibraryOverlayRange, validate_library_overlay,
                              overlay_cache_matches, overlay_from_dict)
 from video_stack import ordered_cameras, validate_stack
 from timeline_audio import audio_sources, probe_audio_sources, build_audio_mix_args, MasterAudioClip
+from video_placement import placement_values, placement_at, placement_filter, has_placement
 from project_settings import validate_project_settings, validate_monitor_layout, timeline_dimensions
 from timeline_view import validate_timeline_view
 
@@ -95,6 +96,7 @@ class CameraClip:
     has_audio: bool | None = None
     source_in: float = 0.0
     enabled: bool = True
+    placement: dict = field(default_factory=dict)
 
     @property
     def source_origin(self) -> float:
@@ -331,6 +333,7 @@ class MulticamProject:
                 raise ValueError('素材启用状态必须是布尔值')
             if type(clip.has_alpha) is not bool:
                 raise ValueError('素材透明通道标记必须是布尔值')
+            placement_values(clip)
             if clip.has_audio is not None and type(clip.has_audio) is not bool:
                 raise ValueError('素材音轨标记必须是布尔值或未知')
             for value in (clip.camera_make,clip.camera_model,clip.camera_metadata_source):
@@ -563,6 +566,10 @@ class MulticamProject:
             payload.pop('multicam_inner_stack')
         for clip in instances:
             if clip['enabled']: clip.pop('enabled')
+            if clip.get('placement'):
+                payload['version'] = 22
+            else:
+                clip.pop('placement', None)
         if not self.master_audio_clips: payload.pop('master_audio_clips')
         if not self.project_settings: payload.pop('project_settings')
         if not self.monitor_layout: payload.pop('monitor_layout')
@@ -645,7 +652,7 @@ class MulticamProject:
         base = Path(base_directory).resolve()
         try:
             if (not isinstance(payload, dict) or payload.get("format") != "okk-multicam"
-                    or type(payload.get("version")) is not int or payload.get("version") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21}):
+                    or type(payload.get("version")) is not int or payload.get("version") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22}):
                 raise ValueError("不是受支持的多机位工程")
             allowed = {"format", "version", "clips", "cuts", "master_audio", "master_duration", "fps",
                        "range_start", "range_end", "global_grade", "camera_grades", "transitions", "subtitles",
@@ -894,6 +901,7 @@ def render_multicam(
     project = replace(project, fps=float(canonical_frame_rate(project.fps)))
     from video_stack_render import plan_stack_segments, validate_stack_media, build_stack_command
     stacked = project.video_stack_enabled
+    placed = has_placement(project)
     segments = plan_stack_segments(project) if stacked else project.segments()
     if not segments:
         raise ValueError("请先添加相机素材")
@@ -901,7 +909,7 @@ def render_multicam(
         segments = plan_creative_segments(project, segments)
         # The older coalescer compares only grades, not framing. Keep all
         # protected transform boundaries until it also understands framing.
-        if not project.clip_transforms:
+        if not project.clip_transforms and not placed:
             segments = coalesce_render_segments(project, segments)
     for grade in [project.global_grade, *project.camera_grades.values(),
                   *(item.grade for item in project.clip_grades)]:
@@ -1190,6 +1198,7 @@ def render_multicam(
             filters = cuda_filter or (
                 f"setpts=PTS-STARTPTS,fps=fps={rate_text}:start_time=0,"
                 + framing_filter(transform_at(project, segment.start), width, height) + ',' +
+                placement_filter(placement_at(project, segment.camera, segment.start), width, height) + ',' +
                 f"format={pixel_format},tpad=stop_mode=clone:stop_duration={segment.duration + prefix_frames / project.fps + 1:.9f},"
                 f"{trim},settb=AVTB,setpts=N/({rate_text}*TB)"
             )
@@ -1231,8 +1240,9 @@ def render_multicam(
                                   for frame in (cut_frame - 1, cut_frame))
             else:
                 transformed = not transform_is_identity(transform_at(project, segment.start))
-            # GPU grading plans predate framing and would silently discard
-            # it. The software graph still retains hardware decode/encode.
+            # GPU grading plans predate framing/placement and would discard
+            # them. The software graph retains hardware decode/encode.
+            transformed = transformed or placed
             if (gpu_effect_ffmpeg and segment.path and not transformed
                     and (isinstance(segment, TransitionSegment) or cuda_filter is None)):
                 blocked=disabled_gpu_reason(segment.path)

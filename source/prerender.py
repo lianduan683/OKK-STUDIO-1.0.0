@@ -17,6 +17,7 @@ from exporter_core import ExportCancelled, ExportSettings
 from multicam_core import render_multicam
 from multicam_frame_clock import canonical_frame_rate
 from quick_proxy import _cancelled, _probe_media_cancel, _run_encode
+from video_placement import placement_values
 
 CACHE_VERSION = 1
 COLORS = {'yellow': '#e4bd48', 'red': '#e26359', 'green': '#65bd83'}
@@ -85,6 +86,8 @@ def plan_blocks(project, seconds=4.):
 
 def needs_render(project, block, media):
     first, last = block.start, block.end
+    if any(clip.start < last and clip.end > first and placement_values(clip) != (0., 0., 1.) for clip in project.clips):
+        return '视频位置与大小'
     if any(item.start < last and item.end > first for item in getattr(project, 'clip_transforms', [])):
         return '裁切与缩放'
     if any(t.time-t.duration/2 < last and t.time+t.duration/2 > first for t in project.transitions):

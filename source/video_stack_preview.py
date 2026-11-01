@@ -392,6 +392,7 @@ class StackPreview:
                 layers.append(layer)
                 if segment.camera == -1: break
                 if (not alpha and not picture.has_alpha and not pixel_format_has_alpha(picture.pixel_format)
+                        and layer.placement == (0., 0., 1.)
                         and covers_canvas(picture)):
                     break
             segment = replace(segment, layers=tuple(layers))

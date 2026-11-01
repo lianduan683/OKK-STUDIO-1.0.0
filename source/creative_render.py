@@ -16,6 +16,7 @@ from creative_core import grade_filter, grade_is_identity, transition_filter, va
 from subtitle_core import subtitle_filter
 from program_edits import grade_at
 from clip_transform import framing_filter, transform_at, transform_is_identity
+from video_placement import placement_at, placement_filter, placement_values
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +172,10 @@ def plan_creative_segments(project, segments) -> list:
 
 
 def has_pixel_effects(project, camera: int, time: float | None = None) -> bool:
+    if time is not None:
+        if placement_at(project, camera, time) != (0., 0., 1.): return True
+    elif any(clip.camera == camera and placement_values(clip) != (0., 0., 1.) for clip in project.clips):
+        return True
     transforms = ([transform_at(project, time)] if time is not None else
                   [item.transform for item in getattr(project, "clip_transforms", [])])
     if any(not transform_is_identity(transform) for transform in transforms):
@@ -245,7 +250,8 @@ def build_transition_command(job: TransitionSegment, project, base, settings, wi
         grade_time = (cut_frame - 1 if index == 0 else cut_frame) / project.fps
         grade = normal_effect_filter(project, camera, job.full_start, grade_time=grade_time)
         framing = framing_filter(transform_at(project, grade_time), width, height)
-        chain = timing + framing + ',' + normalize_tail
+        placement = placement_filter(placement_at(project, camera, grade_time), width, height)
+        chain = timing + framing + ',' + placement + ',' + normalize_tail
         chain += ("," + grade if grade else "") + f",format={working_format}"
         graph.append(f"[{index}:v:0]{chain}[camera{index}]")
     if job.mask_path:

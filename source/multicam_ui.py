@@ -58,6 +58,7 @@ from video_stack_ui import VideoStackUIMixin
 from stack_preview_ui import StackPreviewUIMixin
 from timeline_selection import TimelineSelectionMixin
 from timeline_sync import TimelineSyncMixin, selected_video_clips, reference_audio_clips
+from video_placement_ui import VideoPlacementMixin
 from timeline_insert import TimelineInsertMixin
 from timeline_merge_ui import TimelineMergeMixin
 from preview_focus import PreviewFocusMixin
@@ -87,7 +88,7 @@ COLORS = ['#496e87', '#4b8289', '#667e9e', '#64867c', '#7c718d', '#7e8870', '#80
 VIDEO_TYPES = [('视频', '*.mp4 *.mov *.mkv *.mxf *.avi *.mts *.m2ts *.webm'), ('所有文件', '*.*')]
 
 
-class MulticamWorkspace(TimelineSyncMixin, TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsUIMixin, TimelineControlsMixin, CameraListUIMixin, KeyboardEditMixin, TimelineAudioUIMixin, TimelineMarkersMixin, CameraImportMixin, PreviewFocusMixin, TimelineMergeMixin, TimelineInsertMixin, TimelineSelectionMixin, StackPreviewUIMixin, VideoStackUIMixin, WorkspaceDockingMixin, TransportControlsMixin, TimelineInteractionMixin, MulticamProxyMixin, LibraryApplyMixin, AutoColorWorkspaceMixin, EffectsWorkspaceMixin, tk.Frame):
+class MulticamWorkspace(VideoPlacementMixin, TimelineSyncMixin, TimelineViewMixin, TimelineImportMixin, PrerenderUIMixin, ProjectSettingsMixin, PlaybackMetricsUIMixin, TimelineControlsMixin, CameraListUIMixin, KeyboardEditMixin, TimelineAudioUIMixin, TimelineMarkersMixin, CameraImportMixin, PreviewFocusMixin, TimelineMergeMixin, TimelineInsertMixin, TimelineSelectionMixin, StackPreviewUIMixin, VideoStackUIMixin, WorkspaceDockingMixin, TransportControlsMixin, TimelineInteractionMixin, MulticamProxyMixin, LibraryApplyMixin, AutoColorWorkspaceMixin, EffectsWorkspaceMixin, tk.Frame):
     def __init__(self, parent, app):
         super().__init__(parent, bg=BG)
         self.app = app
@@ -1706,6 +1707,8 @@ class MulticamWorkspace(TimelineSyncMixin, TimelineViewMixin, TimelineImportMixi
     def _select_clip(self, event=None):
         clip = self._selected_clip()
         if clip: self.offset_var.set(format_signed_time(clip.start))
+        if vars(self).get('clip_inspector'):
+            self.clip_inspector._refresh_placement()
 
     def _jump_clip(self, event=None):
         clip = self._selected_clip()
