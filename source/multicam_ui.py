@@ -2014,6 +2014,7 @@ class MulticamWorkspace(VideoPlacementMixin, TimelineSyncMixin, TimelineViewMixi
                 self.program_views[0].winfo_id(), self.audio_surface.winfo_id(), self.player_queue,
                 program_standby_window=self.program_views[1].winfo_id(),
                 gpu_live=self.gpu_live_var.get(),gpu_output_window=self.program_surface.winfo_id(),
+                stack_gpu=self._ensure_stack_gpu(),
                 comparison_window=self.comparison_views[0].winfo_id(),comparison_standby_window=self.comparison_views[1].winfo_id())
         self._configure_player()
         # Navigation can happen before the first player exists. Preserve its
@@ -2088,7 +2089,7 @@ class MulticamWorkspace(VideoPlacementMixin, TimelineSyncMixin, TimelineViewMixi
         if self.player:
             cameras = self._color_original_cameras()
             self.player.submit('configure', project=copy.deepcopy(self.project), use_proxies=use_proxies,
-                               gpu_live=self.gpu_live_var.get(), original_cameras=cameras,
+                               gpu_live=self.gpu_live_var.get(), stack_gpu=self._ensure_stack_gpu(), original_cameras=cameras,
                                color_monitoring=bool(self._color_mode))
             self._published_original_cameras = cameras
             self._published_color_monitoring = bool(self._color_mode)
@@ -2125,6 +2126,7 @@ class MulticamWorkspace(VideoPlacementMixin, TimelineSyncMixin, TimelineViewMixi
     def stop_monitors(self):
         self._reset_playback_metrics()
         self._set_stack_preview_mode(False)
+        self._close_stack_gpu()
         self._reset_transport_controls()
         self.clear_grade_preview()
         if self.player:

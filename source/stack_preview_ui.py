@@ -43,6 +43,32 @@ class StackPreviewUIMixin:
         self._stack_preview_draw_size = None
         self._stack_preview_resize_after = None
         self._stack_photo_api = _photo_api()
+        self._stack_gpu_presenter = None
+        self._stack_gpu_failed = False
+
+    def _ensure_stack_gpu(self):
+        if not self.gpu_live_var.get():
+            self._close_stack_gpu()
+            return False
+        if os.name != 'nt' or self._stack_gpu_failed: return False
+        if self._stack_gpu_presenter is None:
+            try:
+                from stack_gpu import StackGpuPresenter
+                app_dir = getattr(self.app,'app_dir',None)
+                from pathlib import Path
+                runtime = Path(app_dir)/'bin/gpu_live' if app_dir is not None else None
+                self._stack_gpu_presenter = StackGpuPresenter(self.stack_preview_label.winfo_id(),runtime)
+            except Exception as error:
+                self._stack_gpu_failed = True
+                self.status.set('GPU 图层预览不可用，使用兼容合成：' + str(error))
+                return False
+        return True
+
+    def _close_stack_gpu(self, event=None):
+        if event is not None and event.widget is not self.stack_preview_label: return
+        if self._stack_gpu_presenter is not None:
+            self._stack_gpu_presenter.close()
+            self._stack_gpu_presenter = None
 
     def _build_stack_preview(self):
         self.stack_preview_label = tk.Label(self.program_surface, bg='#0e0f10', bd=0,
@@ -54,6 +80,13 @@ class StackPreviewUIMixin:
             self.stack_preview_label.bind('<Button-1>', focus)
             self.stack_preview_time_label.bind('<Button-1>', focus)
         self.program_surface.bind('<Configure>', self._resize_stack_preview, add='+')
+        self.stack_preview_label.bind('<Destroy>', self._close_stack_gpu, add='+')
+        self.stack_preview_label.bind('<Expose>', self._expose_stack_gpu, add='+')
+
+    def _expose_stack_gpu(self, _event=None):
+        if self._stack_gpu_presenter is not None and self._stack_preview_active:
+            self._stack_preview_draw_size = None
+            self._resize_stack_preview()
 
     def _resize_stack_preview(self, _event=None):
         if not self._stack_preview_active or self._stack_preview_last_payload is None: return
@@ -76,7 +109,7 @@ class StackPreviewUIMixin:
         self.stack_preview_time_label.lift()
 
     def _set_stack_preview_mode(self, enabled):
-        enabled = bool(enabled and self.player is not None and self.project.video_stack_enabled)
+        enabled = bool(enabled and self.player is not None)
         self._stack_preview_active = enabled
         if self._stack_preview_after is not None:
             self.after_cancel(self._stack_preview_after)
@@ -85,6 +118,7 @@ class StackPreviewUIMixin:
             self._raise_stack_preview()
             self._stack_preview_after = self.after(16, self._drain_stack_preview)
         else:
+            if self._stack_gpu_presenter is not None: self._stack_gpu_presenter.set_visible(False)
             if self._stack_preview_resize_after is not None:
                 self.after_cancel(self._stack_preview_resize_after)
                 self._stack_preview_resize_after = None
@@ -124,15 +158,29 @@ class StackPreviewUIMixin:
             self._stack_preview_after = self.after(delay, self._drain_stack_preview)
 
     def _present_stack_frame(self, payload):
-        if not self._stack_preview_active or not self.project.video_stack_enabled: return False
+        if not self._stack_preview_active: return False
         accept = getattr(self, '_accept_stack_preview_frame', self._accept_transport_state)
         if not isinstance(payload, dict) or not accept(payload): return False
         width, height, rgba = payload.get('width'), payload.get('height'), payload.get('rgba')
-        if (type(width) is not int or type(height) is not int or not 0 < width <= 7680
-                or not 0 < height <= 4320 or not isinstance(rgba, bytes)
+        layout = payload.get('gpu_layers')
+        if (type(width) is not int or type(height) is not int or not 0 < width <= 16384
+                or not 0 < height <= 16384 or width*height > 1280*720*36 or not isinstance(rgba, bytes)
                 or len(rgba) != width*height*4): return False
         # No conversion occurs until both the freshness fence and shape pass.
         available = (max(1, self.program_surface.winfo_width()), max(1, self.program_surface.winfo_height()))
+        presenter = self._stack_gpu_presenter
+        if presenter is not None:
+            try:
+                presenter.present(rgba,width,height,layout,layout.get('grades') if layout else None)
+            except Exception as error:
+                self._close_stack_gpu()
+                self._stack_gpu_failed = True
+                self.status.set('GPU 图层预览失败，已切换兼容预览：'+str(error))
+                self._configure_player()
+                return False
+            self._record_stack_frame(payload,available)
+            return True
+        if layout: return False  # Never show an atlas as the finished picture.
         ratio = min(available[0]/width, available[1]/height)
         size = (max(1, round(width*ratio)), max(1, round(height*ratio)))
         # NumPy is already shipped by the editor. Write RGBA directly into the
@@ -165,10 +213,13 @@ class StackPreviewUIMixin:
         if api is None:
             ppm = f'P6\n{size[0]} {size[1]}\n255\n'.encode('ascii') + pixels[:, :, :3].tobytes()
             self._stack_preview_image.configure(data=ppm, format='PPM')
+        self._record_stack_frame(payload,available)
+        return True
+
+    def _record_stack_frame(self,payload,available):
         self._stack_preview_last_time = payload.get('time')
         self.stack_preview_time_label.configure(text='画面 ' + format_time(float(payload.get('time', 0.))))
         self._stack_preview_draw_size = available
         self._stack_preview_last_payload = payload
         count = getattr(self, '_count_presented_stack_frame', None)
         if count is not None: count(payload)
-        return True

@@ -41,7 +41,12 @@ def preview_segments(project, position, *, single_frame=False):
     project = replace(project, fps=float(canonical_frame_rate(project.fps)), range_start=0., range_end=None)
     fps = float(project.fps)
     frame = min(max(0, math.floor(position*fps+.5)), max(0, math.ceil(project.duration*fps)-1))
-    for segment in plan_stack_segments(project):
+    if getattr(project,'multicam_outer_order',()):
+        from multicam_outer import plan_outer_segments
+        segments = plan_outer_segments(project,continuous_preview=True)
+    else:
+        segments = plan_stack_segments(project)
+    for segment in segments:
         left = round(segment.start*fps); right = left+segment.frames
         if frame >= right: continue
         first = max(frame, left); count = 1 if single_frame else right-first
@@ -78,6 +83,22 @@ def preview_command(segment, project, ffmpeg, media, width=1280, height=720,
         [ffmpeg, '-hide_banner', '-loglevel', 'error', '-nostdin'], width, height,
         'rgba', str(rate), ['-c:v', 'rawvideo', '-threads:v', '1', '-f', 'rawvideo'],
         'pipe:1', ass_path, source_frame_rates=source_rates, media_by_path=media)
+    # Preview decoding can use several slice threads; export keeps its own
+    # scheduler limits. Reduce native YUV/YUVA before expensive RGB conversion.
+    for index in range(len(command)-1):
+        if command[index] == '-threads': command[index+1] = '4'
+    graph_index = command.index('-filter_complex')+1
+    graph = command[graph_index]
+    from clip_transform import ClipTransform, transform_at, transform_is_identity
+    for index, layer in enumerate(reversed(segment.layers)):
+        transform = (transform_at(project, segment.start) if layer.programme or not project.multicam_outer_order
+                     else ClipTransform())
+        if transform_is_identity(transform):
+            marker = f'[{index}:v:0]setpts=PTS-STARTPTS,'
+            prescale = (f"scale=w='min(iw,{width})':h='min(ih,{height})':"
+                        'force_original_aspect_ratio=decrease:force_divisible_by=2,')
+            graph = graph.replace(marker, marker+prescale, 1)
+    command[graph_index] = graph
     output_fps = float(rate) if single_frame else min(float(rate), float(max_fps))
     if output_fps < float(rate):
         # Input trim/prefix stays on the project clock. Only the fully composed
@@ -117,9 +138,10 @@ class StackPreview:
     """Own current/next FFmpeg processes and a single latest RGBA mailbox."""
     CATCHUP_LAG = .5
     CATCHUP_INTERVAL = 2.5
-    def __init__(self, ffmpeg, ffprobe, notify, *, width=1280, height=720, max_fps=30.):
+    def __init__(self, ffmpeg, ffprobe, notify, *, width=1280, height=720, max_fps=30., gpu_layers=False):
         self.ffmpeg, self.ffprobe, self.notify = str(ffmpeg), str(ffprobe), notify
         self.width, self.height, self.max_fps = width, height, max_fps
+        self.gpu_layers = bool(gpu_layers)
         self._condition = threading.Condition()
         self._pending = None
         self._cancel = threading.Event()
@@ -292,6 +314,11 @@ class StackPreview:
         command, fps = preview_command(segment, project, self.ffmpeg, media,
             width, height, single_frame=not playing, max_fps=self.max_fps, ass_path=ass_path,
             source_frame_rates=rates)
+        self._stream_layout = None
+        if self.gpu_layers:
+            from stack_gpu_plan import layer_atlas_command
+            command, self._stream_layout = layer_atlas_command(command, fps, segment,
+                project, width, height, ass_path)
         with tempfile.TemporaryFile() as error_log, tempfile.TemporaryDirectory(prefix='okk_stack_graph_') as graph_dir:
             # Script files also keep 36-input filter graphs below Windows'
             # command-line limit. Their owner stays alive until this process exits.
@@ -440,7 +467,13 @@ class StackPreview:
                 segment = visible_segment(segment)
                 process, fps, error_log = owner.enter_context(self._segment_stream(
                     segment, project, media, width, height, playing, ass_path, rates, cancel))
-                return segment, process, fps, error_log, owner
+                layout = getattr(self,'_stream_layout',None)
+                backend = ('GPU Alpha 合成与显示' if layout else
+                    'CPU 兼容合成 · GPU 显示' if self.gpu_layers else 'CPU 兼容合成与显示')
+                if backend != getattr(self,'_last_backend',None):
+                    self._last_backend = backend
+                    self.notify('status', f'图层实时预览 · {width}×{height} · {backend} · 最高 {self.max_fps:g}fps')
+                return segment, process, fps, error_log, owner, layout
             except BaseException:
                 owner.close()
                 raise
@@ -452,12 +485,14 @@ class StackPreview:
             if segment is not None: current = prepare(segment)
             while current is not None:
                 self._check(cancel)
-                segment, process, fps, error_log, owner = current
+                segment, process, fps, error_log, owner, layout = current
                 # Start only the immediate successor. Its bounded stdout pipe
                 # fills with the first frame, then backpressure stops decoding.
                 # Nothing reads or queues the rest of its timeline in memory.
                 next_segment = next(iterator, None) if playing else None
-                frame_bytes = width*height*4; index = 0
+                frame_width = width * layout['columns'] if layout else width
+                frame_height = height * layout['rows'] if layout else height
+                frame_bytes = frame_width*frame_height*4; index = 0
                 while True:
                     self._check(cancel)
                     if playing: self._wait_playing(cancel)
@@ -494,7 +529,8 @@ class StackPreview:
                                 following = prepare(next_segment)
                             continue
                     self._publish(generation, {'request_id': request_id, 'time': stamp,
-                        'width': width, 'height': height, 'rgba': bytes(parts), 'preview_epoch': preview_epoch,
+                        'width': frame_width, 'height': frame_height, 'rgba': bytes(parts), 'preview_epoch': preview_epoch,
+                        **({'gpu_layers': layout} if layout else {}),
                         'fps': fps, 'playback_frame': playing})
                     # Publish the current picture before probing/starting its
                     # successor, which may live on a slow disk.

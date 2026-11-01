@@ -131,11 +131,12 @@ def preferred_adapter_name():
 
 class D3D11Compositor:
     """Owned by one render thread, with two source textures and one output."""
-    def __init__(self,runtime,parent_hwnd=None,width=640,height=360,*,adapter_preference=None):
+    def __init__(self,runtime,parent_hwnd=None,width=640,height=360,*,adapter_preference=None,source_count=2):
         if os.name!='nt':raise RuntimeError('GPU realtime rendering requires Windows D3D11')
         if adapter_preference is not None and (not isinstance(adapter_preference,str) or not adapter_preference.strip()):
             raise ValueError('GPU adapter preference must be a non-empty name or vendor')
         self.adapter_preference=adapter_preference
+        self.source_count=source_count
         self.runtime=Path(runtime);self.parent=int(parent_hwnd or 0);self.window=0;self._closed=False
         self._wndproc=None;self._class_name=None
         for name in ('factory','adapter','device','context','swapchain','target','rtv','vertex','pixel','sampler','raster','constant'):
@@ -239,7 +240,7 @@ class D3D11Compositor:
             desc=TexDesc(width,height,1,1,87,Sample(1,0),0,0x28,0,0)
             check(call(self.device.value,5,HR,[C.POINTER(TexDesc),P,C.POINTER(P)],C.byref(desc),None,C.byref(self.target.value)),'Create offscreen target')
         check(call(self.device.value,9,HR,[P,P,C.POINTER(P)],self.target.value,None,C.byref(self.rtv.value)),'Create output RTV')
-        self.videos=[VideoTexture(self.device.value,width,height) for _ in range(2)]
+        self.videos=[VideoTexture(self.device.value,width,height) for _ in range(self.source_count)]
         for texture in self.videos:self.clear_texture(texture,(0,0,0,1))
         self.width,self.height=width,height
         return True

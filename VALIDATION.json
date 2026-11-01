@@ -1,28 +1,27 @@
 {
-  "version": "1.0.25",
-  "build_id": "20261101-191211-e15a021b",
+  "version": "1.0.26",
+  "build_id": "20261101-202730-44ab6897",
   "focused_regression": {
-    "run": 74,
-    "passed": 73,
-    "failures": 1,
+    "run": 68,
+    "passed": 68,
+    "failures": 0,
     "skipped": 0,
     "isolated_private_desktop": true,
-    "failure": "clip_inspector library/color tab selection; previously reproduced on baseline",
     "modules": [
-      "video_placement",
-      "clip_inspector",
-      "clip_transform",
-      "clip_transform_render",
+      "stack_gpu",
+      "video_stack_preview",
       "multicam_outer",
-      "project_upgrade"
+      "video_placement",
+      "gpu_live_player"
     ]
   },
   "prior_feature_build_validation": {
-    "new_feature_tests": 14,
-    "passed": 14,
-    "actual_ffmpeg_pixels": "passed",
-    "baseline_failure": "library and color tab selection also reproduced on previous source",
-    "optional_hardware_skips": 3
+    "unique_tests": 151,
+    "passed": 150,
+    "optional_nvenc_skipped": 1,
+    "real_media_gpu": "RTX 5070 Ti; 29.97 fps in recorded scenario",
+    "preview_limit": "720p / 30fps",
+    "cpu_fallback": "subtitle, final LUT, cached processing"
   },
   "v1_0_22_validation": {
     "private_desktop_tests": 121,
@@ -44,7 +43,7 @@
     "third_party_vst3": "not tested"
   },
   "frozen_headless_export": "passed",
-  "version_metadata": "1.0.25",
+  "version_metadata": "1.0.26",
   "archive_crc_checks": "passed",
   "source_allowlist_and_known_private_path_and_key_pattern_scan": "passed",
   "trusted_code_signature": false,

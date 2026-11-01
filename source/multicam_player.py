@@ -136,7 +136,7 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
                  comparison_window: int | None = None,
                  comparison_standby_window: int | None = None,
                  gpu_live: bool = False, gpu_live_runtime=None,
-                 gpu_session_factory=None, gpu_output_window=None) -> None:
+                 gpu_session_factory=None, gpu_output_window=None, stack_gpu=False) -> None:
         self.executable = str(executable)
         self.events = events
         self.camera_windows = self._checked_camera_windows(camera_windows)
@@ -148,6 +148,7 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
         self.comparison_standby_window = int(comparison_standby_window) if comparison_standby_window is not None else None
         self.audio_window = int(audio_window)
         self._gpu_live_requested = bool(gpu_live)
+        self._stack_gpu = bool(stack_gpu)
         self._gpu_live_runtime = gpu_live_runtime
         self._gpu_session_factory = gpu_session_factory
         self.gpu_output_window = int(gpu_output_window) if gpu_output_window is not None else self.program_window
@@ -515,6 +516,10 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
             if 'gpu_live' in values:
                 if type(values['gpu_live']) is not bool: raise ValueError('GPU 实时预览开关必须是布尔值。')
                 self._gpu_live_requested = values['gpu_live']
+            if 'stack_gpu' in values:
+                self._stack_gpu = bool(values['stack_gpu'])
+                if self._stack_preview is not None:
+                    self._stack_preview.gpu_layers = self._stack_gpu
             stack_changed = self._configure_stack_mode()
             if not self._stack_enabled:
                 self._configure_gpu_live(self._gpu_live_requested)
@@ -1322,6 +1327,9 @@ class MulticamPlayer(PlaybackMetricsPlayerMixin, VideoStackPlayerMixin, GpuLiveP
         if self._project is None:
             return
         self._check_navigation()
+        stack_changed = self._configure_stack_mode(invalidate=False)
+        if stack_changed and not self._stack_enabled:
+            self._configure_gpu_live(self._gpu_live_requested)
         position = self._position
         camera = self._camera_at(position)
         # Thumbnail decoder changes are independent of the programme clock.

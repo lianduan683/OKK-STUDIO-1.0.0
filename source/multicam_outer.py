@@ -83,7 +83,7 @@ def place_outer(project, camera, placement):
     project.video_stack_hidden = [value for value in project.video_stack_hidden if value != camera]
 
 
-def plan_outer_segments(project):
+def plan_outer_segments(project, *, continuous_preview=False):
     from video_stack_render import StackLayer, StackSegment, _layer
     fps = project.fps
     first = _frame(project.range_start, fps)
@@ -105,7 +105,16 @@ def plan_outer_segments(project):
         edges.update((_frame(item.start, fps), _frame(item.end, fps)))
     # Short, reusable compound blocks bound decode work during live preview.
     step = max(1, round(4*fps))
-    edges.update(range(first//step*step, last, step))
+    blocks = range(first//step*step, last, step)
+    if not continuous_preview or project.multicam_inner_stack:
+        edges.update(blocks)
+    else:
+        # A direct programme layer is already a bounded streaming decoder.
+        # Artificial 4-second splits only serve complex compound caches;
+        # reopening a large ProRes file at each split causes visible stalls.
+        windows = [(_frame(t.time-t.duration/2,fps),_frame(t.time+t.duration/2,fps))
+                   for t in project.transitions]
+        edges.update(edge for edge in blocks if any(a<edge<b for a,b in windows))
     boundaries = sorted(value for value in edges if first <= value <= last)
     result = []
     for left, right in zip(boundaries, boundaries[1:]):

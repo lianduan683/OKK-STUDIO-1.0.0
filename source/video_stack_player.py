@@ -8,6 +8,7 @@ from pathlib import Path
 from exporter_core import find_binary
 from video_stack_preview import StackPreview
 from video_placement import has_placement
+from stack_preview_policy import needs_stack_at
 
 
 class VideoStackPlayerMixin:
@@ -40,18 +41,12 @@ class VideoStackPlayerMixin:
             api.ShowWindow.argtypes = [ctypes.c_void_p, ctypes.c_int]
             api.ShowWindow(hwnd, 4 if visible else 0)
 
-    def _configure_stack_mode(self):
-        enabled = bool(getattr(self._project, 'video_stack_enabled', False))
-        placed = has_placement(self._project)
-        if getattr(self._project, 'multicam_outer_order', ()):
-            from multicam_outer import outer_cameras
-            if not self._project.multicam_inner_stack and not any(
-                    clip.camera in outer_cameras(self._project) for clip in self._project.clips):
-                enabled = False
-        enabled = enabled or placed
-        if self._stack_preview is not None: self._stack_preview.cancel()
-        self._stack_revision += 1
-        self._stack_job_key = None
+    def _configure_stack_mode(self, *, invalidate=True):
+        enabled = needs_stack_at(self._project, getattr(self, '_position', 0.))
+        if invalidate or enabled != self._stack_enabled:
+            if self._stack_preview is not None: self._stack_preview.cancel()
+            self._stack_revision += 1
+            self._stack_job_key = None
         if enabled == self._stack_enabled: return False
         self._stack_enabled = enabled
         if enabled:
@@ -71,6 +66,10 @@ class VideoStackPlayerMixin:
     def _stack_cache_options(self):
         items = getattr(self, '_prerender_items', ())
         return {'cache_items': items} if items and getattr(self, '_grade_draft', None) is None else {}
+
+    def _stack_source_options(self):
+        cameras = getattr(self,'_original_cameras',())
+        return {'original_cameras': cameras} if cameras else {}
 
     def _stack_project(self):
         project = copy.deepcopy(self._project)
@@ -97,7 +96,8 @@ class VideoStackPlayerMixin:
             app_dir = Path(self.executable).resolve().parent.parent
             ffmpeg, ffprobe = find_binary('ffmpeg', app_dir), find_binary('ffprobe', app_dir)
             if not ffmpeg or not ffprobe: raise RuntimeError('透明图层实时预览需要 FFmpeg 和 ffprobe。')
-            self._stack_preview = StackPreview(ffmpeg, ffprobe, self._emit)
+            self._stack_preview = StackPreview(ffmpeg, ffprobe, self._emit,
+                gpu_layers=getattr(self,'_stack_gpu',False))
         preview = self._stack_preview
         preview.update_clock(self._position)
         key = (self._stack_revision, self._active_navigation_serial)
@@ -109,10 +109,11 @@ class VideoStackPlayerMixin:
             self._stack_job_key = key
             preview.request(self._stack_project(), self._position, self._playing, self._request_id,
                             ass_path=self._subtitle_ass_path or None, use_proxies=self._use_proxies,
-                            original_cameras=self._original_cameras,
+                            **self._stack_source_options(),
                             preview_epoch=getattr(self, '_active_preview_epoch', None),
                             **self._stack_cache_options())
-            self._emit('status', '透明图层实时预览 · 720p · CPU 合成 · 最高 30fps')
+            self._emit('status', '透明图层实时预览 · 720p · ' +
+                ('GPU Alpha 合成与显示' if getattr(self,'_stack_gpu',False) else 'CPU 兼容合成') + ' · 最高 30fps')
 
     def _resync_stack_preview(self, position):
         preview = self._stack_preview
@@ -122,7 +123,7 @@ class VideoStackPlayerMixin:
             # its source probes/proxy cache, and the separate master audio.
             preview.request(self._stack_project(), position, self._playing, self._request_id,
                 ass_path=self._subtitle_ass_path or None, use_proxies=self._use_proxies,
-                original_cameras=self._original_cameras,
+                **self._stack_source_options(),
                 preview_epoch=None, **self._stack_cache_options())
             self._stack_job_key = (self._stack_revision, self._active_navigation_serial)
             self._stack_was_playing = self._playing
