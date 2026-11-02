@@ -155,10 +155,10 @@ def build_stack_gpu_command(segment, project, base, settings, caps, width, heigh
             or getattr(info, 'has_display_transform', False)
             or getattr(info, 'field_order', 'unknown') not in ('progressive', 'unknown')):
         raise GpuExportUnsupported('素材格式、补边或方向保留原处理。')
-    # Mixing signal interpretations across independently encoded chunks would
-    # make concat-copy dependent on which camera happens to appear first.
-    if ((info.color_primaries, info.color_transfer, info.color_space, info.color_range)
-            != ('bt709', 'bt709', 'bt709', 'tv')):
+    # Preserve the source range. The reference CPU stack retains pc for these
+    # full-range cameras; converting their GPU output to tv changes the look.
+    if ((info.color_primaries, info.color_transfer, info.color_space)
+            != ('bt709', 'bt709', 'bt709') or info.color_range not in ('tv', 'pc')):
         raise GpuExportUnsupported('此色彩空间保留已验证的原处理。')
     if tuple(layer.placement) != (0., 0., 1.):
         raise GpuExportUnsupported('画面位置/缩放保留完整合成。')
@@ -166,7 +166,10 @@ def build_stack_gpu_command(segment, project, base, settings, caps, width, heigh
     if layer.programme or not outer:
         transform = transform_at(project, segment.start)
         # Fit/fill with no zoom have the same full canvas for equal aspects.
-        if transform.zoom != 1 or transform.x != 0 or transform.y != 0:
+        # Equal display aspects and unit zoom leave no excess to crop. Stored
+        # x/y offsets therefore have no visual effect and must not force an
+        # otherwise supported opaque picture through the CPU alpha graph.
+        if transform.zoom != 1:
             raise GpuExportUnsupported('片段构图保留完整合成。')
     grades = [project.camera_grades.get(layer.camera)]
     if layer.programme:
@@ -184,7 +187,8 @@ def build_stack_gpu_command(segment, project, base, settings, caps, width, heigh
     neutral = all(grade is None or grade_is_identity(grade) for grade in grades)
     chain = (_cuda_segment_filter(info, settings, caps, width, height,
                 10 if pixel_format.endswith('10le') else 8, rate_text,
-                segment.frames, duration, prefix) if neutral and ass_path is None else None)
+                segment.frames, duration, prefix)
+             if neutral and ass_path is None and info.color_range == 'tv' else None)
     if chain is not None:
         command = list(base)
         input_options = ['-hwaccel', 'cuda', '-hwaccel_device', str(settings.gpu_index),
@@ -198,26 +202,52 @@ def build_stack_gpu_command(segment, project, base, settings, caps, width, heigh
         plan = build_gpu_video_plan(grades, ffmpeg_path=gpu_ffmpeg, width=width, height=height,
             pixel_format=pixel_format, rate_text=rate_text, frames=segment.frames, duration=duration,
             media=info, prefix_frames=prefix, decode_mode='cuda', shader_dir=shader_dir,
-            gpu_index=settings.gpu_index)
+            gpu_index=settings.gpu_index, resident=ass_path is None)
         command = [gpu_ffmpeg, *base[1:], *plan.global_options, '-filter_threads', '1']
         input_options, color_options = plan.input_options, plan.color_options
         chain = plan.filter_chain
         if ass_path is not None:
             chain += (f',setpts=PTS+{segment.start:.12g}/TB,'+subtitle_filter(ass_path)
                       + ',setpts=PTS-STARTPTS')
-        output_format = ['-pix_fmt', pixel_format]
-        backend = 'gpu_stack_grade'
+        output_format = [] if getattr(plan,'gpu_resident',False) else ['-pix_fmt', pixel_format]
+        backend = 'gpu_resident_grade' if getattr(plan,'gpu_resident',False) else 'gpu_stack_grade'
     command += [*input_options, '-ss', f'{seek:.9f}', '-i', layer.path,
                 '-map', '0:v:0', '-an', '-sn', '-dn', '-vf', chain, *encode_args,
                 *output_format, '-r', rate_text, '-frames:v', str(segment.frames),
                 *color_options, '-map_metadata', '-1', '-video_track_timescale', str(rate.numerator), str(chunk)]
+    if prefix >= 120:
+        from gpu_phase_seek import shorten_prefix
+        command=shorten_prefix(command,getattr(caps,'ffprobe_path',''),segment.frames,
+                               rate_text,prefix,settings.gpu_index)
     return command, backend, layer.path, prefix
+
+
+def _stack_prescale_safe(layer, info, original, transform, width, height):
+    """Prescale only a verified opaque, full-canvas downscale without reframing.
+
+    CUDA resamples the original YUV values without a range conversion. The
+    downloaded surface keeps the source depth and signal; all original CPU
+    grade, alpha, subtitle and frame-clock operations remain downstream.
+    """
+    return (info is not None and not layer.has_alpha
+            and not any(getattr(value, 'has_alpha', False) or pixel_format_has_alpha(
+                getattr(value, 'pixel_format', '')) for value in (info, original))
+            and info.width >= width and info.height >= height
+            and (info.width, info.height) != (width, height)
+            and info.width * height == info.height * width
+            and info.sample_aspect_ratio in ('1:1', '1/1')
+            and not getattr(info, 'has_display_transform', False)
+            and getattr(info, 'field_order', 'unknown') in ('progressive', 'unknown')
+            and (info.color_primaries, info.color_transfer, info.color_space)
+                == ('bt709', 'bt709', 'bt709')
+            and info.color_range in ('tv', 'pc')
+            and tuple(layer.placement) == (0., 0., 1.) and transform.zoom == 1)
 
 
 def build_stack_command(segment, project, base, width, height, pixel_format,
                         rate_text, encode_args, chunk, ass_path=None, *,
                         source_frame_rates=None, media_by_path=None, decode_mode='cpu', gpu_index=0,
-                        decode_threads=1, filter_threads=1):
+                        decode_threads=1, filter_threads=1, cuda_prescale=False):
     """CPU alpha composition, followed by the chosen software/NVENC encoder."""
     rates = source_frame_rates or {}
     media = media_by_path or {}
@@ -227,6 +257,7 @@ def build_stack_command(segment, project, base, width, height, pixel_format,
     overlay_format = 'yuv444p10' if deep else 'rgb'
     colour_format = 'yuv444p10le' if deep else 'rgb24'
     if decode_mode not in {'cpu', 'cuda'}: raise ValueError('图层解码模式无效。')
+    if type(cuda_prescale) is not bool: raise ValueError('GPU 预缩放设置必须为布尔值。')
     if any(type(value) is not int or value < 1 for value in (decode_threads, filter_threads)):
         raise ValueError('图层处理线程数无效。')
     command = list(base) + ['-filter_complex_threads', str(filter_threads)]
@@ -240,6 +271,9 @@ def build_stack_command(segment, project, base, width, height, pixel_format,
         prefix = offset % quantum if quantum else offset
         seek = max(0.0, layer.source_start-prefix / project.fps)
         info = media.get(layer.path)
+        from clip_transform import ClipTransform
+        transform = (transform_at(project, segment.start) if layer.programme or not getattr(project, 'multicam_outer_order', ())
+                     else ClipTransform())
         alpha = layer.has_alpha or getattr(info, 'has_alpha', False) or pixel_format_has_alpha(
             getattr(info, 'pixel_format', ''))
         # NVDEC supplies the same decoded YUV samples. Download explicitly so
@@ -254,6 +288,13 @@ def build_stack_command(segment, project, base, width, height, pixel_format,
                         '-hwaccel_output_format', 'cuda']
             surface = 'p010le' if getattr(info, 'bit_depth', 8) > 8 else 'nv12'
             download = f'hwdownload,format={surface},'
+            if cuda_prescale and _stack_prescale_safe(layer, info,
+                    media.get(layer.original_path, info), transform, width, height):
+                # Download 4K instead of an 8K surface, and avoid expanding the
+                # entire 8K frame to 4:4:4 + alpha in system memory. The CPU
+                # framing expression now has identical input/output geometry.
+                download = (f'scale_cuda=w={width}:h={height}:interp_algo=bicubic:'
+                            f'format={surface},' + download)
         command += ['-ss', f'{seek:.9f}']
         # The native VP8/9 decoders do not expose WebM's separate alpha stream.
         if info is not None and (getattr(info, 'has_alpha', False) or layer.has_alpha):
@@ -261,9 +302,6 @@ def build_stack_command(segment, project, base, width, height, pixel_format,
             if decoder:
                 command += ['-c:v', decoder]
         command += ['-i', layer.path]
-        from clip_transform import ClipTransform
-        transform = (transform_at(project, segment.start) if layer.programme or not getattr(project, 'multicam_outer_order', ())
-                     else ClipTransform())
         pad = 'black' if layer.programme else 'black@0'
         framing = (f'scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,'
                    f'pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color={pad},setsar=1'

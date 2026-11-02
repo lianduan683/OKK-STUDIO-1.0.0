@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+import hashlib
 import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -15,7 +16,7 @@ import time
 from urllib.parse import urlsplit
 from urllib.request import ProxyHandler, Request, build_opener
 
-from okk_automation import BASE, EditSession, snapshot
+from okk_automation import BASE, EditSession, revision, snapshot
 
 
 def discovery_directory():
@@ -170,6 +171,169 @@ class WorkspaceSession(EditSession):
         self.app.multicam_workspace.seek(position)
         return self.get_snapshot()
 
+    def render_status(self):
+        workspace = self.app.multicam_workspace
+        finishing = workspace.finishing_workspace
+        current_revision = revision(self.get_project())
+        jobs = [dict(job_id=job.identifier, state=job.state, output=str(job.output),
+                     project_revision=revision(job.project), settings=asdict(job.settings),
+                     progress=job.progress, detail=job.detail) for job in finishing.jobs]
+        try:
+            from delivery_panel import make_delivery_settings
+            settings, suffix = make_delivery_settings(workspace)
+            output = workspace.output_var.get().strip()
+            output = str(Path(output).with_suffix(suffix)) if output else ''
+            delivery = {'output': output, 'settings': asdict(settings)}
+        except (ValueError, TypeError, AttributeError) as error:
+            delivery = {'error': str(error)}
+        active_id = finishing.active_job.identifier if finishing.active_job is not None else None
+        identity = dict(revision=current_revision, delivery=delivery, active_job_id=active_id,
+                        running=finishing.running, jobs=[{key: value for key, value in job.items()
+                        if key not in {'progress', 'detail'}} for job in jobs])
+        queue_revision = hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False,
+                                                   allow_nan=False).encode('utf-8')).hexdigest()
+        return dict(revision=current_revision, queue_revision=queue_revision,
+                    project_path=str(getattr(self.app, 'project_path', '') or workspace.project_path or ''),
+                    working=bool(self.app.working), busy=bool(workspace.busy),
+                    running=bool(finishing.running), active_job_id=active_id, jobs=jobs,
+                    delivery=delivery, metrics=deepcopy(getattr(workspace, '_export_last_snapshot', {})),
+                    close_pending=bool(getattr(self, '_close_pending', False)))
+
+    def _check_queue(self, expected_queue_revision):
+        status = self.render_status()
+        if not expected_queue_revision or status['queue_revision'] != expected_queue_revision:
+            raise ValueError('Render queue or delivery settings changed; read fresh render_status')
+        return status
+
+    def render_set_bitrate(self, value, expected_revision, expected_queue_revision):
+        self.require_idle()
+        self.check_revision(expected_revision)
+        self._check_queue(expected_queue_revision)
+        from editor_core import normalize_video_bitrate
+        normalized = normalize_video_bitrate(value)
+        if not normalized:
+            raise ValueError('Target bitrate must be a positive video bitrate')
+        self.app.multicam_workspace.bitrate_var.set(normalized)
+        return self.render_status()
+
+    def render_enqueue_current(self, expected_revision, expected_queue_revision):
+        self.require_idle()
+        self.check_revision(expected_revision)
+        self._check_queue(expected_queue_revision)
+        workspace = self.app.multicam_workspace
+        finishing = workspace.finishing_workspace
+        if not workspace.output_var.get().strip():
+            raise ValueError('Set the Deliver output path before adding a render job')
+        prepared = workspace.prepare_delivery_export()
+        if prepared is None:
+            raise ValueError('Delivery settings are incomplete')
+        project, settings, output = prepared
+        target = os.path.normcase(str(Path(output).resolve()))
+        for job in finishing.jobs:
+            if (os.path.normcase(str(Path(job.output).resolve())) == target
+                    and job.state in {'等待渲染', '正在渲染'}):
+                if revision(job.project) == revision(project) and asdict(job.settings) == asdict(settings):
+                    return dict(self.render_status(), job_id=job.identifier, created=False)
+                raise ValueError('A different pending job already uses this output path')
+        from finishing_workspace import RenderJob
+        finishing.serial += 1
+        job = RenderJob(str(finishing.serial), deepcopy(project), deepcopy(settings), output)
+        finishing.jobs.append(job)
+        try:
+            finishing._add_card(job)
+        except Exception:
+            finishing.jobs.remove(job)
+            raise
+        finishing.selected_job.set(job.identifier)
+        finishing.queue_status.set(f'{sum(item.state == "等待渲染" for item in finishing.jobs)} 个任务等待渲染')
+        workspace.status.set('已添加渲染任务：' + output)
+        return dict(self.render_status(), job_id=job.identifier, created=True)
+
+    def render_start_queue(self, expected_revision, expected_queue_revision):
+        self.require_idle()
+        self.check_revision(expected_revision)
+        self._check_queue(expected_queue_revision)
+        workspace = self.app.multicam_workspace
+        finishing = workspace.finishing_workspace
+        waiting = [job for job in finishing.jobs if job.state == '等待渲染']
+        if not waiting:
+            raise ValueError('No waiting render jobs')
+        from hardware_encoders import available_codecs
+        supported = available_codecs(self.app.caps)
+        for job in waiting:
+            job.project.validate()
+            if Path(job.output).exists():
+                raise ValueError('Output already exists; remote queue start will not overwrite it')
+            if job.settings.codec not in supported:
+                raise ValueError('Queued encoder is unavailable; wait for hardware detection')
+        if not self.app.caps.ffmpeg_path or not self.app.caps.ffprobe_path:
+            raise ValueError('FFmpeg / ffprobe is unavailable')
+        finishing.start_queue()
+        if not finishing.running or finishing.active_job is None:
+            raise ValueError('Render did not start; inspect delivery settings')
+        return self.render_status()
+
+    def render_cancel(self, expected_revision, job_id):
+        self.check_revision(expected_revision)
+        finishing = self.app.multicam_workspace.finishing_workspace
+        active = finishing.active_job
+        if active is None or active.identifier != job_id:
+            raise ValueError('Active render job changed; read fresh render_status before cancelling')
+        finishing.stop_queue()
+        return dict(self.render_status(), cancellation_requested=True)
+
+    def project_save(self, expected_revision):
+        # Saving a UI-thread snapshot is safe while the renderer uses its own
+        # immutable project copy. Never open a Save As dialog from an RPC.
+        self.check_revision(expected_revision)
+        path = getattr(self.app, 'project_path', None)
+        if not path or Path(path).suffix.lower() != '.rtxproj':
+            raise ValueError('Current full project has no save path; use save_copy with an explicit path')
+        from project_file import build_project_payload, state_digest, write_project_file
+        from studio_project import APP_VERSION
+        path = Path(path).resolve()
+        payload = build_project_payload(self.app, project_path=str(path), app_version=APP_VERSION)
+        backup = ''
+        if path.exists():
+            backup_path = path.with_name(path.name+'.mcp-'+secrets.token_hex(8)+'.bak')
+            with backup_path.open('xb') as stream:
+                stream.write(path.read_bytes())
+            backup = str(backup_path)
+        write_project_file(path, payload)
+        workspace = self.app.multicam_workspace
+        workspace.dirty = False
+        workspace._project_upgrade_blocked_path = None
+        self.app._project_saved_digest = state_digest(payload['state'])
+        self.app._project_update_title()
+        return {'path': str(path), 'backup_path': backup, 'revision': revision(self.get_project())}
+
+    def app_close(self, expected_revision):
+        self.require_idle()
+        self.check_revision(expected_revision)
+        if self.app._project_is_dirty():
+            raise ValueError('Save the current project before closing')
+        if getattr(self, '_close_pending', False):
+            return {'close_scheduled': True}
+        self._close_pending = True
+
+        def close_when_unchanged():
+            try:
+                self.require_idle()
+                self.check_revision(expected_revision)
+                if self.app._project_is_dirty():
+                    return
+                self.app._close()
+            except Exception as error:
+                logger = getattr(self.app, '_log', None)
+                if callable(logger):
+                    logger('MCP 关闭未执行：' + str(error))
+            finally:
+                self._close_pending = False
+
+        # Let the authenticated HTTP response leave before closing its server.
+        self.app.after(200, close_when_unchanged)
+        return {'close_scheduled': True}
+
 
 @dataclass
 class Pending:
@@ -270,7 +434,14 @@ class LocalBridge:
                     raise ValueError('Request expired before execution; no edit was applied')
                 methods = {'snapshot': self.session.get_snapshot, 'preview': self.session.preview,
                            'apply': self.session.apply, 'history': self.session.history,
-                           'save_copy': self.session.save_copy, 'seek': self.session.seek}
+                           'save_copy': self.session.save_copy, 'seek': self.session.seek,
+                           'render_status': self.session.render_status,
+                           'render_set_bitrate': self.session.render_set_bitrate,
+                           'render_enqueue_current': self.session.render_enqueue_current,
+                           'render_start_queue': self.session.render_start_queue,
+                           'render_cancel': self.session.render_cancel,
+                           'project_save': self.session.project_save,
+                           'app_close': self.session.app_close}
                 for action in ('start', 'get', 'frame', 'cancel', 'submit'):
                     methods['exposure_' + action] = lambda action=action, **params: self.session.exposure(action, **params)
                 if item.method not in methods:

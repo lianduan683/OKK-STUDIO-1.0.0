@@ -41,6 +41,10 @@ def _ensure(owner, name, kind, default, master):
 def init_delivery_variables(workspace):
     """Use the exporter's live variables, including in standalone Tk tests."""
     ws, app = workspace, workspace.app
+    # Store the target bitrate alongside the other delivery settings. This is
+    # the same live variable used by the field, not a separate default value.
+    if hasattr(ws, 'bitrate_var'):
+        ws.delivery_video_bitrate_var = ws.bitrate_var
     shared = {
         'codec_var': (tk.StringVar, CODECS[0]),
         'preset_var': (tk.StringVar, PRESETS[1]),

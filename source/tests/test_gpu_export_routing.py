@@ -188,6 +188,17 @@ class GpuExportRoutingTests(unittest.TestCase):
         self.assertTrue(any('CPU 特效回退' in phase for phase in self.phases))
         self.assertTrue(all(parameters['decode_mode'] == 'cuda' for _, parameters in self.plans))
 
+    def test_shader_disabled_with_success_exit_retries_complete_cpu_effects(self):
+        def run(command,callback):
+            if self.route(command)=='cuda':
+                self.commands.append(list(command))
+                Path(command[-1]).write_bytes(b'ungraded GPU output')
+                return 0,'[libplacebo] Failed executing hook, disabling'
+            return self.runner(command,callback)
+        self.export(runner=run)
+        self.assertEqual([self.route(command) for command in self.commands],['cuda','cpu','mux'])
+        self.assertEqual(self.destination.read_bytes(),b'completed delivery')
+
     def test_gpu_failure_keeps_complete_original_grade_and_subtitle_chain(self):
         project = self.project(local=True)
         project.subtitles.cues = [SubtitleCue('caption', 0., 1., '保留字幕')]
@@ -356,6 +367,52 @@ class GpuExportRoutingTests(unittest.TestCase):
         self.assertEqual([item['event'] for item in events].count('export_start'), 1)
         self.assertEqual([item['event'] for item in events].count('export_finish'), 1)
         self.assertTrue(all(snapshot['average_fps'] >= 0 for snapshot in self.metrics))
+
+    def test_stack_compatibility_rejection_explains_cpu_work_and_keeps_hardware_decode(self):
+        project = self.project()
+        project.video_stack_enabled = True
+        reason = 'BT.709 全范围和当前构图尚未验证 GPU 调色。'
+        with patch('video_stack_render.build_stack_gpu_command',
+                   side_effect=gpu_export.GpuExportUnsupported(reason)), \
+             patch('gpu_stack_composite.build_gpu_stack_composite_command',
+                   side_effect=gpu_export.GpuExportUnsupported(reason)):
+            self.export(project)
+        events = self.diagnostics()
+        skipped = [item for item in events if item['event'] == 'gpu_route_skipped']
+        self.assertEqual(len(skipped), 1)
+        self.assertEqual((skipped[0]['task'], skipped[0]['source'], skipped[0]['reason'],
+                          skipped[0]['fallback']), (1, str(self.source), reason, 'cuda_decode'))
+        self.assertFalse(any(item['event'] == 'gpu_route_disabled' for item in events))
+        starts = [item for item in events if item['event'] == 'attempt_start']
+        self.assertEqual([item['backend'] for item in starts], ['cuda_decode'])
+        picture, _ = self.commands
+        self.assertEqual(self.option(picture, '-hwaccel'), 'cuda')
+        self.assertEqual(self.option(picture, '-c:v'), 'hevc_nvenc')
+        self.assertTrue(any('NVENC 编码' in phase and 'CUDA 硬解 + CPU 调色/合成' in phase
+                            for phase in self.phases))
+        self.assertEqual(self.destination.read_bytes(), b'completed delivery')
+        self.assert_originals_unchanged()
+
+    def test_successful_stack_gpu_grade_has_no_cpu_rejection_diagnostic(self):
+        project = self.project()
+        project.video_stack_enabled = True
+        self.export(project)
+        events = self.diagnostics()
+        self.assertFalse(any(item['event'] == 'gpu_route_skipped' for item in events))
+        self.assertEqual([item['backend'] for item in events if item['event'] == 'attempt_start'],
+                         ['gpu_stack_grade'])
+        self.assertTrue(any('CUDA 硬解 + GPU 缩放/调色' in phase for phase in self.phases))
+        self.assertFalse(any('CPU 调色/合成' in phase for phase in self.phases))
+
+    def test_unsupported_nonstack_effect_is_recorded_without_runtime_failure(self):
+        self.export(self.project(transition=True))
+        events = self.diagnostics()
+        skipped = [item for item in events if item['event'] == 'gpu_route_skipped']
+        self.assertEqual(len(skipped), 1)
+        self.assertEqual(skipped[0]['task'], 1)
+        self.assertIn('尚未通过稳定性验证', skipped[0]['reason'])
+        self.assertEqual(skipped[0]['fallback'], 'original')
+        self.assertFalse(any(item['event'] == 'gpu_route_disabled' for item in events))
 
 
 if __name__ == '__main__': unittest.main(verbosity=2)

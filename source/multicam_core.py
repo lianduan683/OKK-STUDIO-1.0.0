@@ -896,6 +896,7 @@ def render_multicam(
     *,
     metrics: Callable[[dict], None] | None = None,
     work_directory=None,
+    checkpoint_root=None,
 ) -> str:
     """Render programme segments, then copy picture and mux master audio once.
 
@@ -1096,6 +1097,17 @@ def render_multicam(
     aborted = threading.Event()
     processed_frames = [0] * len(segments)
     completed_segments = [False] * len(segments)
+    reused_frames = [0] * len(segments)
+    cached_reencodes = [False] * len(segments)
+    checkpoint = None
+    if stacked:
+        from export_checkpoint import CheckpointStore
+        try:
+            checkpoint = CheckpointStore(checkpoint_root or (
+                Path(work_directory)/'checkpoints' if work_directory is not None
+                else cache_dir('export-checkpoints')), str(destination), str(ffprobe))
+        except (OSError, ValueError):
+            pass  # A missing/unwritable checkpoint must not prevent export.
     active: dict[int, tuple[float, float, float]] = {}
     input_active: dict[int, str] = {}
     input_prepared = set()
@@ -1137,6 +1149,7 @@ def render_multicam(
         # notifications in chronological order for the UI's event queue.
         elapsed = max(0.0, time.monotonic() - started)
         frames = sum(processed_frames)
+        new_frames = max(0, frames - sum(reused_frames))
         seconds = mux_seconds if mux else frames / project.fps
         fraction = (0.95 + 0.05 * seconds / duration) if mux else 0.95 * frames / total_frames
         percent = 100.0 if finished else min(99.9, max(0.0, 100.0 * fraction))
@@ -1146,7 +1159,13 @@ def render_multicam(
         stage_elapsed = max(0.0, time.monotonic() - mux_started) if mux else elapsed
         eta = 0.0 if finished else (max(0.0, duration - seconds) * stage_elapsed / seconds if seconds > 0 else None)
         if not mux and not finished:
+            eta = (max(0, total_frames-frames)*elapsed/new_frames if new_frames else None)
+        if not mux and not finished:
             phase += f" · 已完成 {sum(completed_segments)}/{len(segments)}"
+            if any(reused_frames):
+                phase += f" · 断点复用 {sum(bool(value) for value in reused_frames)} 段"
+            if any(cached_reencodes):
+                phase += f" · 缓存重编码 {sum(cached_reencodes)} 段"
             if pipelined:
                 phase += f" · 输入就绪 {len(input_prepared)}/{len(segments)}"
                 if input_active: phase += ' · ' + next(iter(input_active.values()))
@@ -1156,7 +1175,10 @@ def render_multicam(
             metrics({"phase": phase, "progress_percent": percent,
                      "processed_seconds": seconds, "total_seconds": duration,
                      "encoded_frames": frames, "fps": fps, "speed": speed,
-                     "average_fps": frames/elapsed if elapsed else 0.,
+                     "average_fps": new_frames/elapsed if elapsed else 0.,
+                     "reused_frames": sum(reused_frames),
+                     "reused_segments": sum(bool(value) for value in reused_frames),
+                     "cached_reencoded_segments": sum(cached_reencodes),
                      "diagnostic_path":str(trace_path),
                      "elapsed": elapsed, "eta": eta,
                      "stage": "done" if finished else "muxing" if mux else "encoding",
@@ -1313,7 +1335,8 @@ def render_multicam(
                     candidate = build_stack_command(segment, project, base, width, height,
                         pixel_format, rate_text, encode_args, chunk, ass_path,
                         source_frame_rates=source_rates, media_by_path=media, decode_mode='cuda',
-                        gpu_index=settings.gpu_index, decode_threads=decode_threads, filter_threads=filter_threads)
+                        gpu_index=settings.gpu_index, decode_threads=decode_threads, filter_threads=filter_threads,
+                        cuda_prescale=caps.scale_cuda)
                     if '-hwaccel' in candidate:
                         graph_index = candidate.index('-filter_complex')
                         graph_path = temporary / f'stack_{index:06d}.cuda.filtergraph'
@@ -1323,21 +1346,55 @@ def render_multicam(
                 backend = {'nvidia':'NVENC', 'amd':'AMF', 'intel':'QSV'}.get(encoder_vendor(settings.codec), '软件')
                 phase = f'合成 {len(segment.layers)} 层画面（任务 {index + 1}/{len(segments)}） · {backend} 编码'
             fallback_command = command
+            checkpoint_started_ns = time.time_ns()
+            cached_picture = None
+            # Match the authoritative CPU graph before choosing acceleration.
+            # Changing implementation alone does not invalidate finished work;
+            # media, effect graph, clock and encoding changes do invalidate it.
+            if checkpoint is not None:
+                if checkpoint.reuse(fallback_command, chunk, segment.frames,
+                                    width, height, pixel_format, rate_text):
+                    with lock:
+                        processed_frames[index] = segment.frames
+                        reused_frames[index] = segment.frames
+                        completed_segments[index] = True
+                        publish(f'断点续渲 · 复用任务 {index+1}/{len(segments)}')
+                    trace('checkpoint_reused', task=index+1, frames=segment.frames)
+                    return
+                cached_picture = checkpoint.transcode_candidate(fallback_command, segment.frames,
+                    width, height, pixel_format, rate_text)
             gpu_commands = [(stack_cuda, 'cuda')] if stack_cuda is not None else []
             gpu_backend = 'cuda_decode' if stacked else 'gpu_effects'
             gpu_source = segment.path
-            if stacked and settings.decode_mode == 'cuda' and settings.codec.endswith('_nvenc'):
+            if stacked and settings.decode_mode == 'cuda' and settings.codec.endswith('_nvenc') and cached_picture is None:
                 source = segment.layers[0].path if len(segment.layers) == 1 else None
                 if not disabled_gpu_reason(source):
                     try:
-                        candidate, gpu_backend, gpu_source, prefix_frames = build_stack_gpu_command(
-                            segment, project, base, settings, caps, width, height, pixel_format,
-                            rate_text, encode_args, chunk, ass_path, source_frame_rates=source_rates,
-                            media_by_path=media, gpu_ffmpeg=gpu_effect_ffmpeg,
-                            shader_dir=temporary/'gpu_shaders')
+                        try:
+                            candidate, gpu_backend, gpu_source, prefix_frames = build_stack_gpu_command(
+                                segment, project, base, settings, caps, width, height, pixel_format,
+                                rate_text, encode_args, chunk, ass_path, source_frame_rates=source_rates,
+                                media_by_path=media, gpu_ffmpeg=gpu_effect_ffmpeg,
+                                shader_dir=temporary/'gpu_shaders')
+                        except GpuExportUnsupported:
+                            from gpu_stack_composite import build_gpu_stack_composite_command
+                            candidate, gpu_backend, gpu_source, prefix_frames = build_gpu_stack_composite_command(
+                                segment, project, base, settings, caps, width, height, pixel_format,
+                                rate_text, encode_args, chunk, ass_path, source_frame_rates=source_rates,
+                                media_by_path=media, gpu_ffmpeg=gpu_effect_ffmpeg,
+                                shader_dir=temporary/'gpu_shaders')
+                        if '-filter_complex' in candidate:
+                            graph_index=candidate.index('-filter_complex')
+                            graph_path=temporary/f'stack_{index:06d}.gpu.filtergraph'
+                            graph_path.write_text(candidate[graph_index+1],encoding='utf-8')
+                            candidate[graph_index:graph_index+2]=['-/filter_complex',str(graph_path)]
                         gpu_commands = [(candidate, 'cuda')]
-                    except (GpuExportUnsupported, OSError, subprocess.SubprocessError):
-                        pass
+                    except (GpuExportUnsupported, OSError, subprocess.SubprocessError) as error:
+                        # A compatibility rejection is not a GPU runtime
+                        # failure. Keep hardware decoding available, but make
+                        # the reason for CPU grading/composition inspectable.
+                        trace('gpu_route_skipped', task=index+1, source=source,
+                              reason=str(error), fallback='cuda_decode' if stack_cuda is not None else 'original')
             if isinstance(segment, TransitionSegment):
                 cut_frame = _frame(segment.full_start, project.fps) + segment.full_frames // 2
                 transformed = any(not transform_is_identity(transform_at(project, frame / project.fps))
@@ -1368,7 +1425,7 @@ def render_multicam(
                                 pixel_format=pixel_format, rate_text=rate_text, frames=segment.frames,
                                 duration=segment.duration + prefix_frames/project.fps,
                                 media=media[segment.path], prefix_frames=prefix_frames, decode_mode=decode_mode,
-                                gpu_index=settings.gpu_index)
+                                gpu_index=settings.gpu_index, resident=ass_path is None)
                             chain = plan.filter_chain
                             if ass_path is not None:
                                 chain += (f',setpts=PTS+{segment.start:.12g}/TB,' + subtitle_filter(ass_path)
@@ -1376,18 +1433,44 @@ def render_multicam(
                             candidate = (gpu_base + list(plan.global_options) + ['-filter_threads','1']
                                 + list(plan.input_options) + ['-ss',f'{seek_start:.9f}','-i',segment.path,
                                 '-map','0:v:0','-an','-sn','-dn','-vf',chain, *encode_args,
-                                '-pix_fmt',pixel_format,'-r',rate_text,'-frames:v',str(segment.frames),
+                                *([] if getattr(plan,'gpu_resident',False) else ['-pix_fmt',pixel_format]),
+                                '-r',rate_text,'-frames:v',str(segment.frames),
                                 *plan.color_options,'-map_metadata','-1','-video_track_timescale',
                                 str(rate.numerator),str(chunk)])
+                            if getattr(plan,'gpu_resident',False):gpu_backend='gpu_resident_grade'
                         gpu_commands.append((candidate,decode_mode))
                     except (GpuExportUnsupported,OSError,subprocess.SubprocessError) as error:
+                        trace('gpu_route_skipped', task=index+1, source=segment.path,
+                              reason=str(error), fallback='original')
                         phase += ' · CPU 特效：' + str(error)
                         break
+            if cached_picture is not None:
+                # The pixels already contain every original effect. Changing
+                # bitrate needs a GPU reencode, not another source/grade pass.
+                cached_command = [*base, '-hwaccel', 'cuda', '-hwaccel_device', str(settings.gpu_index),
+                    '-hwaccel_output_format', 'cuda', '-i', cached_picture['path'],
+                    '-map', '0:v:0', '-an', '-sn', '-dn',
+                    '-vf', 'setpts=PTS-STARTPTS,setsar=1', *encode_args,
+                    '-r', rate_text, '-frames:v', str(segment.frames)]
+                for name, flag in (('color_range','-color_range'), ('color_space','-colorspace'),
+                        ('color_transfer','-color_trc'), ('color_primaries','-color_primaries')):
+                    value = cached_picture['probe'].get(name)
+                    if value and value not in ('unknown','unspecified','reserved'):
+                        cached_command += [flag, str(value)]
+                cached_command += ['-map_metadata','-1','-video_track_timescale',str(rate.numerator),str(chunk)]
+                gpu_commands = [(cached_command, 'cuda')]
+                gpu_backend = 'cached_picture_reencode'
+                gpu_source = cached_picture['path']
+                phase = f'GPU 缓存重编码 {settings.video_bitrate}（任务 {index+1}/{len(segments)}）'
             if gpu_commands:
                 command = gpu_commands[0][0]
                 phase += (' · CUDA 硬解/缩放 → NVENC' if gpu_backend == 'cuda_pipeline' else
+                          ' · GPU 缩放/调色/合成 · 显存直传' if gpu_backend == 'gpu_resident_composite' else
+                          ' · GPU 缩放/调色/合成' if gpu_backend == 'gpu_composite_upload' else
+                          ' · GPU 缩放/调色 · 显存直传' if gpu_backend == 'gpu_resident_grade' else
                           ' · CUDA 硬解 + GPU 缩放/调色' if gpu_backend in ('gpu_stack_grade', 'gpu_effects')
-                          else ' · CUDA 硬解 + 多线程合成')
+                          else ' · CUDA 硬解 → NVENC' if gpu_backend == 'cached_picture_reencode'
+                          else ' · CUDA 硬解 + CPU 调色/合成')
                 if ass_path is not None:phase += ' + 字幕'
             elif cuda_filter is not None:
                 phase += ' · CUDA 硬解/缩放 → NVENC'
@@ -1427,6 +1510,9 @@ def render_multicam(
                 trace('attempt_start',task=index+1,backend=gpu_backend if using_gpu else 'original',
                       source=gpu_source,frames=segment.frames,prefix_frames=prefix_frames,command=command)
                 code, details = run_process(command, report)
+                if using_gpu and not code:
+                    from gpu_export import gpu_filter_error
+                    if gpu_filter_error(details):code=1
                 if code and not using_gpu:aborted.set()
                 trace('attempt_finish',task=index+1,backend=gpu_backend if using_gpu else 'original',
                       returncode=code,seconds=time.monotonic()-attempt_started,details=str(details) if code else '')
@@ -1449,9 +1535,16 @@ def render_multicam(
                     trace('attempt_finish',task=index+1,backend='cpu_effects_fallback',returncode=code,
                           seconds=time.monotonic()-attempt_started,details=str(details) if code else '')
                 check_output(code, details, chunk, phase)
+                if checkpoint is not None:
+                    saved = checkpoint.commit(fallback_command, chunk, segment.frames,
+                                              width, height, pixel_format, rate_text,
+                                              legacy_started_ns=checkpoint_started_ns)
+                    trace('checkpoint_saved' if saved else 'checkpoint_not_saved', task=index+1)
                 with lock:
                     processed_frames[index] = segment.frames
                     completed_segments[index] = True
+                    if using_gpu and gpu_backend == 'cached_picture_reencode':
+                        cached_reencodes[index] = True
             except BaseException as error:
                 aborted.set()
                 trace('task_error',task=index+1,error=str(error),cancelled=isinstance(error,ExportCancelled))

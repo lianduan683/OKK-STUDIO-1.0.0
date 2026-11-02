@@ -95,7 +95,7 @@ from editor_core import build_proxy_encode_command, proxy_format_labels, resolve
 
 
 APP_NAME = "RTX 视频渲染工坊"
-APP_VERSION = "1.0.28"
+APP_VERSION = "1.0.29"
 BG = "#18191b"
 SURFACE = "#202124"
 PANEL = "#242629"
@@ -2836,6 +2836,7 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
             else:
                 output_lines: list[str] = []
                 error_lines: list[str] = []
+                shader_errors: list[str] = []
                 progress: dict[str, str] = {}
                 assert process.stdout is not None
 
@@ -2845,6 +2846,10 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
                     for error_line in process.stderr:
                         stripped = error_line.rstrip()
                         if stripped:
+                            from gpu_export import gpu_filter_error
+                            if gpu_filter_error(stripped):
+                                shader_errors.append(stripped)
+                                del shader_errors[:-8]
                             error_lines.append(stripped)
                             del error_lines[:-100]
 
@@ -2872,7 +2877,7 @@ class ExporterApp(StudioIntegrationMixin, tk.Tk):
                         output_lines = output_lines[-100:]
                 process.wait()
                 stderr_thread.join(timeout=2.0)
-                output_text = "\n".join(output_lines + error_lines)
+                output_text = "\n".join(output_lines + error_lines + shader_errors)
             return int(process.returncode or 0), output_text
         except Exception as exc:
             return 1, str(exc)

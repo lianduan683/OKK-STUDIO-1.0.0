@@ -55,6 +55,7 @@ class GpuFilterPlan:
     download_format:str
     decode_mode:str
     color_options:tuple[str,...]=()
+    gpu_resident:bool=False
 
 
 def _text(command):
@@ -99,8 +100,6 @@ def find_gpu_export_ffmpeg(app_dir=None):
 
 def write_grade_shader(grades,directory=None):
     grades=tuple(grade or ColorGrade() for grade in grades)
-    if any(grade.enabled and grade.lut_path for grade in grades):
-        raise GpuExportUnsupported('当前 GPU 导出尚未验证逐层 LUT 的应用顺序，请保留 CPU 特效路径。')
     uniforms,_=grade_uniforms(grades)
     # Export scales before grading, just like the existing CPU chain. PREOUTPUT
     # is target-encoded RGB, after scaling/color conversion and before the
@@ -114,6 +113,9 @@ def write_grade_shader(grades,directory=None):
         return f'//!PARAM {name}\n//!TYPE CONSTANT float\n{uniforms[name]:.9g}'
     source,count=pattern.subn(replace,source)
     if count!=len(uniforms):raise GpuExportUnsupported('自动调色 shader 参数版本不匹配，已保留 CPU 特效路径。')
+    from gpu_lut_shader import attach_grade_luts, LutShaderUnsupported
+    try:source=attach_grade_luts(source,grades)
+    except LutShaderUnsupported as error:raise GpuExportUnsupported(str(error)) from error
     folder=Path(directory or cache_dir('gpu_export/shaders'));folder.mkdir(parents=True,exist_ok=True)
     destination=folder/(hashlib.sha256(source.encode()).hexdigest()[:32]+'.hook')
     if not destination.is_file():
@@ -125,6 +127,13 @@ def write_grade_shader(grades,directory=None):
         finally:
             if temporary is not None:temporary.unlink(missing_ok=True)
     return str(destination)
+
+
+def gpu_filter_error(details):
+    """libplacebo can return success after disabling an invalid custom hook."""
+    return bool(re.search(r'Failed executing hook|shaderc compile status|'
+                          r'Failed (?:compiling|parsing) (?:custom )?shader|'
+                          r'Failed to (?:compile|parse) (?:custom )?shader',str(details),re.I))
 
 
 def _signal_options(media):
@@ -146,12 +155,14 @@ def _dimensions(width,height,pixel_format):
 
 
 def build_gpu_video_plan(grades,*,ffmpeg_path,width,height,pixel_format,rate_text,frames,duration,
-                         media=None,prefix_frames=0,decode_mode='cuda',shader_dir=None,download=True,gpu_index=0):
+                          media=None,prefix_frames=0,decode_mode='cuda',shader_dir=None,download=True,gpu_index=0,
+                          resident=False):
     _dimensions(width,height,pixel_format)
     if type(frames) is not int or frames<1 or type(prefix_frames) is not int or prefix_frames<0:
         raise ValueError('GPU 导出帧范围无效')
     if not math.isfinite(duration) or duration<=0:raise ValueError('GPU 导出时长无效')
     if type(gpu_index) is not int or gpu_index<0:raise ValueError('GPU 导出设备编号无效')
+    if type(resident) is not bool:raise ValueError('GPU 显存传递设置必须为布尔值')
     if not re.fullmatch(r'[0-9]+(?:/[0-9]+|\.[0-9]+)?',str(rate_text)):raise ValueError('GPU 导出帧率无效')
     caps=detect_gpu_export(ffmpeg_path)
     if not caps.libplacebo or not caps.vulkan:raise GpuExportUnsupported(caps.reason)
@@ -173,10 +184,27 @@ def build_gpu_video_plan(grades,*,ffmpeg_path,width,height,pixel_format,rate_tex
     # requirement and can use AMD or Intel's default Vulkan adapter as well.
     device='vulkan=okk_vk:NVIDIA' if decode_mode=='cuda' else 'vulkan=okk_vk'
     global_options=('-init_hw_device',device,'-filter_hw_device','okk_vk')
+    # CUDA/Vulkan external semaphores belong to a CUDA context. Derive Vulkan
+    # from the decoder's named CUDA device so both transfers use that context;
+    # two independently created devices can fail after the first few frames.
+    gpu_resident=False
+    if resident and decode_mode=='cuda':
+        from gpu_resident import supported, global_options as resident_globals
+        gpu_resident=supported(caps.ffmpeg_path,gpu_index)
+        if gpu_resident:global_options=resident_globals(gpu_index)
+    if decode_mode=='cuda' and gpu_index!=0 and not gpu_resident:
+        # A vendor-name Vulkan selector would silently choose the first GPU.
+        # Derivation matches the requested CUDA device's UUID even when frames
+        # still take the compatibility RAM bridge. Init failures fall back.
+        from gpu_resident import global_options as resident_globals
+        global_options=resident_globals(gpu_index)
     if decode_mode=='vulkan':
         input_options=('-hwaccel','vulkan','-hwaccel_device','okk_vk','-hwaccel_output_format','vulkan');upload=''
     elif decode_mode=='cuda':
         input_options=('-hwaccel','cuda','-hwaccel_device',str(gpu_index),'-hwaccel_output_format','cuda')
+        if gpu_resident or gpu_index!=0:
+            from gpu_resident import input_options as resident_inputs
+            input_options=resident_inputs()
         source_surface='p010le' if getattr(media,'bit_depth',8)>8 else 'nv12'
         # Resize while frames are still CUDA-resident. Bridging an 8K P010
         # frame to system RAM and Vulkan would otherwise transfer ~100MB in
@@ -190,7 +218,8 @@ def build_gpu_video_plan(grades,*,ffmpeg_path,width,height,pixel_format,rate_tex
                 raise GpuExportUnsupported('此 FFmpeg 缺少 CUDA 缩放组件，保留原有导出路径。')
             if surface=='p010le':source_surface='p010le'
             prescale=(f'scale_cuda=w={width}:h={height}:interp_algo=bicubic:format={source_surface},')
-        upload=prescale+f'hwdownload,format={source_surface},hwupload,'
+        upload=prescale+('hwupload=derive_device=vulkan,' if gpu_resident
+                         else f'hwdownload,format={source_surface},hwupload,')
     else:input_options=();upload='hwupload,'
     signal,color_options=_signal_options(media)
     pipeline_cache=Path(shader).parent/'pipeline';pipeline_cache.mkdir(parents=True,exist_ok=True)
@@ -199,10 +228,15 @@ def build_gpu_video_plan(grades,*,ffmpeg_path,width,height,pixel_format,rate_tex
             'dithering=none',f'shader_cache={escape_filter_path(str(pipeline_cache/"pl-"))}',
             *([f'custom_shader_path={escape_filter_path(shader)}'] if active_grade else []),*signal]
     trim=(f'trim=start_frame={prefix_frames}:end_frame={prefix_frames+frames}' if prefix_frames else f'trim=end_frame={frames}')
-    chain=(f'setpts=PTS-STARTPTS,fps=fps={rate_text}:start_time=0,'+upload+'libplacebo='+':'.join(render)
-        +f',setsar=1,tpad=stop_mode=clone:stop_duration={duration+1:.9f},{trim},settb=AVTB,setpts=N/({rate_text}*TB)')
-    if download:chain+=f',hwdownload,format={surface}'
-    return GpuFilterPlan(caps.ffmpeg_path,global_options,input_options,chain,shader,surface,decode_mode,color_options)
+    # Discard the frame-phase prefix before any pixel processing. An unknown
+    # clock can require a long decode prefix; grading those discarded frames
+    # used to run an entire camera recording through the GPU for a short cut.
+    chain=(f'setpts=PTS-STARTPTS,fps=fps={rate_text}:start_time=0,'
+        +f'tpad=stop_mode=clone:stop_duration={duration+1:.9f},{trim},settb=AVTB,setpts=N/({rate_text}*TB),'
+        +upload+'libplacebo='+':'.join(render)+f',setsar=1,settb=AVTB,setpts=N/({rate_text}*TB)')
+    if download:
+        chain+=',hwupload=derive_device=cuda' if gpu_resident else f',hwdownload,format={surface}'
+    return GpuFilterPlan(caps.ffmpeg_path,global_options,input_options,chain,shader,surface,decode_mode,color_options,gpu_resident)
 
 
 def build_gpu_transition_command(job,project,base,settings,width,height,pixel_format,rate_text,encode_args,

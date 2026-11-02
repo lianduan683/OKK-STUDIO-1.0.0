@@ -18,6 +18,21 @@ KINDS=('fade','dissolve','wipeleft','wiperight','slideleft','slideright','circle
 
 
 class GpuExportPlanTests(unittest.TestCase):
+    def test_resident_plan_shares_decoder_context_and_has_no_host_pixel_bridge(self):
+        with patch('gpu_resident.supported',return_value=True):
+            p=self.plan(resident=True,gpu_index=2,media=MediaInfo('',width=256,height=144,bit_depth=10))
+        self.assertTrue(p.gpu_resident)
+        self.assertIn('cuda=okk_cu:2',p.global_options)
+        self.assertIn('vulkan=okk_vk@okk_cu',p.global_options)
+        self.assertIn('okk_cu',p.input_options)
+        self.assertNotIn('hwdownload',p.filter_chain)
+        self.assertIn('hwupload=derive_device=vulkan,libplacebo=',p.filter_chain)
+        self.assertTrue(p.filter_chain.endswith('hwupload=derive_device=cuda'))
+        with patch('gpu_resident.supported',return_value=False):
+            fallback=self.plan(resident=True)
+        self.assertFalse(fallback.gpu_resident)
+        self.assertIn('hwdownload',fallback.filter_chain)
+
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.caps=gpu.GpuExportCapabilities('ffmpeg.exe',True,True,True,KINDS,scale_cuda=True)
@@ -57,7 +72,8 @@ class GpuExportPlanTests(unittest.TestCase):
         with self.assertRaises(gpu.GpuExportUnsupported):self.plan(media=source,width=3840,height=2160)
     def test_cuda_respects_device_index_and_rejects_invalid_values(self):
         p=self.plan(gpu_index=2)
-        self.assertEqual(p.input_options,('-hwaccel','cuda','-hwaccel_device','2','-hwaccel_output_format','cuda'))
+        self.assertEqual(p.input_options,('-hwaccel','cuda','-hwaccel_device','okk_cu','-hwaccel_output_format','cuda'))
+        self.assertIn('cuda=okk_cu:2',p.global_options)
         for value in (-1,True,1.5,'0'):
             with self.assertRaises(ValueError):self.plan(gpu_index=value)
     def test_lut_hdr_unsupported_formats_are_explicit(self):

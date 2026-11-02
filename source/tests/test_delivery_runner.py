@@ -13,6 +13,17 @@ from rtx5090_exporter import ExporterApp
 
 
 class DeliveryRunnerTests(unittest.TestCase):
+    def test_shader_failure_survives_log_tail_truncation(self):
+        registrations=[]
+        app=SimpleNamespace(cancel_event=threading.Event(),events=queue.Queue(),
+            _register_process=registrations.append,_unregister_process=registrations.remove)
+        app._terminate=lambda child: ExporterApp._terminate(app,child)
+        script="import sys; print('Failed executing hook',file=sys.stderr); [print('later diagnostic '+str(i),file=sys.stderr) for i in range(150)]"
+        code,details=ExporterApp._run_editor_process(app,[sys.executable,'-u','-c',script],lambda _:None)
+        self.assertEqual(code,0)
+        self.assertIn('Failed executing hook',details)
+        self.assertEqual(registrations,[])
+
     def test_observer_exception_reaps_real_child_before_unregistering(self):
         children = []
         registrations = []

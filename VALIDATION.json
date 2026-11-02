@@ -1,36 +1,26 @@
 {
-  "version": "1.0.28",
-  "build_id": "20261102-024741-bdae8065",
+  "version": "1.0.29",
+  "build_id": "20261102-060129-e444efef",
   "focused_regression": {
-    "run": 134,
-    "passed": 134,
+    "run": 193,
+    "passed": 193,
     "failures": 0,
     "skipped": 0,
     "isolated_private_desktop": true,
-    "scope": "hardware export, pipeline, tail range, edits, frame clock, grades, composition and fallback"
+    "first_run_skipped_then_passed_separately": 1
   },
-  "prior_feature_build_validation": {
-    "run": 134,
-    "passed": 134,
-    "actual_export": "RTX 5070 Ti; CUDA/NVENC, compositing, CPU fallback, 4K and 10-bit verified",
-    "gpu_cpu_image": "different implementations with rounding differences"
+  "feature_preview_validation": {
+    "tests_passed": 103,
+    "tests_failed": 0,
+    "gpu_composite_lut_checkpoint_and_fallback": "passed",
+    "packaged_smoke": "passed"
   },
   "shared_gpu_runtime_verification": {
     "files": 13,
-    "sha256_matches": "passed"
+    "unchanged_from_v1_0_28": "passed",
+    "previous_shared_resource_sha256_matches": "passed"
   },
-  "v1_0_22_validation": {
-    "private_desktop_tests": 121,
-    "isolated_offline_install": "passed",
-    "real_decode": "H.264 D3D11VA and FFV1 software"
-  },
-  "earlier_broader_regression": {
-    "run": 185,
-    "passed": 175,
-    "failures": 9,
-    "errors": 1,
-    "same_10_reproduced_on_prior_baseline": true
-  },
+  "frozen_source_parity_modules": 28,
   "frozen_audio_worker": {
     "passed": true,
     "samples": 48000,
@@ -39,10 +29,19 @@
     "third_party_vst3": "not tested"
   },
   "frozen_headless_export": {
-    "cpu": "passed",
-    "cuda_hevc_nvenc": "passed"
+    "cpu_h264_10bit": "passed",
+    "cuda_hevc_nvenc_10bit": "passed",
+    "frames": 90
   },
-  "version_metadata": "1.0.28",
+  "cuda_vulkan_nvenc_resident_runtime_probe": "passed",
+  "earlier_broader_regression": {
+    "run": 185,
+    "passed": 175,
+    "failures": 9,
+    "errors": 1,
+    "same_10_reproduced_on_prior_baseline": true
+  },
+  "version_metadata": "1.0.29",
   "archive_crc_checks": "passed",
   "source_allowlist_and_known_private_path_and_key_pattern_scan": "passed",
   "trusted_code_signature": false,

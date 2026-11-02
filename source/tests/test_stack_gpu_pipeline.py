@@ -62,7 +62,7 @@ class StackGpuPipelinePlanTests(unittest.TestCase):
                    dict(segment=replace(self.segment, layers=(replace(layer, placement=(.1, 0., 1.)),))),
                    dict(segment=replace(self.segment, layers=(layer, layer))),
                    dict(info=replace(self.info, has_alpha=True)),
-                   dict(info=replace(self.info, color_range='pc')),
+                   dict(info=replace(self.info, color_range=None)),
                    dict(info=replace(self.info, color_transfer='smpte2084')),
                    dict(info=replace(self.info, color_space=None)),
                    dict(info=replace(self.info, sample_aspect_ratio='4:3')),
@@ -79,6 +79,9 @@ class StackGpuPipelinePlanTests(unittest.TestCase):
         # Fill at unit zoom equals fit only because the source aspect already matches.
         project.clip_transforms[0].transform.zoom = 1.
         self.assertEqual(self.build(project=project)[1], 'cuda_pipeline')
+        project.clip_transforms[0].transform.x = .8
+        project.clip_transforms[0].transform.y = -.7
+        self.assertEqual(self.build(project=project)[1], 'cuda_pipeline')
 
     def test_treated_opaque_cache_cannot_hide_original_alpha(self):
         layer = replace(self.segment.layers[0], path='treated.mov')
@@ -87,6 +90,25 @@ class StackGpuPipelinePlanTests(unittest.TestCase):
                 ['ffmpeg'], self.settings, self.caps, 3840, 2160, 'yuv420p10le', '30', [], 'out.mp4',
                 media_by_path={'treated.mov': self.info,
                                'original.mov': replace(self.info, has_alpha=True)})
+
+    def test_full_range_uses_gpu_grading_and_preserves_pc_output(self):
+        caps = GpuExportCapabilities('gpu-ffmpeg', True, True, False, scale_cuda=True)
+        with patch('gpu_export.detect_gpu_export', return_value=caps):
+            command, backend, _, _ = self.build(info=replace(self.info, color_range='pc'))
+        chain = command[command.index('-vf')+1]
+        self.assertEqual(backend, 'gpu_stack_grade')
+        self.assertIn('range=pc', chain)
+        self.assertEqual(command[command.index('-color_range')+1], 'pc')
+        self.assertLess(chain.index('trim='), chain.index('libplacebo='))
+
+    def test_resident_grade_delivers_cuda_surface_without_software_pixel_request(self):
+        caps=GpuExportCapabilities('gpu-ffmpeg',True,True,False,scale_cuda=True)
+        with patch('gpu_export.detect_gpu_export',return_value=caps),patch('gpu_resident.supported',return_value=True):
+            command,backend,_,_=self.build(info=replace(self.info,color_range='pc'))
+        self.assertEqual(backend,'gpu_resident_grade')
+        self.assertNotIn('-pix_fmt',command)
+        self.assertNotIn('hwdownload',command[command.index('-vf')+1])
+        self.assertEqual(command[command.index('-hwaccel_device')+1],'okk_cu')
 
     def test_local_grade_order_matches_programme_outer_and_plain_stack_semantics(self):
         camera, local, global_grade = (ColorGrade(exposure=.2), ColorGrade(gamma=1.1),
