@@ -147,22 +147,30 @@ def compound_project(project):
 
 
 def resolve_compound(segment, project, ffmpeg, ffprobe, width, height, *,
-                     preview=False, deep=False, cancel=None):
+                     preview=False, deep=False, cancel=None, caps=None, progress=None):
     """Resolve the virtual base on a worker using the unchanged programme renderer."""
     if cancel is not None and cancel.is_set():
         from exporter_core import ExportCancelled
         raise ExportCancelled('多机位轨道处理已取消')
     if not any(layer.path == GROUP_URI for layer in segment.layers): return segment
-    transition = any(item.time-item.duration/2 < segment.end-1e-8
-        and item.time+item.duration/2 > segment.start+1e-8 for item in project.transitions)
+    first = _frame(segment.start, project.fps)
+    stop = first + segment.frames
+    transition = any(_frame(item.time-item.duration/2, project.fps) < stop
+        and _frame(item.time+item.duration/2, project.fps) > first for item in project.transitions)
     if not project.multicam_inner_stack and not transition:
         camera = project.camera_at(segment.start)
-        clip = project.clip_at(camera, segment.start)
+        clip = max((clip for clip in project.clips if clip.enabled and clip.camera == camera
+            and _frame(clip.start, project.fps) <= first and _frame(clip.end, project.fps) >= stop),
+            key=lambda clip: (clip.start, clip.id), default=None)
         if clip is not None and camera not in outer_cameras(project):
             from video_stack_render import _layer
             source = replace(_layer(project, clip, segment.start), programme=True)
             return replace(segment, layers=tuple(source if layer.path == GROUP_URI else layer
                                                 for layer in segment.layers))
+        # A genuine programme gap is already black in the outer compositor.
+        # It does not need a separate lossless movie in the input cache.
+        if clip is None:
+            return replace(segment, layers=tuple(layer for layer in segment.layers if layer.path != GROUP_URI))
     from cache_paths import cache_dir
     from exporter_core import Capabilities, ExportSettings, ExportCancelled
     from multicam_core import render_multicam
@@ -174,7 +182,6 @@ def resolve_compound(segment, project, ffmpeg, ffprobe, width, height, *,
     inner.project_settings = {**DEFAULT_SETTINGS, **inner.project_settings}
     inner.project_settings.update(width=width, height=height)
     signature = picture_signature(inner, (width, height))
-    first = _frame(segment.start, project.fps)
     mode = 'preview' if preview else '10bit' if deep else '8bit'
     folder = cache_dir('multicam-compound')/signature
     folder.mkdir(parents=True, exist_ok=True)
@@ -182,19 +189,44 @@ def resolve_compound(segment, project, ffmpeg, ffprobe, width, height, *,
     if cancel is not None and cancel.is_set(): raise ExportCancelled('多机位轨道处理已取消')
     if not destination.is_file() or destination.stat().st_size <= 80:
         codec = 'libx265' if deep and not preview else 'libx264'
-        args = ['-threads', '2', '-filter_threads', '2', '-filter_complex_threads', '2']
-        if codec == 'libx265': args += ['-x265-params', 'lossless=1:log-level=error:pools=1']
-        settings = ExportSettings(codec=codec, preset='ultrafast', quality=20 if preview else 0,
+        threads = max(2, min(8, (os.cpu_count() or 4)//2))
+        args = ['-threads', str(threads), '-filter_threads', '4', '-filter_complex_threads', '4']
+        if codec == 'libx265': args += ['-x265-params', 'lossless=1:log-level=error:pools=4']
+        software = ExportSettings(codec=codec, preset='ultrafast', quality=20 if preview else 0,
             resolution='timeline', audio='none', decode_mode='cpu',
             bit_depth='10-bit' if deep and not preview else '8-bit', bframes=0, extra_args=args)
+        settings = software
+        cache_caps = Capabilities(ffmpeg_path=ffmpeg, ffprobe_path=ffprobe)
+        hardware = 'hevc_nvenc' if deep else 'h264_nvenc'
+        if not preview and caps is not None and width >= 256 and height >= 128:
+            from hardware_encoders import available_codecs
+            if (hardware in available_codecs(caps)
+                    and (not deep or not caps.hardware_probe_complete or hardware in caps.ten_bit_codecs)):
+                # Lossless intermediates preserve the output-depth pixels;
+                # CQ=0 in ordinary VBR mode alone is not a lossless setting.
+                hardware_args = ['-rc', 'constqp', '-qp', '0']
+                if not deep: hardware_args += ['-profile:v', 'high444p']
+                settings = replace(software, codec=hardware, preset='p1', tune='lossless',
+                    decode_mode='cuda' if caps.cuda_decode else 'cpu', extra_args=hardware_args,
+                    split_encode='disabled')
+                cache_caps = caps
         def runner(command, callback):
-            _run_encode(command, segment.duration, cancel_event=cancel, phase='多机位轨道合成')
+            _run_encode(command, segment.duration, cancel_event=cancel, progress=progress,
+                        phase='输入缓存 · 多机位转场合成')
             return 0, ''
         with tempfile.TemporaryDirectory(prefix='.compound-', dir=folder) as work:
             temporary = Path(work)/'compound.mp4'
-            render_multicam(inner, temporary, ffmpeg, ffprobe, settings,
-                Capabilities(ffmpeg_path=ffmpeg, ffprobe_path=ffprobe), runner,
-                cancel_event=cancel, work_directory=work)
+            try:
+                render_multicam(inner, temporary, ffmpeg, ffprobe, settings, cache_caps, runner,
+                    cancel_event=cancel, work_directory=work)
+            except ExportCancelled:
+                raise
+            except Exception:
+                if settings is software: raise
+                if progress: progress(0., '输入缓存 · GPU 不可用，切换 CPU 无损合成')
+                render_multicam(inner, temporary, ffmpeg, ffprobe, software,
+                    Capabilities(ffmpeg_path=ffmpeg, ffprobe_path=ffprobe), runner,
+                    cancel_event=cancel, work_directory=work)
             if cancel is not None and cancel.is_set(): raise ExportCancelled('多机位轨道处理已取消')
             if picture_signature(inner, (width, height)) != signature:
                 raise ExportCancelled('合成期间素材发生变化，请重试')

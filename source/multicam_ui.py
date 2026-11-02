@@ -1554,7 +1554,7 @@ class MulticamWorkspace(VideoPlacementMixin, TimelineSyncMixin, TimelineViewMixi
     def set_camera_grid(self, rows, columns, *, persist=True):
         rows, columns = self._checked_camera_grid(rows, columns)
         if (rows, columns) == (self.camera_rows, self.camera_columns): return
-        cameras = tuple(self._media_camera_order())
+        cameras = tuple(self._monitor_camera_order())
         visible = self._visible_camera_ids
         current = self._displayed_camera if self._displayed_camera in visible else (visible[0] if visible else None)
         self.camera_rows, self.camera_columns = rows, columns
@@ -1568,7 +1568,7 @@ class MulticamWorkspace(VideoPlacementMixin, TimelineSyncMixin, TimelineViewMixi
 
     def _build_camera_frames(self):
         self.camera_proxy_badges = vars(self).get('camera_proxy_badges', {})
-        all_cameras=tuple(self._media_camera_order())
+        all_cameras=tuple(self._monitor_camera_order())
         rows, cols = self.camera_rows, self.camera_columns
         capacity = rows*cols
         pages=max(1,math.ceil(len(all_cameras)/capacity))
@@ -1659,7 +1659,7 @@ class MulticamWorkspace(VideoPlacementMixin, TimelineSyncMixin, TimelineViewMixi
 
     def _change_camera_page(self,delta):
         if not self._available():return
-        pages=max(1,math.ceil(len(self.project.cameras)/(self.camera_rows*self.camera_columns)))
+        pages=max(1,math.ceil(len(self._monitor_camera_order())/(self.camera_rows*self.camera_columns)))
         page=max(0,min(self.camera_page+delta,pages-1))
         if page==self.camera_page:return
         self.camera_page=page;self._build_camera_frames();self._refresh_camera_labels()

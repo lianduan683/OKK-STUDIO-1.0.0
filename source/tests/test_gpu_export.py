@@ -85,7 +85,8 @@ class ActualVulkanExportTests(unittest.TestCase):
         cls.temp=tempfile.TemporaryDirectory(prefix="gpu_export_中文'",dir=cache_dir('tests/gpu_export'))
         cls.folder=Path(cls.temp.name);cls.results={}
         cls.project=SimpleNamespace(fps=20.,duration=2.,camera_grades={},global_grade=ColorGrade(exposure=.1),clip_grades=[],
-            subtitles=SimpleNamespace(enabled=False,burn_in=False,cues=[]))
+            subtitles=SimpleNamespace(enabled=False,burn_in=False,cues=[]),
+            camera_at=lambda time: 1, clip_at=lambda camera,time: None)
         cls.inputs=[]
         for name,color in (('a','0xc53228'),('b','0x2850c5')):
             path=cls.folder/(name+'.mp4')

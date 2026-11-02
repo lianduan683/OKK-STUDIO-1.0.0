@@ -6,7 +6,6 @@ grading also run on the GPU, without a viewport-sized Python/Tk image.
 """
 from __future__ import annotations
 import ctypes as C
-import math
 
 from gpu_d3d11 import (D3D11Compositor, VideoTexture, Com, TexDesc, Sample,
     BufferDesc, Mapped, Viewport, P, U, F, HR, call, check)
@@ -56,8 +55,19 @@ def compile_pixel(source):
 def atlas_layout(count, width, height):
     if type(count) is not int or not 1 <= count <= 36:
         raise ValueError('GPU 图层数量无效。')
-    columns = min(count, math.ceil(math.sqrt(count)))
-    rows = math.ceil(count/columns)
+    if not all(type(v) is int and 0 < v <= 16384 for v in (width, height)):
+        raise ValueError('GPU 图层画幅无效。')
+    # Empty cells still cross the FFmpeg pipe and get uploaded every frame.
+    # Prefer exact packing (three layers use 3x1, not a padded 2x2), then a
+    # compact grid, while respecting D3D11's maximum texture dimensions.
+    candidates = [(columns, (count+columns-1)//columns)
+                  for columns in range(1, count+1)
+                  if columns*width <= 16384
+                  and ((count+columns-1)//columns)*height <= 16384]
+    if not candidates:
+        raise ValueError('GPU 图层画幅超出纹理尺寸限制。')
+    columns, rows = min(candidates, key=lambda size:
+        (size[0]*size[1], abs(size[0]-size[1]), -size[0]))
     return dict(count=count, columns=columns, rows=rows,
                 cell_width=width, cell_height=height)
 

@@ -23,6 +23,11 @@ class StackPrewarmTests(unittest.TestCase):
         self.processes = []
         self.max_owned = 0
         self.read_hook = None
+        self.prepare_hook = None
+        self.publish_hook = None
+        self.frame_counts = {}
+        self.read_counts = {}
+        self.published = []
 
     def tearDown(self):
         self.preview.close()
@@ -35,8 +40,11 @@ class StackPrewarmTests(unittest.TestCase):
         class Pipe(BytesIO):
             def read(self, count=-1):
                 fixture.events.append(('read', identity))
+                fixture.read_counts[identity] = fixture.read_counts.get(identity, 0)+1
+                fixture.preview.update_clock(identity+(fixture.read_counts[identity]-1)/30.)
                 fixture.max_owned = max(fixture.max_owned, len(fixture.preview._processes))
                 if fixture.read_hook is not None: fixture.read_hook(identity)
+                fixture.max_owned = max(fixture.max_owned, len(fixture.preview._processes))
                 data = super().read(count)
                 if not data: process.returncode = 0
                 return data
@@ -44,7 +52,7 @@ class StackPrewarmTests(unittest.TestCase):
         class Process:
             returncode = None
             stderr = None
-            stdout = Pipe(bytes([identity % 255])*16)
+            stdout = Pipe(bytes([identity % 255])*16*fixture.frame_counts.get(identity, 1))
 
             def poll(self): return self.returncode
 
@@ -69,24 +77,67 @@ class StackPrewarmTests(unittest.TestCase):
                     for index in range(count)]
         project = MulticamProject(master_duration=float(count), fps=30.)
         job = (0, project, 0., playing, 1, None, False, None)
+        def command(segment, *args, **kwargs):
+            if self.prepare_hook is not None: self.prepare_hook(segment)
+            self.events.append(('prepared', int(segment.start)))
+            return ['ffmpeg', '-filter_complex', 'null', '-f', 'rawvideo', 'pipe:1'], 30.
+        original_publish = self.preview._publish
+        def publish(generation, payload):
+            self.published.append(payload)
+            self.events.append(('publish', payload['time']))
+            if self.publish_hook is not None: self.publish_hook(payload)
+            original_publish(generation, payload)
         with patch('video_stack_preview.preview_segments', return_value=iter(segments)), \
                 patch('video_stack_preview.validate_stack_media'), \
-                patch('video_stack_preview.preview_command', side_effect=lambda *a, **kw:
-                      (['ffmpeg', '-filter_complex', 'null', '-f', 'rawvideo', 'pipe:1'], 30.)), \
+                patch('video_stack_preview.preview_command', side_effect=command), \
+                patch.object(self.preview, '_publish', side_effect=publish), \
                 patch('video_stack_preview.subprocess.Popen', side_effect=self.spawn):
             self.preview._render(job, self.cancel)
 
-    def test_next_effect_process_starts_after_first_frame_and_before_current_is_consumed(self):
+    def wait_owned(self, count):
+        deadline = time.monotonic()+2.
+        while len(self.preview._processes) < count and time.monotonic() < deadline:
+            time.sleep(.001)
+        self.assertEqual(len(self.preview._processes), count)
+
+    def test_two_successors_are_ready_before_current_ends_with_three_process_bound(self):
+        self.frame_counts[0] = 4
+        def await_successors(identity):
+            if identity == 0 and self.read_counts[0] == 2: self.wait_owned(3)
+        self.read_hook = await_successors
         self.render(count=12)
-        reads = [i for i, event in enumerate(self.events) if event == ('read', 0)]
-        self.assertLess(reads[0], self.events.index(('spawn', 1)))
-        self.assertLess(self.events.index(('spawn', 1)), reads[1])
-        for identity in range(1, 11):
-            self.assertLess(self.events.index(('wait', identity-1)), self.events.index(('spawn', identity+1)))
-        self.assertEqual(self.max_owned, 2)
+        self.assertLess(self.events.index(('publish', 0.)), self.events.index(('spawn', 1)))
+        self.assertLess(self.events.index(('spawn', 2)), self.events.index(('wait', 0)))
+        for identity in range(3, 12):
+            self.assertLess(self.events.index(('wait', identity-3)), self.events.index(('spawn', identity)))
+        self.assertEqual(self.max_owned, 3)
         self.assertEqual(len(self.processes), 12)
         self.assertEqual(self.preview._processes, set())
         self.assertIsNone(self.preview._process)
+        self.assertTrue(all(process.stdout.closed for process in self.processes))
+
+    def test_slow_successor_preparation_does_not_block_current_frame_delivery(self):
+        entered = threading.Event()
+        release = threading.Event()
+        self.frame_counts[0] = 5
+        def prepare(segment):
+            if segment.start == 1.:
+                entered.set()
+                if not release.wait(2.): raise AssertionError('Current frames blocked by successor preparation')
+        def read(identity):
+            if identity == 0 and self.read_counts[0] == 2:
+                self.assertTrue(entered.wait(2.))
+        def publish(payload):
+            if payload['time'] == 2/30.:
+                self.assertTrue(entered.is_set())
+                self.assertNotIn(('prepared', 1), self.events)
+                release.set()
+        self.prepare_hook, self.read_hook, self.publish_hook = prepare, read, publish
+        self.render(count=3)
+        self.assertTrue(release.is_set())
+        self.assertEqual([f['time'] for f in self.published[:5]], [i/30. for i in range(5)])
+        self.assertLess(self.events.index(('publish', 2/30.)), self.events.index(('prepared', 1)))
+        self.assertEqual(self.preview._processes, set())
         self.assertTrue(all(process.stdout.closed for process in self.processes))
 
     def test_paused_exact_frame_starts_no_speculative_process(self):
@@ -95,17 +146,40 @@ class StackPrewarmTests(unittest.TestCase):
         self.assertEqual(self.max_owned, 1)
 
     def test_navigation_cancellation_reaps_current_and_prepared_successor(self):
+        self.frame_counts[0] = 3
         def cancel_on_read(identity):
-            if len(self.processes) > 1:
+            if identity == 0 and self.read_counts[0] == 2:
+                self.wait_owned(3)
                 self.cancel.set()
                 with self.preview._condition: self.preview._terminate_locked()
         self.read_hook = cancel_on_read
         with self.assertRaises(PreviewCancelled): self.render(count=12)
-        self.assertEqual(len(self.processes), 2)
+        self.assertEqual(len(self.processes), 3)
         self.assertIn(('terminate', 0), self.events)
         self.assertIn(('terminate', 1), self.events)
+        self.assertIn(('terminate', 2), self.events)
         self.assertEqual(self.preview._processes, set())
         self.assertTrue(all(process.stdout.closed for process in self.processes))
+
+    def test_cancel_during_successor_preparation_prevents_late_decoder_start(self):
+        entered = threading.Event()
+        returned = threading.Event()
+        self.frame_counts[0] = 3
+        def prepare(segment):
+            if segment.start == 1.:
+                entered.set()
+                if not self.cancel.wait(2.): raise AssertionError('Cancellation did not reach preparation')
+                returned.set()
+        def read(identity):
+            if identity == 0 and self.read_counts[0] == 2:
+                self.assertTrue(entered.wait(2.))
+                self.cancel.set()
+        self.prepare_hook, self.read_hook = prepare, read
+        with self.assertRaises(PreviewCancelled): self.render(count=12)
+        self.assertTrue(returned.is_set())
+        self.assertEqual(len(self.processes), 1)
+        self.assertEqual(self.preview._processes, set())
+        self.assertTrue(self.processes[0].stdout.closed)
 
     def test_failed_successor_startup_also_reaps_the_current_process(self):
         original_spawn = self.spawn
@@ -222,7 +296,8 @@ class StackPrewarmMediaTests(unittest.TestCase):
                     preview.update_clock(len(frames)/30.)
                 time.sleep(.001)
             self.assertEqual(len(frames), 60, events)
-            self.assertEqual(peak, 2)
+            self.assertGreaterEqual(peak, 2)
+            self.assertLessEqual(peak, 3)
             self.assertEqual(b''.join(frame['rgba'] for frame in frames), expected)
             for index, frame in enumerate(frames): self.assertAlmostEqual(frame['time'], index/30.)
             self.assertFalse([event for event in events if event[0] == 'error'], events)

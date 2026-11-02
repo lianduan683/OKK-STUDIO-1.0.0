@@ -238,10 +238,11 @@ def build_transition_command(job: TransitionSegment, project, base, settings, wi
             else f"trim=end_frame={job.full_frames}")
     timing = (
         f"setpts=PTS-STARTPTS,fps=fps={rate_text}:start_time=0,"
+        f"tpad=stop_mode=clone:stop_duration={full_duration + prefix_seconds + 1:.9f},"
+        f"{trim},settb=AVTB,setpts=N/({rate_text}*TB),"
     )
     normalize_tail = (
-        f"format={working_format},tpad=stop_mode=clone:stop_duration={full_duration + prefix_seconds + 1:.9f},"
-        f"{trim},settb=AVTB,setpts=N/({rate_text}*TB)"
+        f"format={working_format}"
     )
     graph = []
     for index, camera in enumerate((job.camera, job.other_camera)):

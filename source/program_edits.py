@@ -53,10 +53,14 @@ def _clock(project) -> tuple[float, int]:
 def _range(project, start: float, end: float) -> tuple[int, int, float]:
     fps, last = _clock(project)
     start, end = _number(start, "片段开始"), _number(end, "片段结束")
-    if start < 0 or end > max(project.duration, last / fps) + 1e-6 or end <= start:
+    # Edits can end on a frame snapped with the rounded UI rate (29.97),
+    # while export uses the exact NTSC clock (30000/1001). Allow its sub-frame
+    # tail rounding and cap it to the programme's final frame. A whole extra
+    # frame still fails the time bound, including on integer/custom clocks.
+    if start < 0 or end > project.duration + .5 / fps + 1e-6 or end <= start:
         raise ValueError("片段范围无效或超出工程")
-    first, stop = _frame(start, fps), _frame(end, fps)
-    if first < 0 or stop > last or stop <= first:
+    first, stop = _frame(start, fps), min(_frame(end, fps), last)
+    if first < 0 or stop <= first:
         raise ValueError("片段范围不足一帧或超出工程")
     return first, stop, fps
 

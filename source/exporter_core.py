@@ -48,6 +48,8 @@ class MediaInfo:
     color_range: str | None = None
     has_video: bool = True
     has_alpha: bool = False
+    field_order: str = "unknown"
+    has_display_transform: bool = False
 
 
 @dataclass(slots=True)
@@ -182,7 +184,8 @@ def _media_probe_command(ffprobe: str, path: str) -> list[str]:
         "format=duration:format_tags=timecode:"
         "stream=index,codec_type,codec_name,width,height,avg_frame_rate,r_frame_rate,pix_fmt,"
         "bits_per_raw_sample,color_primaries,color_transfer,color_space,color_range,"
-        "sample_aspect_ratio,duration:stream_tags=timecode,alpha_mode:stream_disposition=attached_pic",
+        "sample_aspect_ratio,duration,field_order:stream_tags=timecode,alpha_mode,rotate:"
+        "stream_side_data=side_data_type,rotation,displaymatrix:stream_disposition=attached_pic",
         "-of", "json",
         path,
     ]
@@ -198,6 +201,37 @@ def probe_media(ffprobe: str, path: str, *, allow_audio_only: bool = False) -> M
     except json.JSONDecodeError as exc:
         raise RuntimeError("ffprobe returned invalid JSON") from exc
     return _media_info_from_payload(path, payload, allow_audio_only=allow_audio_only)
+
+
+def _has_display_transform(video: dict) -> bool:
+    """Keep automatic rotation/mirroring out of unverified hardware paths.
+
+    Even an identity display matrix is retained conservatively: FFmpeg may
+    apply a matrix's reflection or skew in addition to its rotation angle.
+    The ordinary software path remains responsible for those transforms.
+    """
+    def nonzero_rotation(value):
+        try:
+            angle = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return True
+        return not math.isfinite(angle) or angle != 0.0
+
+    tags = video.get("tags") or {}
+    if "rotate" in tags and nonzero_rotation(tags["rotate"]):
+        return True
+    side_data = video.get("side_data_list") or []
+    if not isinstance(side_data, (list, tuple)):
+        return True
+    for item in side_data:
+        if not isinstance(item, dict):
+            return True
+        if ("displaymatrix" in item
+                or "display matrix" in str(item.get("side_data_type", "")).lower()):
+            return True
+        if "rotation" in item and nonzero_rotation(item["rotation"]):
+            return True
+    return False
 
 
 def _media_info_from_payload(path: str, payload: dict, *, allow_audio_only: bool = False) -> MediaInfo:
@@ -252,6 +286,8 @@ def _media_info_from_payload(path: str, payload: dict, *, allow_audio_only: bool
         color_range=video.get("color_range"),
         has_video=has_video,
         has_alpha=has_video and stream_has_alpha(video),
+        field_order=str(video.get("field_order") or "unknown").lower(),
+        has_display_transform=has_video and _has_display_transform(video),
     )
 
 

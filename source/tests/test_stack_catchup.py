@@ -56,6 +56,18 @@ class StackCatchupTests(unittest.TestCase):
         self.preview._clock = 9.99
         self.assertIsNone(self.preview._catchup_target(0, 0., 30., 10.))
 
+    def test_cold_first_frame_can_recover_without_waiting_full_interval(self):
+        # Hold the condition so the worker cannot consume the synthetic job.
+        with self.preview._condition:
+            with patch('video_stack_preview.time.monotonic', return_value=10.):
+                self.preview.request(object(), 0., True, 1)
+            self.preview._pending = None
+            self.preview._cancel = threading.Event()
+            self.preview._clock = 1.
+            with patch('video_stack_preview.time.monotonic', return_value=11.):
+                self.assertIsNotNone(self.preview._catchup_target(self.preview._generation, 0., 30., 100.))
+                self.assertIsNone(self.preview._catchup_target(self.preview._generation, 0., 30., 100.))
+
     def test_worker_replaces_stale_job_without_new_generation_or_probe_owner(self):
         calls = []
         finished = threading.Event()

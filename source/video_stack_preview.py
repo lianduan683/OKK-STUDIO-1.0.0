@@ -1,6 +1,6 @@
 """Bounded, cancellable live RGBA preview using the export compositor graph.
 
-Two bounded FFmpeg slots stream the current segment and prepare its successor. No timeline-length
+Three bounded FFmpeg slots stream the current segment and prepare two successors. No timeline-length
 cache is generated. The caller owns audio/time; decoded video follows that
 clock and a single latest-frame mailbox, never a queue of image buffers.
 """
@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 from contextlib import ExitStack, contextmanager
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+from collections import deque
 from fractions import Fraction
 import json
 import math
@@ -34,6 +36,24 @@ class PreviewCatchUp(Exception):
     def __init__(self, position):
         super().__init__('continuous preview fell behind the master clock')
         self.position = position
+
+
+class _PrepareCancel:
+    """Stop speculative work without cancelling a clock catch-up request."""
+    def __init__(self, parent):
+        self.parent = parent
+        self.stopped = threading.Event()
+
+    def is_set(self):
+        return self.parent.is_set() or self.stopped.is_set()
+
+    def wait(self, timeout=None):
+        end = None if timeout is None else time.monotonic()+timeout
+        while not self.is_set():
+            remaining = .05 if end is None else min(.05, end-time.monotonic())
+            if remaining <= 0: return False
+            self.stopped.wait(remaining)
+        return True
 
 
 def preview_segments(project, position, *, single_frame=False):
@@ -87,6 +107,10 @@ def preview_command(segment, project, ffmpeg, media, width=1280, height=720,
     # scheduler limits. Reduce native YUV/YUVA before expensive RGB conversion.
     for index in range(len(command)-1):
         if command[index] == '-threads': command[index+1] = '4'
+    # This is one preview graph, not the parallel export scheduler. Keeping
+    # its YUVA scaling/conversion on one thread cannot feed 30 fps when an
+    # alpha movie and subtitles are active together.
+    command[command.index('-filter_complex_threads')+1] = str(min(8, max(1, os.cpu_count() or 1)))
     graph_index = command.index('-filter_complex')+1
     graph = command[graph_index]
     from clip_transform import ClipTransform, transform_at, transform_is_identity
@@ -135,7 +159,7 @@ def cached_stack_segments(segments, items, fps):
 
 
 class StackPreview:
-    """Own current/next FFmpeg processes and a single latest RGBA mailbox."""
+    """Own bounded FFmpeg processes and a single latest RGBA mailbox."""
     CATCHUP_LAG = .5
     CATCHUP_INTERVAL = 2.5
     def __init__(self, ffmpeg, ffprobe, notify, *, width=1280, height=720, max_fps=30., gpu_layers=False):
@@ -210,7 +234,10 @@ class StackPreview:
             self._playing = bool(playing)
             self._stream_generation = self._generation if playing else None
             self._decoded_time = None
-            self._last_catchup = time.monotonic()
+            # A cold first frame can already be behind the running audio.
+            # Permit its first recovery immediately; subsequent recoveries
+            # retain the normal interval to prevent a restart loop.
+            self._last_catchup = time.monotonic()-self.CATCHUP_INTERVAL
             self._pending = (self._generation, project, float(position), bool(playing), int(request_id),
                              ass_path, bool(use_proxies), preview_epoch, tuple(cache_items), frozenset(original_cameras))
             self._condition.notify()
@@ -395,6 +422,7 @@ class StackPreview:
             height = max(2, round(canvas_height * ratio / 2) * 2)
         candidates = {clip.path: clip.proxy_path for clip in project.clips}
         rates = {}
+        prepare_cancel = _PrepareCancel(cancel)
 
         def covers_canvas(info):
             ratio = min(width/info.width, height/info.height)
@@ -409,11 +437,11 @@ class StackPreview:
             if getattr(project, 'multicam_outer_order', ()):
                 from multicam_outer import resolve_compound
                 segment = resolve_compound(segment, project, self.ffmpeg, self.ffprobe,
-                    width, height, preview=True, cancel=cancel)
+                    width, height, preview=True, cancel=prepare_cancel)
             for layer in segment.layers:
-                self._check(cancel)
+                self._check(prepare_cancel)
                 for path in (layer.original_path, layer.path):
-                    if path not in media: media[path] = self._probe(path, cancel)
+                    if path not in media: media[path] = self._probe(path, prepare_cancel)
                 original, picture = media[layer.original_path], media[layer.path]
                 alpha = layer.has_alpha or original.has_alpha or pixel_format_has_alpha(original.pixel_format)
                 layers.append(layer)
@@ -434,7 +462,7 @@ class StackPreview:
                         if proxy != layer.original_path:
                             try:
                                 info = validate_proxy_media(self.ffprobe, layer.original_path, proxy,
-                                    original.duration, project.fps, probe=lambda _tool,path:self._probe(path,cancel))
+                                    original.duration, project.fps, probe=lambda _tool,path:self._probe(path,prepare_cancel))
                                 if abs(info.width/info.height-original.width/original.height) > 2/min(info.height,original.height):
                                     raise ValueError('代理画幅与原片不一致。')
                                 if covers_canvas(original) and not covers_canvas(info):
@@ -459,14 +487,17 @@ class StackPreview:
         # opaque H264 preview proxy for a formerly transparent layer.
         last_status = time.monotonic()
         iterator = iter(segments)
-        current = following = None
+        current = None
+        pending = deque()
+        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='stack-prewarm')
+        exhausted = False
 
         def prepare(segment):
             owner = ExitStack()
             try:
                 segment = visible_segment(segment)
                 process, fps, error_log = owner.enter_context(self._segment_stream(
-                    segment, project, media, width, height, playing, ass_path, rates, cancel))
+                    segment, project, media, width, height, playing, ass_path, rates, prepare_cancel))
                 layout = getattr(self,'_stream_layout',None)
                 backend = ('GPU Alpha 合成与显示' if layout else
                     'CPU 兼容合成 · GPU 显示' if self.gpu_layers else 'CPU 兼容合成与显示')
@@ -478,6 +509,25 @@ class StackPreview:
                 owner.close()
                 raise
 
+        def prewarm():
+            nonlocal exhausted
+            # Reserve the two slots before starting work: current + pending
+            # (including an in-progress probe) never exceeds three decoders.
+            while playing and not exhausted and len(pending) < 2:
+                self._check(cancel)
+                segment = next(iterator, None)
+                if segment is None:
+                    exhausted = True
+                    break
+                pending.append(executor.submit(prepare, segment))
+
+        def await_ready(future):
+            while True:
+                self._check(cancel)
+                try: return future.result(timeout=.05)
+                except FutureTimeout:
+                    if future.done(): return future.result()
+
         try:
             segment = next(iterator, None)
             opened_at = time.monotonic()
@@ -486,21 +536,22 @@ class StackPreview:
             while current is not None:
                 self._check(cancel)
                 segment, process, fps, error_log, owner, layout = current
-                # Start only the immediate successor. Its bounded stdout pipe
-                # fills with the first frame, then backpressure stops decoding.
-                # Nothing reads or queues the rest of its timeline in memory.
-                next_segment = next(iterator, None) if playing else None
+                # Successor metadata and decoder startup run separately from
+                # frame delivery. Two ready successors cover very short cuts.
                 frame_width = width * layout['columns'] if layout else width
                 frame_height = height * layout['rows'] if layout else height
                 frame_bytes = frame_width*frame_height*4; index = 0
                 while True:
                     self._check(cancel)
                     if playing: self._wait_playing(cancel)
-                    parts = bytearray()
-                    while len(parts) < frame_bytes:
-                        data = process.stdout.read(frame_bytes-len(parts))
-                        if not data: break
-                        parts.extend(data)
+                    parts = process.stdout.read(frame_bytes)
+                    if parts and len(parts) < frame_bytes:
+                        remainder = bytearray(parts)
+                        while len(remainder) < frame_bytes:
+                            data = process.stdout.read(frame_bytes-len(remainder))
+                            if not data: break
+                            remainder.extend(data)
+                        parts = bytes(remainder)
                     self._check(cancel)
                     if not parts: break
                     if len(parts) != frame_bytes: raise RuntimeError('图层预览返回了不完整的视频帧。')
@@ -525,31 +576,39 @@ class StackPreview:
                             if time.monotonic()-last_status > 3.:
                                 self.notify('status', '图层预览解码跟不上播放时钟，正在跳过旧帧；可减少图层或使用保留透明通道的轻量素材。')
                                 last_status = time.monotonic()
-                            if next_segment is not None and following is None:
-                                following = prepare(next_segment)
+                            prewarm()
                             continue
                     self._publish(generation, {'request_id': request_id, 'time': stamp,
-                        'width': frame_width, 'height': frame_height, 'rgba': bytes(parts), 'preview_epoch': preview_epoch,
+                        'width': frame_width, 'height': frame_height, 'rgba': parts, 'preview_epoch': preview_epoch,
                         **({'gpu_layers': layout} if layout else {}),
                         'fps': fps, 'playback_frame': playing})
-                    # Publish the current picture before probing/starting its
-                    # successor, which may live on a slow disk.
-                    if next_segment is not None and following is None:
-                        following = prepare(next_segment)
+                    prewarm()
                 process.wait(timeout=3.)
                 if process.returncode:
                     error_log.seek(0); raise RuntimeError(error_log.read(8192).decode('utf-8', errors='replace'))
                 owner.close()
-                if next_segment is not None and following is None:
-                    following = prepare(next_segment)
-                current, following = following, None
+                current = None
+                prewarm()
+                if pending:
+                    future = pending[0]
+                    current = await_ready(future)
+                    pending.popleft()
+                    prewarm()
         finally:
-            # Cancellation, navigation, cache unloading and failed successor
-            # startup must reap both slots, even if one cleanup raises.
-            try:
-                if current is not None: current[4].close()
-            finally:
-                if following is not None: following[4].close()
+            prepare_cancel.stopped.set()
+            with self._condition: self._terminate_locked()
+            executor.shutdown(wait=True, cancel_futures=True)
+            owners = [current[4]] if current is not None else []
+            for future in pending:
+                if future.cancelled(): continue
+                try: ready = future.result()
+                except BaseException: continue
+                owners.append(ready[4])
+            errors = []
+            for owner in owners:
+                try: owner.close()
+                except Exception as error: errors.append(error)
+            if errors: raise errors[0]
 
     def _run(self):
         while True:

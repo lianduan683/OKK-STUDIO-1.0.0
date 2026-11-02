@@ -94,6 +94,47 @@ class CameraGridLayoutTests(unittest.TestCase):
         self.assert_cells_fit()
         self.assertEqual(self.errors, [])
 
+    def test_outer_tracks_stay_in_media_library_but_not_grid_or_page_count(self):
+        from multicam_outer import place_outer
+        from camera_display import camera_number, camera_id_for_number
+        self.populate(5)
+        ws = self.workspace
+        place_outer(ws.project, 2, ('above', 0))
+        place_outer(ws.project, 4, ('below', 0))
+        before = copy.deepcopy(ws.project)
+        ws._refresh()
+        ws.set_camera_grid(1, 2)
+        self.assertEqual(ws._visible_camera_ids, (1, 3))
+        self.assertEqual(ws.camera_page_var.get(), '1/2')
+        ws._change_camera_page(1)
+        self.assertEqual(ws._visible_camera_ids, (5,))
+        self.assertEqual(ws.camera_page_var.get(), '2/2')
+        ws._change_camera_page(1)
+        self.assertEqual(ws.camera_page, 1)
+        self.assertEqual(ws._media_camera_order(), [1, 2, 3, 4, 5])
+        self.assertTrue(ws.media_tree.exists('camera_2'))
+        self.assertTrue(ws.media_tree.exists('camera_4'))
+        self.assertEqual(camera_number(ws.project, 3), 3)
+        self.assertEqual(camera_id_for_number(ws.project, 2), 2)
+        self.assertEqual(ws.project, before)
+        self.assertEqual(self.errors, [])
+
+    def test_moving_source_to_outer_retires_its_live_grid_decoder_window(self):
+        from multicam_outer import place_outer
+        self.populate(4)
+        ws = self.workspace
+        handles = self.handles()
+        ws.player = RecordingPlayer()
+        place_outer(ws.project, 4, ('above', 0))
+        ws._build_camera_frames()
+        self.assertEqual(ws._visible_camera_ids, (1, 2, 3))
+        self.assertEqual(self.handles(), {c: handles[c] for c in (1, 2, 3)})
+        self.assertEqual(ws.player.commands[-1], ('camera_windows', {'windows': self.handles()}))
+        self.assertIn(handles[4], ws._retired_camera_frames)
+        ws._release_camera_frames([handles[4]])
+        self.assertEqual(ws._retired_camera_frames, {})
+        self.assertEqual(self.errors, [])
+
     def test_capacity_pagination_digit_keys_never_select_a_hidden_camera(self):
         self.populate(73)
         ws = self.workspace

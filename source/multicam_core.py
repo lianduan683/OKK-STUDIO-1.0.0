@@ -905,14 +905,29 @@ def render_multicam(
     Temporary files and an atomic
     final replacement keep an existing destination intact on failure/cancel.
     """
+    started = time.monotonic()
+    with tempfile.NamedTemporaryFile(prefix='multicam_', suffix='.jsonl',
+            dir=work_directory if work_directory is not None else cache_dir('logs/exports'), delete=False) as stream:
+        trace_path = Path(stream.name)
+
+    def preparing(phase):
+        if progress: progress(0., 1., phase)
+        if metrics:
+            metrics(dict(stage='preparing', phase=phase, progress_percent=0., fps=0., speed=0.,
+                         elapsed=time.monotonic()-started, eta=None, active_workers=0,
+                         diagnostic_path=str(trace_path), average_fps=0., encoded_frames=0,
+                         processed_seconds=0., total_seconds=0., completed_segments=0, total_segments=0))
+
+    preparing('准备输入 · 分析时间线')
     project.validate()
     # The UI stores a rounded decimal (e.g. 59.94006). Use one canonical clock
     # for frame selection, seeks, task boundaries, and encoded stream timing.
     project = replace(project, fps=float(canonical_frame_rate(project.fps)))
-    from video_stack_render import plan_stack_segments, validate_stack_media, build_stack_command
+    from video_stack_render import (plan_stack_segments, validate_stack_media, build_stack_command,
+                                    build_stack_gpu_command)
     stacked = project.video_stack_enabled
     placed = has_placement(project)
-    segments = plan_stack_segments(project) if stacked else project.segments()
+    segments = plan_stack_segments(project, for_export=True) if stacked else project.segments()
     if not segments:
         raise ValueError("请先添加相机素材")
     if not stacked:
@@ -944,11 +959,12 @@ def render_multicam(
 
     cancelled()
     media: dict[str, MediaInfo] = {}
-    for clip in project.clips:
+    for clip_index, clip in enumerate(project.clips):
         cancelled()
         if not Path(clip.path).is_file():
             raise ValueError(f"原始素材不存在：{clip.path}")
         if clip.path not in media:
+            preparing(f'准备输入 · 读取素材 {clip_index+1}/{len(project.clips)}')
             media[clip.path] = probe_media(ffprobe, clip.path)
     reference = media[project.clips[0].path]
     for segment in segments:
@@ -974,20 +990,12 @@ def render_multicam(
     # Software fallback normalizes mixed aspect ratios and unsupported inputs;
     # compatible camera chunks retain CUDA surfaces throughout the pipeline.
     pixel_format = "yuv420p10le" if depth == 10 else "yuv420p"
-    if stacked and project.multicam_outer_order:
-        from multicam_outer import resolve_compound
-        prepared = []
-        for index, segment in enumerate(segments):
-            cancelled()
-            if progress: progress(index, len(segments), '准备多机位轨道')
-            segment = resolve_compound(segment, project, ffmpeg, ffprobe, width, height,
-                                       deep=depth == 10, cancel=cancel_event)
-            for layer in segment.layers:
-                if layer.path not in media: media[layer.path] = probe_media(ffprobe, layer.path)
-            prepared.append(segment)
-        segments = prepared
+    pipelined = bool(stacked and project.multicam_outer_order)
     if stacked:
-        validate_stack_media(segments, media)
+        # Actual compound inputs are resolved in the bounded input pipeline.
+        # Validate their resulting media before that individual output starts.
+        validate_stack_media([replace(segment, layers=tuple(layer for layer in segment.layers
+            if layer.path != 'okk-multicam://programme')) for segment in segments], media)
     rate = Fraction(project.fps).limit_denominator(100_000)
     rate_text = f"{rate.numerator}/{rate.denominator}"
     duration = sum(segment.frames for segment in segments) / project.fps
@@ -1062,7 +1070,7 @@ def render_multicam(
                          if settings.audio not in {"none", "copy"} else 48000)
     base = [str(ffmpeg), "-hide_banner", "-y", "-loglevel", "warning",
             "-stats_period", "0.25", "-progress", "pipe:1", "-nostats"]
-    gpu_effect_ffmpeg = (find_gpu_export_ffmpeg() if not stacked and settings.decode_mode == 'cuda'
+    gpu_effect_ffmpeg = (find_gpu_export_ffmpeg() if settings.decode_mode == 'cuda'
         and settings.codec.endswith('_nvenc') and Path(ffmpeg).is_file() else '')
     workers = getattr(settings, "parallel_workers", 1)
     if isinstance(workers, bool) or not isinstance(workers, int) or not 1 <= workers <= 4:
@@ -1076,6 +1084,7 @@ def render_multicam(
         workers = min(workers, max(1, 8 // max(1, active_layers)))
     needs_phase = any(getattr(segment, "phase_origin", None) is not None
                       and segment.phase_origin < segment.start - .5 / project.fps for segment in segments)
+    preparing('准备输入 · 检查素材帧率')
     source_rates = probe_partition_rates(ffprobe, media, cancel_event) if stacked or workers > 1 or needs_phase else {}
     if workers > 1 and not stacked:
         segments = [chunk for segment in segments for chunk in (
@@ -1083,17 +1092,22 @@ def render_multicam(
             partition_render_segments([segment], project.fps, workers, source_frame_rates=source_rates))]
     workers = min(workers, len(segments))
     total_frames = sum(segment.frames for segment in segments)
-    started = time.monotonic()
     lock = threading.RLock()
     aborted = threading.Event()
     processed_frames = [0] * len(segments)
     completed_segments = [False] * len(segments)
     active: dict[int, tuple[float, float, float]] = {}
+    input_active: dict[int, str] = {}
+    input_prepared = set()
+    input_errors = []
+
+    class PipelineCancellation:
+        def is_set(self):
+            return aborted.is_set() or (cancel_event is not None and cancel_event.is_set())
+
+    pipeline_cancel = PipelineCancellation()
     gpu_disabled: dict[str,str] = {}
     trace_lock = threading.Lock()
-    with tempfile.NamedTemporaryFile(prefix='multicam_',suffix='.jsonl',
-            dir=work_directory if work_directory is not None else cache_dir('logs/exports'),delete=False) as stream:
-        trace_path = Path(stream.name)
 
     def trace(event,**data):
         # One event per attempt, not per frame. Retain diagnostics after the
@@ -1133,6 +1147,9 @@ def render_multicam(
         eta = 0.0 if finished else (max(0.0, duration - seconds) * stage_elapsed / seconds if seconds > 0 else None)
         if not mux and not finished:
             phase += f" · 已完成 {sum(completed_segments)}/{len(segments)}"
+            if pipelined:
+                phase += f" · 输入就绪 {len(input_prepared)}/{len(segments)}"
+                if input_active: phase += ' · ' + next(iter(input_active.values()))
         if progress is not None:
             progress(duration * percent / 100.0, duration, phase)
         if metrics is not None:
@@ -1144,7 +1161,10 @@ def render_multicam(
                      "elapsed": elapsed, "eta": eta,
                      "stage": "done" if finished else "muxing" if mux else "encoding",
                      "completed_segments": sum(completed_segments), "total_segments": len(segments),
-                     "active_workers": 1 if mux and not finished else len(active)})
+                     "input_prepared_segments":len(input_prepared),
+                     "input_cache_active":len(input_active),
+                     "output_active":len(active),
+                     "active_workers": 1 if mux and not finished else len(set(active)|set(input_active))})
 
     def check_output(code: int, details, expected: Path, phase: str) -> None:
         cancelled()
@@ -1164,11 +1184,53 @@ def render_multicam(
             ass_path = write_ass(project.subtitles, temporary / 'subtitles.ass', width, height)
         encoded = [temporary / f"camera_{index:06d}.mp4" for index in range(len(segments))]
 
-        def encode_segment(index: int) -> None:
+        def prepare_input(index: int):
+            cancelled()
+            if aborted.is_set(): raise ExportCancelled('输入缓存处理已取消')
+            segment = segments[index]
+            if pipelined:
+                from multicam_outer import resolve_compound
+
+                def input_progress(percent, phase):
+                    with lock:
+                        input_active[index] = f'{phase} {index+1}/{len(segments)} · {percent:.0f}%'
+                        publish('实时渲染 · 输入缓存与输出并行')
+
+                with lock:
+                    input_active[index] = f'准备输入缓存 {index+1}/{len(segments)}'
+                try:
+                    segment = resolve_compound(segment, project, ffmpeg, ffprobe, width, height,
+                        deep=depth == 10, cancel=pipeline_cancel, caps=caps, progress=input_progress)
+                    for layer in segment.layers:
+                        if layer.path not in media:
+                            info = probe_media(ffprobe, layer.path)
+                            with lock:
+                                media[layer.path] = info
+                                if layer.camera == 0 and layer.original_path == layer.path:
+                                    # Only this newly generated compound is
+                                    # guaranteed to use the output clock.
+                                    source_rates[layer.path] = rate
+                            if layer.camera != 0 or layer.original_path != layer.path:
+                                verified = probe_partition_rates(ffprobe, [layer.path], pipeline_cancel)
+                                with lock: source_rates.update(verified)
+                    validate_stack_media([segment], media)
+                except BaseException as error:
+                    with lock:
+                        if not input_errors: input_errors.append(error)
+                        aborted.set()
+                    raise
+                finally:
+                    with lock: input_active.pop(index, None)
+            with lock: input_prepared.add(index)
+            return segment
+
+        def encode_segment(index: int, prepared) -> None:
             cancelled()
             if aborted.is_set():
                 return
-            segment = segments[index]
+            segment = prepared.result()
+            cancelled()
+            if aborted.is_set(): return
             chunk = encoded[index]
             seek_start = segment.source_start
             prefix_frames = 0
@@ -1207,10 +1269,11 @@ def render_multicam(
                     if prefix_frames else f"trim=end_frame={segment.frames}")
             filters = cuda_filter or (
                 f"setpts=PTS-STARTPTS,fps=fps={rate_text}:start_time=0,"
+                f"tpad=stop_mode=clone:stop_duration={segment.duration + prefix_frames / project.fps + 1:.9f},"
+                f"{trim},settb=AVTB,setpts=N/({rate_text}*TB),"
                 + framing_filter(transform_at(project, segment.start), width, height) + ',' +
                 placement_filter(placement_at(project, segment.camera, segment.start), width, height) + ',' +
-                f"format={pixel_format},tpad=stop_mode=clone:stop_duration={segment.duration + prefix_frames / project.fps + 1:.9f},"
-                f"{trim},settb=AVTB,setpts=N/({rate_text}*TB)"
+                f"format={pixel_format}"
             )
             if cuda_filter is None:
                 effect_chain = normal_effect_filter(project, segment.camera, segment.start, ass_path)
@@ -1229,10 +1292,16 @@ def render_multicam(
             if isinstance(segment, TransitionSegment):
                 command = build_transition_command(segment, project, base, settings, width, height,
                     pixel_format, rate_text, encode_args, chunk, ass_path, source_frame_rates=source_rates)
+            stack_cuda = None
             if stacked:
+                cpu_budget = max(1, (os.cpu_count() or 4)//max(1, workers))
+                filter_threads = max(1, min(8, cpu_budget//2))
+                decode_threads = max(1, min(8,
+                    (cpu_budget-filter_threads)//max(1, len(segment.layers))))
                 command = build_stack_command(segment, project, base, width, height,
                     pixel_format, rate_text, encode_args, chunk, ass_path,
-                    source_frame_rates=source_rates, media_by_path=media)
+                    source_frame_rates=source_rates, media_by_path=media,
+                    decode_threads=decode_threads, filter_threads=filter_threads)
                 # Dozens of layers plus curves/LUT paths can exceed Windows'
                 # command-line length limit. Keep the full graph in this
                 # export's temporary directory instead of on the command line.
@@ -1240,10 +1309,35 @@ def render_multicam(
                 graph_path = temporary / f'stack_{index:06d}.filtergraph'
                 graph_path.write_text(command[graph_index+1], encoding='utf-8')
                 command[graph_index:graph_index+2] = ['-/filter_complex', str(graph_path)]
+                if settings.decode_mode == 'cuda' and caps.cuda_decode and not disabled_gpu_reason(None):
+                    candidate = build_stack_command(segment, project, base, width, height,
+                        pixel_format, rate_text, encode_args, chunk, ass_path,
+                        source_frame_rates=source_rates, media_by_path=media, decode_mode='cuda',
+                        gpu_index=settings.gpu_index, decode_threads=decode_threads, filter_threads=filter_threads)
+                    if '-hwaccel' in candidate:
+                        graph_index = candidate.index('-filter_complex')
+                        graph_path = temporary / f'stack_{index:06d}.cuda.filtergraph'
+                        graph_path.write_text(candidate[graph_index+1], encoding='utf-8')
+                        candidate[graph_index:graph_index+2] = ['-/filter_complex', str(graph_path)]
+                        stack_cuda = candidate
                 backend = {'nvidia':'NVENC', 'amd':'AMF', 'intel':'QSV'}.get(encoder_vendor(settings.codec), '软件')
                 phase = f'合成 {len(segment.layers)} 层画面（任务 {index + 1}/{len(segments)}） · {backend} 编码'
             fallback_command = command
-            gpu_commands = []
+            gpu_commands = [(stack_cuda, 'cuda')] if stack_cuda is not None else []
+            gpu_backend = 'cuda_decode' if stacked else 'gpu_effects'
+            gpu_source = segment.path
+            if stacked and settings.decode_mode == 'cuda' and settings.codec.endswith('_nvenc'):
+                source = segment.layers[0].path if len(segment.layers) == 1 else None
+                if not disabled_gpu_reason(source):
+                    try:
+                        candidate, gpu_backend, gpu_source, prefix_frames = build_stack_gpu_command(
+                            segment, project, base, settings, caps, width, height, pixel_format,
+                            rate_text, encode_args, chunk, ass_path, source_frame_rates=source_rates,
+                            media_by_path=media, gpu_ffmpeg=gpu_effect_ffmpeg,
+                            shader_dir=temporary/'gpu_shaders')
+                        gpu_commands = [(candidate, 'cuda')]
+                    except (GpuExportUnsupported, OSError, subprocess.SubprocessError):
+                        pass
             if isinstance(segment, TransitionSegment):
                 cut_frame = _frame(segment.full_start, project.fps) + segment.full_frames // 2
                 transformed = any(not transform_is_identity(transform_at(project, frame / project.fps))
@@ -1291,7 +1385,9 @@ def render_multicam(
                         break
             if gpu_commands:
                 command = gpu_commands[0][0]
-                phase += ' · CUDA 硬解 + GPU 缩放/调色'
+                phase += (' · CUDA 硬解/缩放 → NVENC' if gpu_backend == 'cuda_pipeline' else
+                          ' · CUDA 硬解 + GPU 缩放/调色' if gpu_backend in ('gpu_stack_grade', 'gpu_effects')
+                          else ' · CUDA 硬解 + 多线程合成')
                 if ass_path is not None:phase += ' + 字幕'
             elif cuda_filter is not None:
                 phase += ' · CUDA 硬解/缩放 → NVENC'
@@ -1324,21 +1420,22 @@ def render_multicam(
                 using_gpu=bool(gpu_commands)
                 # Another worker may have discovered a device failure while
                 # this job was planning. Do not launch a known broken route.
-                if using_gpu and disabled_gpu_reason(segment.path):
+                if using_gpu and disabled_gpu_reason(gpu_source):
                     command=fallback_command;using_gpu=False
                     phase=f'任务 {index+1}/{len(segments)} · CPU 特效（已跳过失败的 GPU 路径）'
                 attempt_started=time.monotonic()
-                trace('attempt_start',task=index+1,backend='gpu_effects' if using_gpu else 'original',
-                      source=segment.path,frames=segment.frames,prefix_frames=prefix_frames,command=command)
+                trace('attempt_start',task=index+1,backend=gpu_backend if using_gpu else 'original',
+                      source=gpu_source,frames=segment.frames,prefix_frames=prefix_frames,command=command)
                 code, details = run_process(command, report)
                 if code and not using_gpu:aborted.set()
-                trace('attempt_finish',task=index+1,backend='gpu_effects' if using_gpu else 'original',
+                trace('attempt_finish',task=index+1,backend=gpu_backend if using_gpu else 'original',
                       returncode=code,seconds=time.monotonic()-attempt_started,details=str(details) if code else '')
                 if code and using_gpu:
                     cancelled()
-                    disable_failed_gpu(segment.path,details)
+                    disable_failed_gpu(gpu_source,details)
                     command=fallback_command
-                    phase=f'任务 {index+1}/{len(segments)} · CPU 特效回退（GPU 失败，详见导出日志）'
+                    phase=(f'任务 {index+1}/{len(segments)} · CPU 合成回退（GPU 路径失败，详见导出日志）'
+                        if stacked else f'任务 {index+1}/{len(segments)} · CPU 特效回退（GPU 失败，详见导出日志）')
                     with lock:
                         processed_frames[index] = 0
                         active[index] = (0.,0.,time.monotonic())
@@ -1367,25 +1464,43 @@ def render_multicam(
         # Only submit the available slots. On failure/cancel no additional
         # chunks start, and the executor waits for every launched runner before
         # TemporaryDirectory can remove files still opened by FFmpeg.
-        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="multicam-export") as pool:
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="multicam-input") as input_pool, \
+                ThreadPoolExecutor(max_workers=workers, thread_name_prefix="multicam-export") as pool:
             pending = set()
+            prepared_inputs = {}
+            next_input = 0
+
+            def prefetch(last_index):
+                nonlocal next_input
+                # A single producer and at most workers+1 outstanding inputs
+                # bound decoder/GPU memory and keep output back-pressure.
+                while next_input <= min(last_index, len(segments)-1):
+                    prepared_inputs[next_input] = input_pool.submit(prepare_input, next_input)
+                    next_input += 1
+
             next_index = 0
+            prefetch(workers)
             for _ in range(workers):
-                pending.add(pool.submit(encode_segment, next_index))
+                pending.add(pool.submit(encode_segment, next_index, prepared_inputs.pop(next_index)))
                 next_index += 1
             try:
                 while pending:
-                    done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                    done, pending = wait(pending, timeout=.5, return_when=FIRST_COMPLETED)
                     for future in done:
                         future.result()
                     cancelled()
+                    if input_errors: raise input_errors[0]
+                    if not done:
+                        with lock: publish('实时渲染 · 输入缓存与输出并行' if pipelined else '正在渲染')
                     while next_index < len(segments) and len(pending) < workers and not aborted.is_set():
-                        pending.add(pool.submit(encode_segment, next_index))
+                        prefetch(next_index+1)
+                        pending.add(pool.submit(encode_segment, next_index, prepared_inputs.pop(next_index)))
                         next_index += 1
             except BaseException:
                 aborted.set()
                 for future in pending:
                     future.cancel()
+                for future in prepared_inputs.values(): future.cancel()
                 raise
         cancelled()
         # The manifest uses controlled ASCII basenames inside the temp folder;

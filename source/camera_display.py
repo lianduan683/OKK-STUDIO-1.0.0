@@ -10,6 +10,18 @@ def source_camera_order(project):
     return [camera for camera in order if camera in available]
 
 
+def monitor_camera_order(project):
+    """Only compound-source angles belong in the multicamera monitor grid.
+
+    Outer tracks remain in the source library and retain their display numbers
+    for editing and colour selection, but must not acquire a second decoder in
+    the angle grid while also being decoded by the programme compositor.
+    """
+    from multicam_outer import outer_cameras
+    outside = outer_cameras(project)
+    return [camera for camera in source_camera_order(project) if camera not in outside]
+
+
 def camera_number(project, camera):
     if camera is None or camera == 0: return camera
     order = source_camera_order(project)
